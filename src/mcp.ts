@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { isPluginEnabled, listPluginsOnDisk, readJsonOrNull } from "./hooks.js";
+import {
+  isPluginEnabled,
+  listDirectoryPlugins,
+  listPluginsOnDisk,
+  readJsonOrNull,
+} from "./hooks.js";
 import { realpath } from "./paths.js";
 
 /**
@@ -18,6 +23,11 @@ import { realpath } from "./paths.js";
  * - `plugin`        — `<plugin-root>/.mcp.json` `mcpServers` AND
  *                     `<plugin-root>/plugin.json` `mcpServers` (inline). Only emitted
  *                     when the plugin is `enabledPlugins["<plugin>@<market>"] === true`.
+ *                     Covers BOTH cache-backed plugins (under `~/.claude/plugins/cache/`)
+ *                     AND directory-sourced marketplace plugins (from
+ *                     `extraKnownMarketplaces[*].source.source === "directory"`, whose
+ *                     plugin roots live outside the cache and mount into the container
+ *                     1:1 via `discoverLocalMarketplaces`).
  *
  * Managed MCP scope (/Library/Application Support/ClaudeCode/managed-mcp.json and peers)
  * is intentionally omitted — those paths are not mounted into the container.
@@ -197,17 +207,12 @@ export function enumerateMcpServers(input: EnumerateMcpInput): McpRecord[] {
 
   // 4. plugin scope: enabled-plugin .mcp.json and plugin.json#mcpServers.
   const enabledPlugins = userSettings?.enabledPlugins;
-  // containerCacheDir unused for enumeration; pass empty string.
-  const plugins = listPluginsOnDisk(pluginsCacheDir, "");
-  for (const p of plugins) {
-    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
-    const pluginAttr = {
-      marketplace: p.marketplace,
-      plugin: p.plugin,
-      version: p.version,
-    };
 
-    const mcpJsonPath = join(p.hostDir, ".mcp.json");
+  function collectPluginMcp(
+    hostDir: string,
+    pluginAttr: { marketplace: string; plugin: string; version: string },
+  ): void {
+    const mcpJsonPath = join(hostDir, ".mcp.json");
     if (existsSync(mcpJsonPath)) {
       const raw = readJsonOrNull(mcpJsonPath) as Record<string, unknown> | null;
       if (raw) {
@@ -218,8 +223,7 @@ export function enumerateMcpServers(input: EnumerateMcpInput): McpRecord[] {
         );
       }
     }
-
-    const pluginJsonPath = join(p.hostDir, "plugin.json");
+    const pluginJsonPath = join(hostDir, "plugin.json");
     if (existsSync(pluginJsonPath)) {
       const raw = readJsonOrNull(pluginJsonPath) as Record<string, unknown> | null;
       if (raw) {
@@ -230,6 +234,28 @@ export function enumerateMcpServers(input: EnumerateMcpInput): McpRecord[] {
         );
       }
     }
+  }
+
+  // Cache-backed plugins (containerCacheDir unused for enumeration; pass empty string).
+  for (const p of listPluginsOnDisk(pluginsCacheDir, "")) {
+    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
+    collectPluginMcp(p.hostDir, {
+      marketplace: p.marketplace,
+      plugin: p.plugin,
+      version: p.version,
+    });
+  }
+
+  // Directory-sourced plugins: loaded from the marketplace source tree (1:1 RO-mounted
+  // by `discoverLocalMarketplaces`), not from the cache. Without this branch, MCP
+  // servers declared in such plugins are invisible to `inspect` even though they run.
+  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
+    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
+    collectPluginMcp(dp.hostDir, {
+      marketplace: dp.marketplace,
+      plugin: dp.plugin,
+      version: "directory",
+    });
   }
 
   return out;

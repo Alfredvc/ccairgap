@@ -169,6 +169,91 @@ describe("enumerateMcpServers", () => {
     expect(by.unapproved!.approvalState).toBe("unapproved");
   });
 
+  it("emits plugin MCP records for directory-sourced marketplaces", () => {
+    const marketDir = join(root, "markets", "switchboard");
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "switchboard",
+      plugins: [
+        { name: "switchboard", source: "./" },
+        { name: "extra", source: "./plugins/extra" },
+      ],
+    });
+    // switchboard plugin carries both .mcp.json and plugin.json#mcpServers.
+    writeJSON(join(marketDir, ".mcp.json"), {
+      mcpServers: { "sb-file": { command: "sb-bin" } },
+    });
+    writeJSON(join(marketDir, "plugin.json"), {
+      mcpServers: { "sb-inline": { command: "sb-inline-bin" } },
+    });
+    // extra plugin carries only .mcp.json.
+    mkdirSync(join(marketDir, "plugins", "extra"), { recursive: true });
+    writeJSON(join(marketDir, "plugins", "extra", ".mcp.json"), {
+      mcpServers: { "extra-file": { command: "extra-bin" } },
+    });
+
+    writeJSON(claudeJsonPath, {});
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: {
+        "switchboard@switchboard": true,
+        "extra@switchboard": true,
+      },
+      extraKnownMarketplaces: {
+        switchboard: { source: { source: "directory", path: marketDir } },
+      },
+    });
+
+    const records = enumerateMcpServers({
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      repos: [],
+    });
+    const by = Object.fromEntries(records.map((r) => [r.name, r]));
+
+    expect(by["sb-file"]!.source).toBe("plugin");
+    expect(by["sb-file"]!.plugin).toEqual({
+      marketplace: "switchboard",
+      plugin: "switchboard",
+      version: "directory",
+    });
+    expect(by["sb-inline"]!.source).toBe("plugin");
+    expect(by["sb-inline"]!.plugin!.plugin).toBe("switchboard");
+    expect(by["extra-file"]!.plugin).toEqual({
+      marketplace: "switchboard",
+      plugin: "extra",
+      version: "directory",
+    });
+  });
+
+  it("skips directory-sourced plugin MCP when plugin is not enabled", () => {
+    const marketDir = join(root, "markets", "off");
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "off",
+      plugins: [{ name: "off", source: "./" }],
+    });
+    writeJSON(join(marketDir, ".mcp.json"), {
+      mcpServers: { hidden: { command: "nope" } },
+    });
+
+    writeJSON(claudeJsonPath, {});
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "off@off": false },
+      extraKnownMarketplaces: {
+        off: { source: { source: "directory", path: marketDir } },
+      },
+    });
+
+    const records = enumerateMcpServers({
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      repos: [],
+    });
+    expect(records).toEqual([]);
+  });
+
   it("ignores MCP servers on disabled plugins", () => {
     writeJSON(claudeJsonPath, {});
     writeJSON(join(hostClaude, "settings.json"), {

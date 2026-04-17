@@ -546,7 +546,7 @@ Post-processing in the CLI:
 - Plugin installs during a session are blocked by the RO `plugins/cache/` mount — any `/plugin install` attempt fails when it tries to write the cache. No separate marketplace allowlist needed.
 
 **MCP servers:**
-- `~/.claude.json` `mcpServers` block (user scope) and `projects["<path>"].mcpServers` (local/user-project scope) are copied as-is into the container via the `/host-claude-json` mount + entrypoint `cp`. Project-scope `<repo>/.mcp.json` travels in with the session clone. Plugin-scope MCPs (`<plugin>/.mcp.json`, `<plugin>/plugin.json#mcpServers`) travel via the RO plugin-cache mount.
+- `~/.claude.json` `mcpServers` block (user scope) and `projects["<path>"].mcpServers` (local/user-project scope) are copied as-is into the container via the `/host-claude-json` mount + entrypoint `cp`. Project-scope `<repo>/.mcp.json` travels in with the session clone. Plugin-scope MCPs (`<plugin>/.mcp.json`, `<plugin>/plugin.json#mcpServers`) travel via the RO plugin-cache mount for cache-backed plugins, or via the marketplace-source-tree RO mount (from `discoverLocalMarketplaces`) for directory-sourced marketplace plugins.
 - MCPs requiring binaries not present in container (e.g. `docker` for the grafana MCP) fail silently at startup.
 - Users who want specific MCPs to work extend the Dockerfile with their own `RUN apt-get install ...` or equivalent.
 - `ccairgap inspect` enumerates every surface above (plus approval state for project-scope servers) so users can tell at a glance which MCPs will actually load.
