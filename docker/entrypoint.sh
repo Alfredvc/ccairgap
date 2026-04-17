@@ -83,7 +83,7 @@ cat > "$TITLE_HOOK" << 'HOOK_EOF'
 #!/bin/sh
 TITLE="${CCAIRGAP_NAME:+[ccairgap] $CCAIRGAP_NAME}"
 TITLE="${TITLE:-[ccairgap]}"
-jq -n --arg t "$TITLE" '{"hookSpecificOutput":{"sessionTitle":$t}}'
+printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","sessionTitle":"%s"}}\n' "$TITLE"
 HOOK_EOF
 chmod +x "$TITLE_HOOK"
 
