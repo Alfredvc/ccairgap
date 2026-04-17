@@ -100,7 +100,7 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `sandbox/<ts>`. |
 | `recover [<ts>]` | Run the handoff routine against `$SESSION/<ts>/`. Idempotent. With no `<ts>` argument, equivalent to `list`. |
 | `discard <ts>` | Delete `$SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
-| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, image present/stale). |
+| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `rsync` + `cp` on PATH for `--cp` / `--sync` / handoff, image present/stale). |
 
 **Examples:**
 
