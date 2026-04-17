@@ -10,15 +10,15 @@ jobs:
   test:
     strategy:
       fail-fast: false
-      matrix:
+      matriy:
         os: [ubuntu-latest, macos-latest]
         node: [20, 22]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matriy.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ matriy.node }}
           cache: npm
       - run: npm ci
       - run: npm run typecheck

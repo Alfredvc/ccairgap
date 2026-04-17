@@ -18,7 +18,7 @@ Your custom image must keep four things working or the container won't launch / 
 
 1. **The `claude` non-root user exists at `HOST_UID:HOST_GID`.** These are passed as build args at every build. Missing or wrong UID/GID means bind-mounted files show up as root-owned on the host.
 2. **`/home/claude/.claude/projects` and `/home/claude/.claude/plugins/cache` exist and are owned by `claude`.** The CLI pre-creates these so Docker doesn't auto-create them as `root:root` before the entrypoint runs.
-3. **`/usr/local/bin/claude-airgap-entrypoint` exists** — copied from `entrypoint.sh` in the ccairgap package. The ENTRYPOINT line must point at it.
+3. **`/usr/local/bin/ccairgap-entrypoint` exists** — copied from `entrypoint.sh` in the ccairgap package. The ENTRYPOINT line must point at it.
 4. **`@anthropic-ai/claude-code` is installed globally** (or otherwise on the `claude` user's PATH).
 
 Simplest safe pattern: copy the stock Dockerfile and add your extras in the middle. The stock file lives at `<ccairgap-repo>/docker/Dockerfile` (or inside the installed npm package under `docker/`).
@@ -77,23 +77,23 @@ RUN set -e; \
 RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache \
  && chown -R ${HOST_UID}:${HOST_GID} /home/claude
 
-COPY --chown=claude:claude entrypoint.sh /usr/local/bin/claude-airgap-entrypoint
-RUN chmod +x /usr/local/bin/claude-airgap-entrypoint
+COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
+RUN chmod +x /usr/local/bin/ccairgap-entrypoint
 
 USER claude
 WORKDIR /home/claude
 
-ENTRYPOINT ["/usr/local/bin/claude-airgap-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
 ```
 
-This requires `entrypoint.sh` to sit next to the Dockerfile. Copy it from the ccairgap package (`<node_modules>/claude-airgap/docker/entrypoint.sh` or the repo) into your project's `.claude-airgap/` dir.
+This requires `entrypoint.sh` to sit next to the Dockerfile. Copy it from the ccairgap package (`<node_modules>/ccairgap/docker/entrypoint.sh` or the repo) into your project's `.ccairgap/` dir.
 
 ## Pattern 2 — `FROM` the already-built ccairgap image
 
-Shorter, but only works after ccairgap has built the base image at least once. Tag is `claude-airgap:<cli-version>` (e.g. `claude-airgap:0.1.0`). Custom Dockerfiles of this shape produce a new tag content-addressed from your Dockerfile hash.
+Shorter, but only works after ccairgap has built the base image at least once. Tag is `ccairgap:<cli-version>` (e.g. `ccairgap:0.1.0`). Custom Dockerfiles of this shape produce a new tag content-addressed from your Dockerfile hash.
 
 ```dockerfile
-FROM claude-airgap:0.1.0
+FROM ccairgap:0.1.0
 
 USER root
 
@@ -187,11 +187,11 @@ docker-build-arg:
   CLAUDE_CODE_VERSION: "1.2.3"
 ```
 
-Or environment variable on the host: `CLAUDE_AIRGAP_CC_VERSION=1.2.3`. Or CLI: `--docker-build-arg CLAUDE_CODE_VERSION=1.2.3`.
+Or environment variable on the host: `CCAIRGAP_CC_VERSION=1.2.3`. Or CLI: `--docker-build-arg CLAUDE_CODE_VERSION=1.2.3`.
 
 ## Rebuild semantics
 
-- Custom image tag: `claude-airgap:custom-<sha256(dockerfile)[:12]>`. Content-addressed.
+- Custom image tag: `ccairgap:custom-<sha256(dockerfile)[:12]>`. Content-addressed.
 - Rebuild triggers: tag missing locally, `--rebuild` passed, or Dockerfile content changed (hash differs).
 - Image age is never auto-rebuilt. `ccairgap doctor` warns if > 14 days old.
 

@@ -50,7 +50,7 @@ When a user asks for writes to a `ro:` dir — "run `npm install`", "run the tes
    - No → keep going.
 2. **Do they want to keep the result anywhere?**
    - No → `cp`. Session gets a full mutable copy at launch; discarded on exit. Host original untouched.
-   - Yes → `sync`. Result lands in `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Host original untouched.
+   - Yes → `sync`. Result lands in `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Host original untouched.
 
 All of `cp` / `sync` / `mount` resolve relative paths against the **workspace repo root** (not the config file dir). All fail if the host path doesn't exist at launch. A given host path can appear in only one of `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`.
 
@@ -124,7 +124,7 @@ sync:
   - dist
 ```
 
-On exit, `dist/` copy lands at `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-repo>/dist/`. Host original untouched.
+On exit, `dist/` copy lands at `$CCAIRGAP_HOME/output/<ts>/<abs-repo>/dist/`. Host original untouched.
 
 ## Absolute vs relative paths
 

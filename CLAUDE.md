@@ -1,4 +1,4 @@
-# claude-airgap
+# ccairgap
 
 CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Keep those two authoritative — update them when behavior changes.
 
@@ -7,7 +7,7 @@ CLI that runs `claude --dangerously-skip-permissions` inside a Docker container 
 - TypeScript, ESM, Node ≥ 20. Bundled via **tsup** to single `dist/cli.js` (see `tsup.config.ts`).
 - Deps: `commander` (args), `execa` (shell out to `docker`/`git`), `yaml` (config file). No runtime config libs beyond that.
 - Tests: **vitest** (`*.test.ts` colocated in `src/`). Type check: `tsc --noEmit`.
-- Distribution: npm `claude-airgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`.
+- Distribution: npm `ccairgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`.
 
 ## Scripts
 
@@ -35,8 +35,8 @@ src/
   mounts.ts       build docker -v list per SPEC §Container mount manifest
   plugins.ts      jq-equivalent scan of settings.json extraKnownMarketplaces
   credentials.ts  macOS: `security find-generic-password -s "Claude Code-credentials"` → $SESSION/creds. Linux: verify ~/.claude/.credentials.json exists.
-  image.ts        docker build; tag = claude-airgap:<cli-version> or :custom-<sha256(dockerfile)[:12]>
-  paths.ts        XDG state dir resolution; CLAUDE_AIRGAP_HOME override
+  image.ts        docker build; tag = ccairgap:<cli-version> or :custom-<sha256(dockerfile)[:12]>
+  paths.ts        XDG state dir resolution; CCAIRGAP_HOME override
   version.ts      cliVersion() from package.json
 docker/
   Dockerfile      node:20-slim; claude-code@${CLAUDE_CODE_VERSION:-latest}; non-root `claude` at HOST_UID/HOST_GID
@@ -61,19 +61,19 @@ docs/SPEC.md      authoritative design
 
 ## Config file
 
-`--config <path>` or default `<git-root>/.claude-airgap/config.yaml`. YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
+`--config <path>` or default `<git-root>/.ccairgap/config.yaml`. YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
 
 **Relative path resolution** — three anchors by semantic (implemented in `src/config.ts` `resolveConfigPaths` + `src/artifacts.ts`):
-- `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at canonical `<git-root>/.claude-airgap/config.yaml` (i.e. `dirname(configDir)` when `basename(configDir) === ".claude-airgap"`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
-- `dockerfile` → **config file's directory** (sidecar convention). `dockerfile: Dockerfile` = `.claude-airgap/Dockerfile`.
+- `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at canonical `<git-root>/.ccairgap/config.yaml` (i.e. `dirname(configDir)` when `basename(configDir) === ".ccairgap"`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
+- `dockerfile` → **config file's directory** (sidecar convention). `dockerfile: Dockerfile` = `.ccairgap/Dockerfile`.
 - `cp`, `sync`, `mount` → **workspace repo root** at launch (`artifacts.ts`, not `resolveConfigPaths`).
 
 Absolute paths bypass anchoring. `repo` is optional; defaults to the git root that contains the config (or cwd).
 
 ## Host env vars
 
-- `CLAUDE_AIRGAP_HOME` — override state dir root. Default `$XDG_STATE_HOME/claude-airgap/`.
-- `CLAUDE_AIRGAP_CC_VERSION` — short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<val>`.
+- `CCAIRGAP_HOME` — override state dir root. Default `$XDG_STATE_HOME/ccairgap/`.
+- `CCAIRGAP_CC_VERSION` — short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<val>`.
 
 ## When adding features
 

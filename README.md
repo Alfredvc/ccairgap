@@ -1,7 +1,7 @@
-# claude-airgap
+# ccairgap
 
-[![CI](https://github.com/alfredvc/claude-airgap/actions/workflows/ci.yml/badge.svg)](https://github.com/alfredvc/claude-airgap/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/claude-airgap.svg)](https://www.npmjs.com/package/claude-airgap)
+[![CI](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml/badge.svg)](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/ccairgap.svg)](https://www.npmjs.com/package/ccairgap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Run Claude Code with `--dangerously-skip-permissions` inside a Docker container. Hand it a task, walk away. Host filesystem is physically unable to be mutated outside a small set of explicitly writable paths. Exfiltration is an accepted risk; host state destruction is not.
@@ -11,7 +11,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full design.
 ## Install
 
 ```bash
-npm i -g claude-airgap
+npm i -g ccairgap
 ```
 
 Requires Node ≥ 20 and Docker. Works on macOS; Linux should work; Windows/WSL2 may need path tweaks.
@@ -25,10 +25,10 @@ Log in on the host once with `claude` — `ccairgap` inherits those credentials 
 ccairgap
 
 # Workspace + sibling repos + a reference dir
-ccairgap --repo ~/src/foo --extra-repo ~/src/bar --ro ~/src/docs
+ccairgap --repo ~/src/bar --extra-repo ~/src/bar --ro ~/src/docs
 
 # Walk-away via tmux
-tmux new -s work 'ccairgap --repo ~/src/foo'
+tmux new -s work 'ccairgap --repo ~/src/bar'
 
 # Non-interactive print mode
 ccairgap -p "summarize README"
@@ -36,18 +36,18 @@ ccairgap -p "summarize README"
 
 On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo). If the session made no commits, no branch is created. If Claude committed to a side branch but left `sandbox/<ts>` empty, the session dir is preserved with a warning so no work is lost — inspect it, recover what you need, then `ccairgap discard <ts>`.
 
-Git identity (`user.name` / `user.email`) is read from the host at launch (`git config --get`, local-to-`--repo` overrides global) and passed to the container so `git commit` works. If the host has no identity configured, a placeholder (`claude-airgap <noreply@airgap.local>`) is used and a warning is printed — rewrite authors on the sandbox branch post-hoc if it matters. GPG/SSH signing is not supported inside the container.
+Git identity (`user.name` / `user.email`) is read from the host at launch (`git config --get`, local-to-`--repo` overrides global) and passed to the container so `git commit` works. If the host has no identity configured, a placeholder (`ccairgap <noreply@ccairgap.local>`) is used and a warning is printed — rewrite authors on the sandbox branch post-hoc if it matters. GPG/SSH signing is not supported inside the container.
 
 ## Launch flags
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
-| `--config <path>` | no | YAML config file. Default: `<git-root>/.claude-airgap/config.yaml`. |
+| `--config <path>` | no | YAML config file. Default: `<git-root>/.ccairgap/config.yaml`. |
 | `--repo <path>` | no | Host repo to expose as the workspace (container cwd). Cloned `--shared`, branch `sandbox/<ts>` created. Defaults to cwd if it's a git repo. |
 | `--extra-repo <path>` | yes | Additional host repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | yes | Extra read-only bind mount. |
 | `--cp <path>` | yes | Copy a host path into the session at launch. Container sees it RW at the same abs path; changes are discarded on exit (never touch host). Relative paths resolve against the workspace repo. |
-| `--sync <path>` | yes | Same copy-in as `--cp`, plus: on exit the container-written copy is rsynced to `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Original host path is never written. |
+| `--sync <path>` | yes | Same copy-in as `--cp`, plus: on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Original host path is never written. |
 | `--mount <path>` | yes | Plain RW bind-mount host → container at the same abs path. Live host writes, no copy. Opt-in weakening of the host-write invariant for that one path. |
 | `--base <ref>` | no | Base ref for `sandbox/<ts>`. Default: HEAD of each `--repo`. |
 | `--keep-container` | no | Omit `docker run --rm` so the container persists for postmortem. |
@@ -110,7 +110,7 @@ See `docs/SPEC.md` §"Raw docker run args" for the full spec.
 
 ## Config file
 
-Any launch flag can live in a YAML file. Default location: `<git-root>/.claude-airgap/config.yaml`. Override with `--config <path>`.
+Any launch flag can live in a YAML file. Default location: `<git-root>/.ccairgap/config.yaml`. Override with `--config <path>`.
 
 Precedence: **CLI > config > built-in defaults**. Scalars (`repo`, `base`, `dockerfile`, `print`, `keep-container`, `rebuild`, `warn-docker-args`): CLI wins. Arrays (`extra-repo`, `ro`, `docker-run-arg`): concat across sources. `docker-build-arg` map merges per-key with CLI winning.
 
@@ -120,16 +120,16 @@ Relative paths inside the config resolve against one of two anchors, depending o
 
 | Keys | Anchor | Why |
 |------|--------|-----|
-| `repo`, `extra-repo`, `ro` | **Workspace anchor** — the git root when the config lives at `<git-root>/.claude-airgap/config.yaml` (the canonical case); the config file's directory otherwise (e.g. when `--config /elsewhere/cfg.yaml` is passed). | These describe your project's repo-space. `repo: .` should mean "my repo", `ro: ../docs` should mean "the dir next to my repo" — not surprises mediated by the `.claude-airgap/` subdir. |
-| `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in `.claude-airgap/`". |
-| `cp`, `sync`, `mount` | **Workspace repo root** (resolved at launch, against `--repo`). | These name paths inside the workspace (`node_modules`, `dist`, `.cache`). `--cp node_modules` with `--repo ~/src/foo` → `~/src/foo/node_modules`. |
+| `repo`, `extra-repo`, `ro` | **Workspace anchor** — the git root when the config lives at `<git-root>/.ccairgap/config.yaml` (the canonical case); the config file's directory otherwise (e.g. when `--config /elsewhere/cfg.yaml` is passed). | These describe your project's repo-space. `repo: .` should mean "my repo", `ro: ../docs` should mean "the dir next to my repo" — not surprises mediated by the `.ccairgap/` subdir. |
+| `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in `.ccairgap/`". |
+| `cp`, `sync`, `mount` | **Workspace repo root** (resolved at launch, against `--repo`). | These name paths inside the workspace (`node_modules`, `dist`, `.cache`). `--cp node_modules` with `--repo ~/src/bar` → `~/src/foo/node_modules`. |
 
 Absolute paths always work and bypass anchoring.
 
-Example `<git-root>/.claude-airgap/config.yaml`:
+Example `<git-root>/.ccairgap/config.yaml`:
 
 ```yaml
-# repo / extra-repo / ro — anchored on the git root (parent of .claude-airgap/)
+# repo / extra-repo / ro — anchored on the git root (parent of .ccairgap/)
 repo: .                    # = the git root
 extra-repo:
   - ../sibling             # sibling of the git root
@@ -145,7 +145,7 @@ mount:
   - .cache                 # = <git-root>/.cache
 
 # dockerfile — anchored on the config file's directory
-dockerfile: Dockerfile     # = <git-root>/.claude-airgap/Dockerfile
+dockerfile: Dockerfile     # = <git-root>/.ccairgap/Dockerfile
 
 base: main
 rebuild: false
@@ -181,8 +181,8 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 
 | Env var | Effect |
 |---------|--------|
-| `CLAUDE_AIRGAP_HOME` | Override state dir. Default: `$XDG_STATE_HOME/claude-airgap/`. |
-| `CLAUDE_AIRGAP_CC_VERSION` | Short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. |
+| `CCAIRGAP_HOME` | Override state dir. Default: `$XDG_STATE_HOME/ccairgap/`. |
+| `CCAIRGAP_CC_VERSION` | Short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. |
 
 ## Development
 

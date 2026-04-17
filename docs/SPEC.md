@@ -1,4 +1,4 @@
-# claude-airgap — Spec
+# ccairgap — Spec
 
 Run `claude --dangerously-skip-permissions` in a Docker container so you can hand it a task and walk away. Exfiltration is an accepted risk; host state destruction is not.
 
@@ -19,20 +19,20 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 
 - **Language:** TypeScript, compiled to a single bundled JS file with [tsup](https://tsup.egoist.dev/).
 - **Runtime:** Node.js ≥ 20 on the host. The container uses its own Node 20 base image independently.
-- **Distribution:** npm package `claude-airgap`. Primary install path is `npm i -g claude-airgap`; `npx claude-airgap …` works for one-shot use.
+- **Distribution:** npm package `ccairgap`. Primary install path is `npm i -g ccairgap`; `npx ccairgap …` works for one-shot use.
 - **Package layout:**
   - `dist/cli.js` — bundled entry, declared in `package.json` `bin`.
   - `docker/Dockerfile` — shipped as a package asset; copied out or read by the CLI at build time.
   - `docker/entrypoint.sh` — runs inside the container; stays in bash (fixed Alpine-ish environment, no portability concerns).
 - **Dependencies kept lean:** `commander` for arg parsing, `execa` for shelling out to `docker` / `git`. No runtime dep on external config libraries.
 - **License:** MIT.
-- **Repository:** `github.com/alfredvc/claude-airgap`.
+- **Repository:** `github.com/alfredvc/ccairgap`.
 
 ## Versioning
 
 - **CLI:** semver. Patch = bug fixes, minor = new flags / new optional manifest fields, major = flag rename or removal, manifest shape change, or state-dir layout change.
 - **Container image tag** = CLI version (or `custom-<hash>` when built from a user Dockerfile). See §"Container image".
-- **Claude Code inside the image:** defaults to `@latest` at build time. Same CLI version can therefore produce images with different Claude Code versions over time. Users who want reproducibility pin via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CLAUDE_AIRGAP_CC_VERSION=<semver>`.
+- **Claude Code inside the image:** defaults to `@latest` at build time. Same CLI version can therefore produce images with different Claude Code versions over time. Users who want reproducibility pin via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CCAIRGAP_CC_VERSION=<semver>`.
 - **Manifest schema:** `$SESSION/manifest.json` carries a top-level `"version": <N>` field. The handoff routine reads it first and errors clearly on unknown versions. Bump only when the shape changes incompatibly.
 - **Flag stability:** launch-command flags and subcommand names are part of the public API. Renaming or removing either requires a major version bump.
 
@@ -41,7 +41,7 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 All paths follow XDG Base Directory convention.
 
 ```
-${XDG_STATE_HOME:-$HOME/.local/state}/claude-airgap/
+${XDG_STATE_HOME:-$HOME/.local/state}/ccairgap/
 ├── sessions/
 │   └── <ts>/                      # per-session state, ephemeral
 │       ├── repos/
@@ -58,8 +58,8 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/claude-airgap/
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/claude-airgap/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
-2. `$XDG_STATE_HOME/claude-airgap/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
+1. `$XDG_STATE_HOME/ccairgap/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
+2. `$XDG_STATE_HOME/ccairgap/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
 5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This class of write can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
@@ -83,10 +83,10 @@ Default (no subcommand): start a new session.
 | `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `sandbox/<ts>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
 | `--cp <path>` | yes | Copy host path into the session at launch; container sees it RW at the same absolute path. Changes are discarded on exit (never reach host). Relative paths resolve against the workspace repo root. See §"Build artifact paths". |
-| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
+| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<ts>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
 | `--mount <path>` | yes | RW bind-mount host path directly into the container at the same absolute path. Live host writes; no copy. Relative paths resolve against the workspace repo root. Breaks the "container never writes host repo directly" invariant for the declared path only — opt-in. See §"Build artifact paths". |
 | `--base <ref>` | no | Base ref for `sandbox/<ts>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
-| `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm claude-airgap-<ts>`. |
+| `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm ccairgap-<ts>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
@@ -142,35 +142,35 @@ In order:
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
 2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
-3. Scan `$XDG_STATE_HOME/claude-airgap/sessions/` for orphaned session dirs (dirs without a running container named `claude-airgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
+3. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
 4. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
    - Non-macOS: verify host `~/.claude/.credentials.json` exists. If missing, print "run `claude` on the host to log in" and exit.
-5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/claude-airgap/sessions/<ts>/`.
+5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/ccairgap/sessions/<ts>/`.
 6. For each repo in the set (`--repo` plus every `--extra-repo`):
    - `git clone --shared <path> $SESSION/repos/<basename>`
    - `cd $SESSION/repos/<basename> && git checkout -b <branch> [<base>]`
    - `<branch>` is `sandbox/<ts>` by default, or `sandbox/<--name>` when `--name` was passed. The name is validated (`git check-ref-format refs/heads/<branch>`) and checked for collision on the workspace repo (`--repo`) before side effects.
 7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; the handoff routine falls back to `sandbox/<ts>` in that case.
-8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/claude-airgap/output/` (idempotent).
+8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/ccairgap/output/` (idempotent).
 9. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
 10. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
 11. Build `docker run` command:
     - `--rm` (omit if `--keep-container` was passed)
     - `--cap-drop=ALL`
     - `-it` (interactive)
-    - `--name claude-airgap-<ts>`
+    - `--name ccairgap-<ts>`
     - Mount list per §"Container mount manifest"
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
-    - Image: `claude-airgap:<cli-version>` by default, or `claude-airgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
+    - Image: `ccairgap:<cli-version>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 12. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
 13. Exec the `docker run` command.
 
 ## Config file
 
-YAML file that mirrors launch flags. Default location: `<git-root>/.claude-airgap/config.yaml`. Override: `--config <path>`.
+YAML file that mirrors launch flags. Default location: `<git-root>/.ccairgap/config.yaml`. Override: `--config <path>`.
 
-- **Load:** the CLI walks up from `cwd` to find the git root; if `<git-root>/.claude-airgap/config.yaml` exists it's loaded. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
+- **Load:** the CLI walks up from `cwd` to find the git root; if `<git-root>/.ccairgap/config.yaml` exists it's loaded. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
 - **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth.
 - **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
 - **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
@@ -181,7 +181,7 @@ Three anchors, chosen by the semantic of each key. Absolute paths bypass anchori
 
 | Keys | Anchor | Rationale |
 |------|--------|-----------|
-| `repo`, `extra-repo`, `ro` | **Workspace anchor.** When the config lives at the canonical `<X>/.claude-airgap/config.yaml`, anchor = `<X>` (= the git root). When `--config` points elsewhere (e.g. `/tmp/cfg.yaml`), anchor = `dirname(configPath)`. | These paths describe the user's repo-space — "my repo", "a sibling repo", "the docs dir next to my project". Anchoring on the git root (in the canonical case) makes `repo: .` mean the workspace, `ro: ../docs` mean a sibling of the workspace. Anchoring on the `.claude-airgap/` subdir (an implementation detail of ccairgap) would force every user to write `repo: ..` and `ro: ../../docs`. |
+| `repo`, `extra-repo`, `ro` | **Workspace anchor.** When the config lives at the canonical `<X>/.ccairgap/config.yaml`, anchor = `<X>` (= the git root). When `--config` points elsewhere (e.g. `/tmp/cfg.yaml`), anchor = `dirname(configPath)`. | These paths describe the user's repo-space — "my repo", "a sibling repo", "the docs dir next to my project". Anchoring on the git root (in the canonical case) makes `repo: .` mean the workspace, `ro: ../docs` mean a sibling of the workspace. Anchoring on the `.ccairgap/` subdir (an implementation detail of ccairgap) would force every user to write `repo: ..` and `ro: ../../docs`. |
 | `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in this same directory". |
 | `cp`, `sync`, `mount` | **Workspace repo root**, resolved at launch against the final `--repo` value. Under `--bare`, anchor on CLI `$(pwd)` instead (see §"Bare mode"). | See §"Build artifact paths". These name paths inside the workspace, not paths relative to the config file's location. |
 
@@ -190,7 +190,7 @@ Implementation: `src/config.ts` `resolveConfigPaths` handles `repo`/`extra-repo`
 ### Example
 
 ```yaml
-# <git-root>/.claude-airgap/config.yaml
+# <git-root>/.ccairgap/config.yaml
 
 # Workspace-space (anchored on git root)
 repo: .                 # optional; defaults to git root anyway
@@ -200,7 +200,7 @@ ro:
   - ../docs             # sibling of git root
 
 # Sidecar (anchored on config file dir)
-dockerfile: Dockerfile  # = <git-root>/.claude-airgap/Dockerfile
+dockerfile: Dockerfile  # = <git-root>/.ccairgap/Dockerfile
 
 # Workspace-repo-root anchored (at launch)
 cp:
@@ -225,7 +225,7 @@ hooks:
 
 **What `--bare` turns off:**
 
-- **Config file loading.** The default `<git-root>/.claude-airgap/config.yaml` is ignored even if present. `--bare` + explicit `--config <path>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
+- **Config file loading.** The default `<git-root>/.ccairgap/config.yaml` is ignored even if present. `--bare` + explicit `--config <path>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
 - **Workspace inference from cwd.** Normal mode defaults `--repo` to `$(pwd)` when cwd is a git repo. `--bare` skips this — the workspace stays unset unless `--repo` is passed explicitly.
 - **Empty-session guard.** Normal mode errors when no `--repo` / `--ro` / git-repo-cwd is available. `--bare` proceeds with zero mounts; the user gets a Claude-only container with no host repos or reference material at all.
 
@@ -233,7 +233,7 @@ hooks:
 
 - Claude config flow: `~/.claude` RO mount, `~/.claude.json` passthrough, credentials, plugins cache, plugin marketplace discovery, MCP servers — unchanged.
 - Authentication flow — unchanged (host login still required).
-- Extraction — `/output` is still mounted at `$CLAUDE_AIRGAP_HOME/output/`, transcripts still flow to `~/.claude/projects/<encoded>/` on exit.
+- Extraction — `/output` is still mounted at `$CCAIRGAP_HOME/output/`, transcripts still flow to `~/.claude/projects/<encoded>/` on exit.
 - All other CLI flags — `--repo`, `--extra-repo`, `--ro`, `--cp`, `--sync`, `--mount`, `--docker-run-arg`, etc. all work normally when passed alongside `--bare`.
 - `--extra-repo` without `--repo` still errors. Workspace semantics are unchanged; `--bare` only disables inference, not validation.
 
@@ -268,7 +268,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/hook-policy/projects/<repo>/settings.json` (and `.local`) | `<original-host-path>/.claude/settings.json` (and `.local`) | ro | Nested single-file overlay on top of the session-clone's `.claude/` dir. One mount per repo `.claude/settings.json[.local]` that declares hooks. Only present when `--hook-enable` list is non-empty. |
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
-| `$XDG_STATE_HOME/claude-airgap/output/` | `/output` | rw | Artifact drop. |
+| `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<repo>/` | `<original-host-path>` | rw | Session clone. |
 | `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>/objects/` | ro | Alternates target for `--shared` clone. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
 | `<resolved-git-dir>/lfs/objects/` | `/host-git-alternates/<basename>/lfs/objects/` | ro | LFS content. Session clone's `.git/lfs/objects/` is replaced with a symlink to this path. Mount is optional — skipped if source dir doesn't exist. |
@@ -300,7 +300,7 @@ Absolute paths are preserved between host and container so `settings.json` refer
 **`--sync` (copy-in, copy-out-on-exit):**
 
 - Identical setup to `--cp`.
-- On container exit, the handoff routine rsyncs `<session-target>/` → `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Session-scoped (`<ts>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
+- On container exit, the handoff routine rsyncs `<session-target>/` → `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Session-scoped (`<ts>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
 - The original host path is **never** written. Users who want to promote results back manually `cp -a` from the output tree.
 - Recorded in `manifest.json` under `sync` so `ccairgap recover <ts>` performs the same copy-out.
 
@@ -346,7 +346,7 @@ docker build \
   --build-arg HOST_UID=$(id -u) \
   --build-arg HOST_GID=$(id -g) \
   --build-arg CLAUDE_CODE_VERSION=latest \
-  -t claude-airgap:<cli-version> .
+  -t ccairgap:<cli-version> .
 ```
 
 Dockerfile:
@@ -365,8 +365,8 @@ Docker's layer cache handles rebuild on UID/GID change — the CLI always passes
 
 | Invocation | Tag |
 |------------|-----|
-| Default | `claude-airgap:<cli-version>` |
-| `--dockerfile <path>` | `claude-airgap:custom-<sha256(dockerfile)[:12]>` |
+| Default | `ccairgap:<cli-version>` |
+| `--dockerfile <path>` | `ccairgap:custom-<sha256(dockerfile)[:12]>` |
 
 The hash suffix for custom Dockerfiles is deterministic: the same Dockerfile content always produces the same tag, so rebuilds are skipped when nothing changed. Custom and default tags coexist without collision.
 
@@ -402,7 +402,7 @@ Runs at container start. Steps:
    }
    ```
 8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-9. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$AIRGAP_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$AIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$CCAIRGAP_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 
@@ -471,9 +471,9 @@ If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fat
 Container needs `user.name` / `user.email` or `git commit` fails (`Author identity unknown`) and work is lost on handoff (fetch only moves reachable commits).
 
 - CLI reads host identity at launch: `git -C <--repo[0]> config --get user.name` and `user.email` (local → global precedence, so repo-local overrides work). Falls back to process cwd if no `--repo`.
-- Identity is passed to the container via env: `AIRGAP_GIT_USER_NAME`, `AIRGAP_GIT_USER_EMAIL`.
-- Entrypoint runs `git config --global user.name "$AIRGAP_GIT_USER_NAME"` + `user.email` at container start.
-- If host has neither local nor global identity: CLI warns on stderr and falls back to `claude-airgap <noreply@airgap.local>` so commits still succeed. User rewrites author on the sandbox branch post-hoc if needed (`git rebase --exec 'git commit --amend --reset-author --no-edit'` or `git -c user.name=... -c user.email=... commit --amend`).
+- Identity is passed to the container via env: `CCAIRGAP_GIT_USER_NAME`, `CCAIRGAP_GIT_USER_EMAIL`.
+- Entrypoint runs `git config --global user.name "$CCAIRGAP_GIT_USER_NAME"` + `user.email` at container start.
+- If host has neither local nor global identity: CLI warns on stderr and falls back to `ccairgap <noreply@ccairgap.local>` so commits still succeed. User rewrites author on the sandbox branch post-hoc if needed (`git rebase --exec 'git commit --amend --reset-author --no-edit'` or `git -c user.name=... -c user.email=... commit --amend`).
 - GPG / SSH signing is not supported inside the container (no keys). If host has `commit.gpgsign=true`, user must unset it for the sandbox branch or accept that the container will error on commit. The CLI does not override signing config — `~/.gitconfig` is not mounted in this passthrough mode.
 
 ## Transcripts
@@ -631,19 +631,19 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 
 | Env var | Source | Purpose |
 |---------|--------|---------|
-| `AIRGAP_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
-| `AIRGAP_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
-| `AIRGAP_PRINT` | `--print` | Non-interactive prompt. |
-| `AIRGAP_NAME` | `--name` | Session display name; forwarded to `claude -n <name>` in the entrypoint. Unset when `--name` was not passed. |
-| `AIRGAP_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `claude-airgap` if host has none. |
-| `AIRGAP_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@airgap.local` if host has none. |
+| `CCAIRGAP_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
+| `CCAIRGAP_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
+| `CCAIRGAP_PRINT` | `--print` | Non-interactive prompt. |
+| `CCAIRGAP_NAME` | `--name` | Session display name; forwarded to `claude -n <name>` in the entrypoint. Unset when `--name` was not passed. |
+| `CCAIRGAP_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `ccairgap` if host has none. |
+| `CCAIRGAP_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@ccairgap.local` if host has none. |
 
 **On the host** — read by the CLI:
 
 | Env var | Effect |
 |---------|--------|
-| `CLAUDE_AIRGAP_HOME` | Overrides the state dir. Default: `$XDG_STATE_HOME/claude-airgap/` (which itself defaults to `~/.local/state/claude-airgap/`). If set, this path replaces the default root wholesale — both `sessions/` and `output/` live underneath. |
-| `CLAUDE_AIRGAP_CC_VERSION` | Short-form override for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Used at image build time. |
+| `CCAIRGAP_HOME` | Overrides the state dir. Default: `$XDG_STATE_HOME/ccairgap/` (which itself defaults to `~/.local/state/ccairgap/`). If set, this path replaces the default root wholesale — both `sessions/` and `output/` live underneath. |
+| `CCAIRGAP_CC_VERSION` | Short-form override for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Used at image build time. |
 
 Other XDG env vars (`XDG_STATE_HOME`, etc.) are respected per the XDG Base Directory spec.
 
@@ -658,7 +658,7 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<ts>/` dir 
      - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
      - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<ts>/repos/<basename> sandbox/<ts>:sandbox/<ts>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
    - If fetch fails (branch doesn't exist, host path gone), log and continue — not fatal.
-3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CLAUDE_AIRGAP_HOME/output/<ts>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
+3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CCAIRGAP_HOME/output/<ts>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
 4. For each `<path-encoded-cwd>` dir in `$SESSION/<ts>/transcripts/`:
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
@@ -677,8 +677,8 @@ Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM,
 ## Recovery
 
 `ccairgap list` — list orphaned sessions:
-- Scan `$XDG_STATE_HOME/claude-airgap/sessions/` (or `$CLAUDE_AIRGAP_HOME/sessions/` if overridden).
-- For each entry: if a container named `claude-airgap-<ts>` is currently running (`docker ps`), skip (live session in another terminal). Otherwise classify as orphan.
+- Scan `$XDG_STATE_HOME/ccairgap/sessions/` (or `$CCAIRGAP_HOME/sessions/` if overridden).
+- For each entry: if a container named `ccairgap-<ts>` is currently running (`docker ps`), skip (live session in another terminal). Otherwise classify as orphan.
 - Print timestamp, repos involved (from manifest), and commit counts on `sandbox/<ts>` in each session clone.
 
 `ccairgap recover [<ts>]` — with `<ts>`, run the handoff routine against `$SESSION/<ts>/` (idempotent; safe to re-run). Without `<ts>`, equivalent to `list`.
@@ -693,7 +693,7 @@ On every normal `ccairgap` startup, orphaned sessions are detected and a warning
 - **Submodules not supported.** `.gitmodules` is copied into the session clone but submodule `.git/` dirs are not RO-mounted. `git submodule update --init` inside the container falls back to fetching from each submodule's remote URL (works for public submodules, fails for private). Work inside the container proceeds without initialized submodules.
 - **macOS only tested.** Linux should work; Windows / WSL2 may need path adjustments.
 - **Docker required.** No Podman-specific handling.
-- **Single concurrent session per host recommended.** Multiple simultaneous sessions work but share `$XDG_STATE_HOME/claude-airgap/output/`. Sessions don't overlap on `<ts>` so repo clones are fine.
+- **Single concurrent session per host recommended.** Multiple simultaneous sessions work but share `$XDG_STATE_HOME/ccairgap/output/`. Sessions don't overlap on `<ts>` so repo clones are fine.
 - **MCP servers that require host resources (docker.sock, local sockets, host binaries) will not work** unless the user extends the Dockerfile. Intentional.
 
 ## Out of scope

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseConfig, resolveConfigPaths } from "./config.js";
 
-const SRC = "/repo/.claude-airgap/config.yaml";
+const SRC = "/repo/.ccairgap/config.yaml";
 
 describe("parseConfig", () => {
   it("parses full kebab-case config", () => {
@@ -166,7 +166,7 @@ mount:
 });
 
 describe("resolveConfigPaths", () => {
-  it("resolves repo/extra-repo/ro against git root (parent of .claude-airgap/)", () => {
+  it("resolves repo/extra-repo/ro against git root (parent of .ccairgap/)", () => {
     const cfg = {
       repo: ".",
       extraRepo: ["../sibling", "/abs/path"],
@@ -174,24 +174,24 @@ describe("resolveConfigPaths", () => {
       dockerfile: "Dockerfile",
       base: "main",
     };
-    const out = resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml");
+    const out = resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml");
     expect(out).toEqual({
       repo: "/repo",
       extraRepo: ["/sibling", "/abs/path"],
       ro: ["/docs", "/repo/~/not-expanded"],
-      dockerfile: "/repo/.claude-airgap/Dockerfile",
+      dockerfile: "/repo/.ccairgap/Dockerfile",
       base: "main",
     });
   });
 
   it("dockerfile still anchors on config dir even when workspace anchor differs", () => {
     const cfg = { repo: ".", dockerfile: "./Dockerfile" };
-    const out = resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml");
+    const out = resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml");
     expect(out.repo).toBe("/repo");
-    expect(out.dockerfile).toBe("/repo/.claude-airgap/Dockerfile");
+    expect(out.dockerfile).toBe("/repo/.ccairgap/Dockerfile");
   });
 
-  it("falls back to config dir when config is not in a .claude-airgap/ dir", () => {
+  it("falls back to config dir when config is not in a .ccairgap/ dir", () => {
     const cfg = {
       repo: "./sub",
       extraRepo: ["./more"],
@@ -209,7 +209,7 @@ describe("resolveConfigPaths", () => {
 
   it("leaves scalars and absent fields untouched", () => {
     const cfg = { base: "main", rebuild: true };
-    expect(resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml")).toEqual(cfg);
+    expect(resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml")).toEqual(cfg);
   });
 
   it("does not touch cp / sync / mount (they resolve against repo root later)", () => {
@@ -218,6 +218,6 @@ describe("resolveConfigPaths", () => {
       sync: ["dist"],
       mount: [".cache"],
     };
-    expect(resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml")).toEqual(cfg);
+    expect(resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml")).toEqual(cfg);
   });
 });

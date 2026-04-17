@@ -87,9 +87,9 @@ async function main() {
   program
     .option(
       "--config <path>",
-      "path to yaml config file (default: <git-root>/.claude-airgap/config.yaml). " +
+      "path to yaml config file (default: <git-root>/.ccairgap/config.yaml). " +
         "Inside the config, relative `repo`/`extra-repo`/`ro` paths anchor on the git " +
-        "root (parent of `.claude-airgap/`); relative `dockerfile` anchors on the config " +
+        "root (parent of `.ccairgap/`); relative `dockerfile` anchors on the config " +
         "file's directory; relative `cp`/`sync`/`mount` anchor on the workspace repo root.",
     )
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
@@ -103,7 +103,7 @@ async function main() {
     )
     .option(
       "--sync <path>",
-      "like --cp, but on exit the container-written copy is mirrored to $CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/. Repeatable.",
+      "like --cp, but on exit the container-written copy is mirrored to $CCAIRGAP_HOME/output/<ts>/<abs-src>/. Repeatable.",
       collect,
       [],
     )
@@ -247,13 +247,13 @@ async function main() {
         }
       }
 
-      // CLAUDE_AIRGAP_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
+      // CCAIRGAP_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
       const buildArgs: Record<string, string> = { ...merged.dockerBuildArgs };
       if (
-        process.env.CLAUDE_AIRGAP_CC_VERSION &&
+        process.env.CCAIRGAP_CC_VERSION &&
         !buildArgs.CLAUDE_CODE_VERSION
       ) {
-        buildArgs.CLAUDE_CODE_VERSION = process.env.CLAUDE_AIRGAP_CC_VERSION;
+        buildArgs.CLAUDE_CODE_VERSION = process.env.CCAIRGAP_CC_VERSION;
       }
 
       const result = await launch({

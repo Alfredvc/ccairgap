@@ -32,7 +32,7 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
   for (const ts of readdirSync(dir)) {
     const sd = join(dir, ts);
     if (!statSync(sd).isDirectory()) continue;
-    if (running.has(`claude-airgap-${ts}`)) continue;
+    if (running.has(`ccairgap-${ts}`)) continue;
 
     let repos: string[] = [];
     const commits: Record<string, number> = {};

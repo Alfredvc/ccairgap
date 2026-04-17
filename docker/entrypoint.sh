@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# claude-airgap container entrypoint.
+# ccairgap container entrypoint.
 # Copies host ~/.claude/ (RO-mounted at /host-claude) into container ~/.claude/,
 # patches ~/.claude.json, injects env vars into settings.json, execs claude.
 
@@ -48,13 +48,13 @@ if [ -f "$HOST_CLAUDE_JSON" ]; then
     cp -L "$HOST_CLAUDE_JSON" "$HOME_DIR/.claude.json"
     chmod u+w "$HOME_DIR/.claude.json"
 
-    # AIRGAP_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
+    # CCAIRGAP_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
     # installMethod / autoUpdatesProtectedForNative stripped: host may be "native"
     # (binary at ~/.local/bin/claude) while container runs npm-global claude at
     # /usr/local/bin/claude. Leaving host values triggers "claude command not found
     # at /home/claude/.local/bin/claude" and PATH nags on every start.
     TMP_JSON="$(mktemp)"
-    jq --arg trusted "${AIRGAP_TRUSTED_CWDS:-}" '
+    jq --arg trusted "${CCAIRGAP_TRUSTED_CWDS:-}" '
         .hasCompletedOnboarding = true
         | del(.installMethod, .autoUpdatesProtectedForNative)
         | (.projects //= {})
@@ -88,26 +88,26 @@ mv "$TMP_SETTINGS" "$SETTINGS"
 
 # Git identity from host (CLI reads host git config and passes via env).
 # Host-side fallback ensures these are set even when host has no config.
-if [ -n "${AIRGAP_GIT_USER_NAME:-}" ]; then
-    git config --global user.name "$AIRGAP_GIT_USER_NAME"
+if [ -n "${CCAIRGAP_GIT_USER_NAME:-}" ]; then
+    git config --global user.name "$CCAIRGAP_GIT_USER_NAME"
 fi
-if [ -n "${AIRGAP_GIT_USER_EMAIL:-}" ]; then
-    git config --global user.email "$AIRGAP_GIT_USER_EMAIL"
+if [ -n "${CCAIRGAP_GIT_USER_EMAIL:-}" ]; then
+    git config --global user.email "$CCAIRGAP_GIT_USER_EMAIL"
 fi
 
-# cwd: first repo path (AIRGAP_CWD), else /workspace.
-CWD="${AIRGAP_CWD:-/workspace}"
+# cwd: first repo path (CCAIRGAP_CWD), else /workspace.
+CWD="${CCAIRGAP_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
 # Session name → `claude -n <name>` (shown in /resume and terminal title).
 NAME_ARGS=()
-if [ -n "${AIRGAP_NAME:-}" ]; then
-    NAME_ARGS=(-n "$AIRGAP_NAME")
+if [ -n "${CCAIRGAP_NAME:-}" ]; then
+    NAME_ARGS=(-n "$CCAIRGAP_NAME")
 fi
 
-if [ -n "${AIRGAP_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" -p "$AIRGAP_PRINT"
+if [ -n "${CCAIRGAP_PRINT:-}" ]; then
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" -p "$CCAIRGAP_PRINT"
 else
     exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}"
 fi

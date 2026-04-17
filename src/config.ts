@@ -4,7 +4,7 @@ import { execaSync } from "execa";
 import { parse as parseYaml } from "yaml";
 
 /** Default config file path relative to git repo root. */
-export const DEFAULT_CONFIG_REL = ".claude-airgap/config.yaml";
+export const DEFAULT_CONFIG_REL = ".ccairgap/config.yaml";
 
 /**
  * All CLI options that can live in config. Camel-cased to match launch opts.
@@ -71,7 +71,7 @@ function gitRepoRoot(cwd: string): string | undefined {
 /**
  * Resolve config file to load.
  *  - If `explicit` set: must exist, absolute or resolved against cwd.
- *  - Else: git-repo-root/.claude-airgap/config.yaml if present, else none.
+ *  - Else: git-repo-root/.ccairgap/config.yaml if present, else none.
  */
 export function resolveConfigPath(
   explicit: string | undefined,
@@ -235,8 +235,8 @@ export function loadConfig(
  *
  *  - Workspace-space paths (`repo`, `extra-repo`, `ro`) resolve against the
  *    "workspace anchor". When the config lives at the canonical
- *    `<git-root>/.claude-airgap/config.yaml`, the anchor is the git-root
- *    (`dirname` of the `.claude-airgap/` dir) so users can write `repo: .`,
+ *    `<git-root>/.ccairgap/config.yaml`, the anchor is the git-root
+ *    (`dirname` of the `.ccairgap/` dir) so users can write `repo: .`,
  *    `ro: ../docs`, `extra-repo: ../sibling` and have them mean what they
  *    say about their project. When `--config` points somewhere else, fall
  *    back to the config file's own directory.
@@ -252,7 +252,7 @@ export function loadConfig(
 export function resolveConfigPaths(cfg: ConfigFile, configPath: string): ConfigFile {
   const configDir = dirname(configPath);
   const workspaceAnchor =
-    basename(configDir) === ".claude-airgap" ? dirname(configDir) : configDir;
+    basename(configDir) === ".ccairgap" ? dirname(configDir) : configDir;
   const against = (anchor: string) => (p: string) =>
     isAbsolute(p) ? p : resolve(anchor, p);
   const viaWorkspace = against(workspaceAnchor);

@@ -22,7 +22,7 @@ export interface ManifestV1 {
   branch?: string;
   /**
    * --sync entries recorded at launch so the exit-trap / recover handoff knows
-   * which in-session paths to rsync back out to $CLAUDE_AIRGAP_HOME/output/<ts>/.
+   * which in-session paths to rsync back out to $CCAIRGAP_HOME/output/<ts>/.
    * Additive field (optional): pre-existing v1 sessions without it recover fine.
    */
   sync?: Array<{ src_host: string; session_src: string }>;

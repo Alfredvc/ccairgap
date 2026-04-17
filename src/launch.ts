@@ -359,26 +359,26 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const hostIdentity = await readHostGitIdentity(identityCwd);
   if (!hostIdentity.name || !hostIdentity.email) {
     console.error(
-      `ccairgap: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airgap <noreply@airgap.local>". Rewrite authors on ${branch} if needed.`,
+      `ccairgap: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "ccairgap <noreply@ccairgap.local>". Rewrite authors on ${branch} if needed.`,
     );
   }
-  const gitUserName = hostIdentity.name ?? "claude-airgap";
-  const gitUserEmail = hostIdentity.email ?? "noreply@airgap.local";
+  const gitUserName = hostIdentity.name ?? "ccairgap";
+  const gitUserEmail = hostIdentity.email ?? "noreply@ccairgap.local";
 
   const dockerArgs: string[] = ["run"];
   if (!opts.keepContainer) dockerArgs.push("--rm");
   // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
   dockerArgs.push(opts.print ? "-i" : "-it");
-  dockerArgs.push("--cap-drop=ALL", "--name", `claude-airgap-${ts}`);
-  dockerArgs.push("-e", `AIRGAP_CWD=${containerCwd}`);
-  dockerArgs.push("-e", `AIRGAP_TRUSTED_CWDS=${trustedCwds}`);
-  dockerArgs.push("-e", `AIRGAP_GIT_USER_NAME=${gitUserName}`);
-  dockerArgs.push("-e", `AIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
+  dockerArgs.push("--cap-drop=ALL", "--name", `ccairgap-${ts}`);
+  dockerArgs.push("-e", `CCAIRGAP_CWD=${containerCwd}`);
+  dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
+  dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);
+  dockerArgs.push("-e", `CCAIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
   if (opts.print !== undefined) {
-    dockerArgs.push("-e", `AIRGAP_PRINT=${opts.print}`);
+    dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }
   if (opts.name !== undefined) {
-    dockerArgs.push("-e", `AIRGAP_NAME=${opts.name}`);
+    dockerArgs.push("-e", `CCAIRGAP_NAME=${opts.name}`);
   }
   for (const m of mounts) dockerArgs.push(...mountArg(m));
 

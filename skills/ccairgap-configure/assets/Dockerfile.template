@@ -1,15 +1,15 @@
-# .claude-airgap/Dockerfile — custom image extending the ccairgap base.
+# .ccairgap/Dockerfile — custom image extending the ccairgap base.
 #
 # Usage: place next to config.yaml, then reference it:
 #   # config.yaml
 #   dockerfile: Dockerfile
 #
 # You also need entrypoint.sh next to this file — copy it from the ccairgap
-# package: `cp <node_modules>/claude-airgap/docker/entrypoint.sh ./`. It's
+# package: `cp <node_modules>/ccairgap/docker/entrypoint.sh ./`. It's
 # about 40 lines of bash and shouldn't need editing unless you know why.
 #
 # This template is Pattern 1 from references/dockerfile-patterns.md (stock recipe
-# + your additions in the middle). Pattern 2 (`FROM claude-airgap:<ver>`) is
+# + your additions in the middle). Pattern 2 (`FROM ccairgap:<ver>`) is
 # shorter but requires the base image to exist locally already.
 #
 # Rebuilds are triggered only when: tag missing, --rebuild passed, or the
@@ -90,10 +90,10 @@ RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache \
 # USER root
 # -----------------------------------------------------------------------------
 
-COPY --chown=claude:claude entrypoint.sh /usr/local/bin/claude-airgap-entrypoint
-RUN chmod +x /usr/local/bin/claude-airgap-entrypoint
+COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
+RUN chmod +x /usr/local/bin/ccairgap-entrypoint
 
 USER claude
 WORKDIR /home/claude
 
-ENTRYPOINT ["/usr/local/bin/claude-airgap-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]

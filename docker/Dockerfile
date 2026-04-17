@@ -37,10 +37,10 @@ RUN set -e; \
 RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache \
  && chown -R ${HOST_UID}:${HOST_GID} /home/claude
 
-COPY --chown=claude:claude entrypoint.sh /usr/local/bin/claude-airgap-entrypoint
-RUN chmod +x /usr/local/bin/claude-airgap-entrypoint
+COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
+RUN chmod +x /usr/local/bin/ccairgap-entrypoint
 
 USER claude
 WORKDIR /home/claude
 
-ENTRYPOINT ["/usr/local/bin/claude-airgap-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
