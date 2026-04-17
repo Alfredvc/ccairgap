@@ -241,14 +241,15 @@ Runs at container start. Steps:
 5. Patch `/home/claude/.claude.json` via `jq` to ensure:
    - `hasCompletedOnboarding: true`
    - `projects.<cwd>.hasTrustDialogAccepted: true` for each session repo's cwd
-6. Merge env-var overrides into `/home/claude/.claude/settings.json` (use `jq '.env = (.env // {}) + { ... }'` to preserve existing entries):
+6. Merge overrides into `/home/claude/.claude/settings.json`. `.env` merged with `jq '.env = (.env // {}) + { ... }'` to preserve existing entries; `skipDangerousModePermissionPrompt` set to `true` to suppress the bypass-permissions startup warning inside the sandbox:
    ```json
    {
      "env": {
        "DISABLE_AUTOUPDATER": "1",
        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
        "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1"
-     }
+     },
+     "skipDangerousModePermissionPrompt": true
    }
    ```
 7. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
@@ -391,6 +392,8 @@ Entrypoint ends with `exec claude --dangerously-skip-permissions`.
 - `DISABLE_AUTOUPDATER=1`
 - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
 - `CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1`
+
+Also injected at the top level of the same file: `skipDangerousModePermissionPrompt: true` — suppresses Claude Code's one-time "Bypass Permissions mode" startup warning. Container is already sandboxed, so the prompt is redundant and would block non-interactive `-p` runs. Host settings unaffected (container settings.json is rsync'd from host then patched in-place; writes never leak back).
 
 These persist across `/clear` and any session restart inside the container.
 

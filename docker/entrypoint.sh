@@ -70,7 +70,7 @@ jq '.env = (.env // {}) + {
     "DISABLE_AUTOUPDATER": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1"
-}' "$SETTINGS" > "$TMP_SETTINGS"
+} | .skipDangerousModePermissionPrompt = true' "$SETTINGS" > "$TMP_SETTINGS"
 mv "$TMP_SETTINGS" "$SETTINGS"
 
 # cwd: first repo path (AIRLOCK_CWD), else /workspace.
