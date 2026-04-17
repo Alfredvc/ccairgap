@@ -1,5 +1,9 @@
 # claude-airlock
 
+[![CI](https://github.com/alfredvc/claude-airlock/actions/workflows/ci.yml/badge.svg)](https://github.com/alfredvc/claude-airlock/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/claude-airlock.svg)](https://www.npmjs.com/package/claude-airlock)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Run Claude Code with `--dangerously-skip-permissions` inside a Docker container. Hand it a task, walk away. Host filesystem is physically unable to be mutated outside a small set of explicitly writable paths. Exfiltration is an accepted risk; host state destruction is not.
 
 See [`docs/SPEC.md`](docs/SPEC.md) for the full design.
