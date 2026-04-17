@@ -11,16 +11,19 @@ import { dirname, isAbsolute, join } from "node:path";
 import type { Mount } from "./mounts.js";
 
 /**
- * Hook policy: default is "all hooks off". Users opt-in specific hooks by a glob
- * matched against the raw `command` string in each hook definition. Claude Code has
- * no native per-hook disable, so for non-empty enable lists we filter hook JSON at
- * four sources (user settings, cache-backed plugin hooks.json, directory-sourced
- * plugin hooks.json, project settings) and deliver the patched files as nested
- * bind mounts (single-file overlays).
+ * Hook policy: default is "all hooks off, statusLine on". Users opt-in specific
+ * hooks by a glob matched against the raw `command` string in each hook definition.
+ * Claude Code has no native per-hook disable, so we filter hook JSON at four sources
+ * (user settings, cache-backed plugin hooks.json, directory-sourced plugin hooks.json,
+ * project settings) and deliver the patched files as nested bind mounts (single-file
+ * overlays).
  *
- * When `enableGlobs` is empty we skip filtering entirely and rely on Claude Code's
- * top-level `disableAllHooks: true` — cheapest path, catches everything including
- * sources we can't see (future plugin types, ad-hoc project settings).
+ * Why not `disableAllHooks: true` for the empty-enable case: that flag also disables
+ * the custom `statusLine` (per Claude Code docs), so the cheap catch-all path silently
+ * kills the user's statusline. Instead we explicitly set `disableAllHooks: false` and
+ * neutralize every hook source by overlaying `hooks: {}`. statusLine survives via the
+ * preserved user settings spread. Trade-off: any future hook source we don't enumerate
+ * here would slip through — keep `enumerateHooks` and this filter list in lockstep.
  */
 export interface HookPolicy {
   enableGlobs: string[];
@@ -48,15 +51,18 @@ export interface ApplyHookPolicyInput {
 export interface ApplyHookPolicyResult {
   /**
    * Absolute path on host of the patched user settings file to overlay the rsync'd
-   * one inside the container. Always produced (covers both empty-enable disableAllHooks
-   * injection and non-empty filter pass).
+   * one inside the container. Always produced — empty enable list yields
+   * `disableAllHooks: false` + `hooks: {}`; non-empty list filters down `hooks` to
+   * surviving entries. statusLine and other unrelated keys are passed through.
    */
   patchedUserSettingsPath: string;
   /**
    * Nested single-file bind mounts:
    * - plugin hooks.json overrides (RO)
    * - per-repo project settings.json[.local] overrides (RO)
-   * Empty when `enableGlobs` is empty.
+   * Always populated (one per hook-bearing source), regardless of `enableGlobs`.
+   * With empty globs the patched files carry `hooks: {}`; with a non-empty list
+   * the hooks field is filtered down to surviving entries.
    */
   overrideMounts: Mount[];
 }
@@ -391,10 +397,14 @@ export function enumerateHooks(input: EnumerateHooksInput): HookRecord[] {
 }
 
 /**
- * Apply the hook policy. Always writes a patched user settings file; when the
- * enable list is non-empty, also writes filtered hooks.json / settings.json
- * copies under `$SESSION/hook-policy/` and returns single-file bind mounts that
- * overlay them on top of the RO plugin cache and the RW session clones.
+ * Apply the hook policy. Writes a patched user settings file plus filtered
+ * hooks.json / settings.json copies under `$SESSION/hook-policy/` for every
+ * hook-bearing source, and returns single-file bind mounts that overlay them
+ * on top of the RO plugin cache and the RW session clones.
+ *
+ * `disableAllHooks` is always set to `false` (so the custom `statusLine`
+ * survives — see file-top comment). Hook neutralization happens by overlaying
+ * filtered `hooks` fields at every source instead.
  */
 export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyResult {
   const { policy, sessionDir, hostClaudeDir, pluginsCacheDir, pluginsCacheContainerPath, repos } =
@@ -402,30 +412,21 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
   const globs = policy.enableGlobs;
   const policyDir = join(sessionDir, "hook-policy");
 
-  // User settings — always produced.
   const hostUserSettings = (readJsonOrNull(join(hostClaudeDir, "settings.json")) ?? {}) as Record<
     string,
     unknown
   >;
-  const patchedUser: Record<string, unknown> = { ...hostUserSettings };
-  if (globs.length === 0) {
-    patchedUser.disableAllHooks = true;
-    patchedUser.hooks = {};
-  } else {
-    // Explicit false so a host-level `disableAllHooks: true` doesn't smother our opt-ins.
-    patchedUser.disableAllHooks = false;
-    patchedUser.hooks = filterHooksField(hostUserSettings.hooks, globs);
-  }
+  // Explicit false overrides any host-level `disableAllHooks: true` AND keeps
+  // the custom statusLine alive (the flag would kill it).
+  const patchedUser: Record<string, unknown> = {
+    ...hostUserSettings,
+    disableAllHooks: false,
+    hooks: filterHooksField(hostUserSettings.hooks, globs),
+  };
   const patchedUserSettingsPath = join(policyDir, "user-settings.json");
   writeJsonAtomic(patchedUserSettingsPath, patchedUser);
 
   const overrideMounts: Mount[] = [];
-
-  // Plugin hooks and project settings only need overlays when filtering is active.
-  if (globs.length === 0) {
-    return { patchedUserSettingsPath, overrideMounts };
-  }
-
   const enabledPlugins = (hostUserSettings as { enabledPlugins?: unknown }).enabledPlugins;
   const plugins = listPluginsOnDisk(pluginsCacheDir, pluginsCacheContainerPath);
   for (const p of plugins) {

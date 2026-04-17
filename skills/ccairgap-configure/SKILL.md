@@ -150,7 +150,7 @@ Image tag for custom Dockerfiles is `ccairgap:custom-<sha256(dockerfile)[:12]>` 
 
 ## Hook policy cheat sheet
 
-All hooks are disabled by default inside the container (`disableAllHooks: true` is injected). Re-enable per-command with globs against the raw `command` string. Anchored full match, `*` is wildcard. Full cookbook in `references/hook-patterns.md`.
+All hooks are disabled by default inside the container — every hook source is overlaid with `hooks: {}`, but `disableAllHooks` is forced to `false` so the user's custom `statusLine` keeps running. Re-enable individual hook commands with globs against the raw `command` string. Anchored full match, `*` is wildcard. Full cookbook in `references/hook-patterns.md`.
 
 Common patterns:
 
@@ -158,9 +158,11 @@ Common patterns:
 hooks:
   enable:
     - "python3 *"                              # any python3 hook
-    - "bash ~/.claude/statusline.sh"           # exact statusline
+    - "node /path/to/audit.js"                 # exact node command
     - "*/auto-approve.py *"                    # any command ending in auto-approve.py
 ```
+
+Don't put statusline scripts here — `statusLine` is not a hook in ccairgap's filtering and runs by default. (It will fail silently if its binary deps aren't in the image.)
 
 Important caveat: enabling a hook doesn't guarantee it works — the command's binary must exist inside the container. If the hook shells out to a host-only binary, either install it via the custom Dockerfile or leave the hook disabled.
 

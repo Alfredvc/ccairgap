@@ -166,9 +166,10 @@ describe("applyHookPolicy", () => {
     writeFileSync(path, JSON.stringify(data));
   }
 
-  it("empty enable list → disableAllHooks:true and no override mounts", () => {
+  it("empty enable list → disableAllHooks:false, hooks:{} at every source, statusLine preserved", () => {
     writeJSON(join(hostClaude, "settings.json"), {
       hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "python3 x" }] }] },
+      statusLine: { type: "command", command: "bash ~/.claude/statusline.sh" },
       enabledPlugins: { "p@m": true },
     });
     mkdirSync(join(pluginsCache, "m", "p", "1.0.0", "hooks"), { recursive: true });
@@ -183,10 +184,20 @@ describe("applyHookPolicy", () => {
       pluginsCacheContainerPath: containerCache,
       repos: [],
     });
-    expect(res.overrideMounts).toEqual([]);
     const patched = JSON.parse(readFileSync(res.patchedUserSettingsPath, "utf8"));
-    expect(patched.disableAllHooks).toBe(true);
+    expect(patched.disableAllHooks).toBe(false);
     expect(patched.hooks).toEqual({});
+    // statusLine must survive — the whole point of avoiding `disableAllHooks: true`.
+    expect(patched.statusLine).toEqual({
+      type: "command",
+      command: "bash ~/.claude/statusline.sh",
+    });
+    // Plugin overlay still produced; its hooks field is empty.
+    expect(res.overrideMounts).toHaveLength(1);
+    const pm = res.overrideMounts[0]!;
+    expect(pm.dst).toBe(`${containerCache}/m/p/1.0.0/hooks/hooks.json`);
+    const patchedPlugin = JSON.parse(readFileSync(pm.src, "utf8"));
+    expect(patchedPlugin.hooks).toEqual({});
   });
 
   it("non-empty enable filters user hooks and plugin hooks.json", () => {

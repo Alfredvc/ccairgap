@@ -55,7 +55,7 @@ hooks:
     - "python3 *"
 
     # Exact-match a specific command
-    - "bash ~/.claude/statusline.sh"
+    - "node /path/to/audit.js"
 
     # Any command ending in auto-approve.py (with args after)
     - "*/auto-approve.py *"
@@ -79,15 +79,19 @@ Order doesn't matter; match is OR across entries.
 
 ## Per-source behavior (implementation detail)
 
-- **User settings** (`~/.claude/settings.json`): always processed when ccairgap launches. Filter applied; `disableAllHooks` is explicitly set by ccairgap (true when enable list empty, false otherwise).
-- **Plugin hooks**: only processed when the enable list is non-empty. For each `enabledPlugins[<plugin>@<market>] === true`, the plugin's `hooks/hooks.json` is filtered and overlaid via a single-file bind mount.
-- **Project settings** (in the workspace or any `--extra-repo`): only processed when the enable list is non-empty. Both `.claude/settings.json` and `.claude/settings.local.json` are filtered and overlaid.
+- **User settings** (`~/.claude/settings.json`): always processed. `hooks` field replaced with the filtered set (empty `{}` when the enable list is empty); `disableAllHooks` always forced to `false` so the custom `statusLine` keeps running.
+- **Plugin hooks**: always processed. For each `enabledPlugins[<plugin>@<market>] === true`, the plugin's `hooks/hooks.json` is filtered and overlaid via a single-file bind mount (filtered = `{}` when the enable list is empty).
+- **Project settings** (in the workspace or any `--extra-repo`): always processed. Both `.claude/settings.json` and `.claude/settings.local.json` are filtered and overlaid.
 
 Host files are never mutated; patched copies live under `$SESSION/hook-policy/` and die with the session.
+
+## `statusLine` is not a hook here
+
+ccairgap can't use Claude Code's `disableAllHooks: true` flag (it would also kill the custom `statusLine`), so the empty-enable default neutralizes hook fields directly and leaves `statusLine` running. Don't add the statusline `command` to `hooks.enable` — it's a no-op there. Status line script runs as long as its binary deps exist in the image. To turn it off inside the sandbox, remove it from your host `~/.claude/settings.json` (no per-sandbox toggle).
 
 ## Quick decision guide
 
 - User says "I want all my hooks active in the sandbox" → list every distinct `command` pattern from their config. If it's a dozen, they probably really want `"*"` — that's legal but loses the filter's safety net. Check first.
-- User says "just my status line and approve-tool hook" → target those two commands specifically. Exact match beats wildcards when you can.
-- User says "nothing, hooks are noise in the sandbox" → leave `hooks.enable` unset (or omit from config). Default behavior.
+- User says "just my approve-tool hook" → target that command specifically. Exact match beats wildcards when you can. (Status line runs by default — no enable needed.)
+- User says "nothing, hooks are noise in the sandbox" → leave `hooks.enable` unset (or omit from config). Default behavior. Status line still runs unless you also remove it from host settings.
 - User's hook references a binary that isn't in the base image → either add the binary to a custom Dockerfile and enable the hook, or leave it disabled. Don't enable hooks you know will fail.

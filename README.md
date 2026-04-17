@@ -74,10 +74,12 @@ ccairgap --hook-enable 'python3 *'
 # Enable two specific commands
 ccairgap \
   --hook-enable 'python3 *' \
-  --hook-enable 'bash ~/.claude/statusline.sh'
+  --hook-enable 'node /path/to/audit.js'
 ```
 
 If a hook's command references a binary that isn't in your container image, opting it in still fails at invocation — extend the Dockerfile (`--dockerfile`) to include the binary.
+
+**`statusLine` is not a hook** for this purpose — it runs by default. ccairgap can't use Claude Code's `disableAllHooks: true` flag (it would also kill `statusLine`), so the empty-enable default just neutralizes hook fields directly, leaving `statusLine` intact. Your host status-line script runs as long as its binary deps exist inside the image.
 
 Unsure what's in scope? `ccairgap inspect` dumps the full config surface the container would see at launch as JSON `{hooks, mcpServers, env, marketplaces}` — every hook entry, every MCP server definition, every `env` var, and every `extraKnownMarketplaces` entry across user settings, enabled plugins, project `.claude/settings.json[.local]`, `~/.claude.json`, and `<repo>/.mcp.json`. Pick globs from real `command` strings, see which MCPs would load, confirm env passthroughs, and know which marketplace source paths will be RO-mounted — without hunting through config files by hand.
 
@@ -156,7 +158,7 @@ docker-build-arg:
 hooks:
   enable:
     - "python3 *"
-    - "bash ~/.claude/statusline.sh"
+    - "node /path/to/audit.js"
 docker-run-arg:
   - "-p 8080:8080"
   - "--network my-net"

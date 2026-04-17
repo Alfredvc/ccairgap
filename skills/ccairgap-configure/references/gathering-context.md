@@ -100,7 +100,7 @@ Extract:
 - **MCP servers** — every `mcpServers[].definition.command` (or `url` for http/sse type). If the command isn't in the base image's PATH, it needs either a Dockerfile extension or it won't work inside the container. Pay attention to `approvalState` on `project`-source servers: `unapproved` means the user hasn't accepted the `.mcp.json`, and it won't run inside the sandbox.
 - **Env vars** — every `env[].value`. Ones referencing host-only paths (`/Users/...`, `/opt/homebrew/...`) or host binaries won't resolve inside the container; flag those for the user.
 - **Plugin marketplaces** — `marketplaces[]` entries with `sourceType: "directory"` or `"file"` surface a `hostPath`. ccairgap auto-RO-mounts those; user doesn't have to configure them. Other source types (`github`, `git`, `hostPattern`, `settings`) resolve via the plugin cache or inline config — no extra mount needed.
-- **Status line** — `statusLine.command` is a hook-like entry; filtered the same way.
+- **Status line** — `statusLine.command` runs by default (not filtered by `hooks.enable`). Flag binaries it depends on the same way you'd flag a hook command's deps: if it references `/opt/homebrew/...` or any host-only binary, it'll fail silently inside the sandbox until either the Dockerfile installs the dep or the user removes `statusLine` from host settings.
 
 ### Binary dependencies inside the container
 
@@ -152,10 +152,10 @@ After probing, state what you found and your proposed config. Be explicit about 
 
 Good framing:
 
-> Found: Node/TypeScript project at `~/src/foo`. Gitignored dirs present: `node_modules` (1.2 GB), `.next`, `dist`. Your `~/.claude/settings.json` has two hooks (one `python3` auto-approve, one `bash` statusline). MCP servers: `grafana` (uses `docker` — won't work in sandbox without Dockerfile extension *and* a socket mount that defeats the sandbox; don't enable), `puppeteer-mcp` (uses `npx`, should work).
+> Found: Node/TypeScript project at `~/src/foo`. Gitignored dirs present: `node_modules` (1.2 GB), `.next`, `dist`. Your `~/.claude/settings.json` has one hook (`python3` auto-approve) plus a `statusLine` running `bash ~/.claude/statusline.sh` (will run by default — needs `bash` + `jq`, both already in the base image). MCP servers: `grafana` (uses `docker` — won't work in sandbox without Dockerfile extension *and* a socket mount that defeats the sandbox; don't enable), `puppeteer-mcp` (uses `npx`, should work).
 >
 > Proposed:
-> - `config.yaml`: `ro:` mount `node_modules`, `.next`, `dist` so Claude can read them (they're gitignored → missing from the session clone without this). Enable two hooks: `python3 *`, `bash ~/.claude/statusline.sh`.
+> - `config.yaml`: `ro:` mount `node_modules`, `.next`, `dist` so Claude can read them (they're gitignored → missing from the session clone without this). Enable one hook: `python3 *`. (Status line already runs by default.)
 > - Custom `Dockerfile`: base + Python 3 (for the auto-approve hook).
 >
 > Not adding (tell me if you want any of these):

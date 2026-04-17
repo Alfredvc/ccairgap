@@ -54,9 +54,9 @@ export interface LaunchOptions {
   name?: string;
   /**
    * Globs matched against each hook's raw `command` string to opt it back in.
-   * Empty → all hooks disabled (top-level `disableAllHooks: true` injected).
-   * Non-empty → filter user settings + enabled plugin hooks.json + project
-   * settings and overlay the filtered copies via bind mounts.
+   * Empty → every hook source overlaid with `hooks: {}` (statusLine survives).
+   * Non-empty → user settings + enabled plugin hooks.json + project settings
+   * filtered down to surviving entries and overlaid via bind mounts.
    */
   hookEnable: string[];
   /**
@@ -322,10 +322,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const homeInContainer = "/home/claude";
   const pluginsCacheContainerPath = join(homeInContainer, ".claude", "plugins", "cache");
 
-  // Hook policy: default is disableAllHooks:true; non-empty --hook-enable list
-  // produces filtered overlays for user settings, each enabled plugin's hooks.json,
-  // and each repo's .claude/settings.json[.local]. Mounts are nested single-file
-  // binds that overlay RO mounts (plugin cache) and the RW session clones.
+  // Hook policy: every hook source overlaid via nested single-file binds (user
+  // settings, each enabled plugin's hooks.json, each repo's .claude/settings.json
+  // [.local]). Empty enable list → filtered = {} so every hook is neutralized.
+  // Non-empty → filtered to surviving entries. `disableAllHooks: false` is forced
+  // either way so the user's custom statusLine keeps running.
   const hookPolicyResult = applyHookPolicy({
     policy: { enableGlobs: opts.hookEnable },
     sessionDir: sessionPath,

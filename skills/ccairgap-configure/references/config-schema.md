@@ -104,12 +104,12 @@ mount:
 sync:
   - dist
 
-# Hooks: disabled by default; enable the python3 auto-approve hook and the
-# statusline script by matching their `command` strings.
+# Hooks: disabled by default; enable the python3 auto-approve hook by matching
+# its `command` string. (Don't list the statusline command — `statusLine` is
+# not a hook in ccairgap's filtering and runs by default.)
 hooks:
   enable:
     - "python3 *"
-    - "bash ~/.claude/statusline.sh"
 
 # Pin Claude Code version inside the container image.
 docker-build-arg:

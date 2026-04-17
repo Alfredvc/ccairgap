@@ -101,8 +101,9 @@
 # hooks:
 #   enable:
 #     - "python3 *"                        # all python3 hooks
-#     - "bash ~/.claude/statusline.sh"     # the statusline script
+#     - "node /path/to/audit.js"           # exact node command
 #     - "*/auto-approve.py *"              # any auto-approve.py hook
+# Note: `statusLine` runs by default — don't list its command here, it's a no-op.
 
 # ---------------------------------------------------------------------------
 # Raw docker run args — escape hatch.
