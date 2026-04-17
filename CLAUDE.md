@@ -61,7 +61,14 @@ docs/SPEC.md      authoritative design
 
 ## Config file
 
-`--config <path>` or default `<git-root>/.claude-airgap/config.yaml`. YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Relative paths resolve against config file's directory. Unknown keys + wrong types → error.
+`--config <path>` or default `<git-root>/.claude-airgap/config.yaml`. YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
+
+**Relative path resolution** — three anchors by semantic (implemented in `src/config.ts` `resolveConfigPaths` + `src/artifacts.ts`):
+- `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at canonical `<git-root>/.claude-airgap/config.yaml` (i.e. `dirname(configDir)` when `basename(configDir) === ".claude-airgap"`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
+- `dockerfile` → **config file's directory** (sidecar convention). `dockerfile: Dockerfile` = `.claude-airgap/Dockerfile`.
+- `cp`, `sync`, `mount` → **workspace repo root** at launch (`artifacts.ts`, not `resolveConfigPaths`).
+
+Absolute paths bypass anchoring. `repo` is optional; defaults to the git root that contains the config (or cwd).
 
 ## Host env vars
 

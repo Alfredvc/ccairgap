@@ -85,7 +85,13 @@ async function main() {
   });
 
   program
-    .option("--config <path>", "path to yaml config file (default: <git-root>/.claude-airgap/config.yaml)")
+    .option(
+      "--config <path>",
+      "path to yaml config file (default: <git-root>/.claude-airgap/config.yaml). " +
+        "Inside the config, relative `repo`/`extra-repo`/`ro` paths anchor on the git " +
+        "root (parent of `.claude-airgap/`); relative `dockerfile` anchors on the config " +
+        "file's directory; relative `cp`/`sync`/`mount` anchor on the workspace repo root.",
+    )
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo exposed alongside --repo (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])

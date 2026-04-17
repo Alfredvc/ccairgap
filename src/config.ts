@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execaSync } from "execa";
 import { parse as parseYaml } from "yaml";
 
@@ -231,18 +231,36 @@ export function loadConfig(
 }
 
 /**
- * Resolve config-file paths relative to the config file's directory.
- * Leaves absolute paths alone.
+ * Resolve config-file paths. Two anchors, by semantic:
+ *
+ *  - Workspace-space paths (`repo`, `extra-repo`, `ro`) resolve against the
+ *    "workspace anchor". When the config lives at the canonical
+ *    `<git-root>/.claude-airgap/config.yaml`, the anchor is the git-root
+ *    (`dirname` of the `.claude-airgap/` dir) so users can write `repo: .`,
+ *    `ro: ../docs`, `extra-repo: ../sibling` and have them mean what they
+ *    say about their project. When `--config` points somewhere else, fall
+ *    back to the config file's own directory.
+ *
+ *  - `dockerfile` resolves against the config file's directory (sidecar
+ *    convention — the Dockerfile lives next to the config).
+ *
+ *  - `cp` / `sync` / `mount` are NOT resolved here — they anchor on the
+ *    workspace repo root at launch time (see artifacts.ts).
+ *
+ * Absolute paths pass through untouched.
  */
 export function resolveConfigPaths(cfg: ConfigFile, configPath: string): ConfigFile {
-  const base = dirname(configPath);
-  const fixPath = (p: string) => (isAbsolute(p) ? p : resolve(base, p));
+  const configDir = dirname(configPath);
+  const workspaceAnchor =
+    basename(configDir) === ".claude-airgap" ? dirname(configDir) : configDir;
+  const against = (anchor: string) => (p: string) =>
+    isAbsolute(p) ? p : resolve(anchor, p);
+  const viaWorkspace = against(workspaceAnchor);
+  const viaConfigDir = against(configDir);
   const out: ConfigFile = { ...cfg };
-  if (cfg.repo) out.repo = fixPath(cfg.repo);
-  if (cfg.extraRepo) out.extraRepo = cfg.extraRepo.map(fixPath);
-  if (cfg.ro) out.ro = cfg.ro.map(fixPath);
-  // cp/sync/mount: relative paths are resolved against repo root later,
-  // not config dir. Leave as-is; artifacts.ts handles resolution.
-  if (cfg.dockerfile) out.dockerfile = fixPath(cfg.dockerfile);
+  if (cfg.repo) out.repo = viaWorkspace(cfg.repo);
+  if (cfg.extraRepo) out.extraRepo = cfg.extraRepo.map(viaWorkspace);
+  if (cfg.ro) out.ro = cfg.ro.map(viaWorkspace);
+  if (cfg.dockerfile) out.dockerfile = viaConfigDir(cfg.dockerfile);
   return out;
 }

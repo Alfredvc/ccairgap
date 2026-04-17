@@ -166,21 +166,44 @@ mount:
 });
 
 describe("resolveConfigPaths", () => {
-  it("resolves relative repo/extra-repo/ro/dockerfile against config dir", () => {
+  it("resolves repo/extra-repo/ro against git root (parent of .claude-airgap/)", () => {
     const cfg = {
-      repo: "./sub",
-      extraRepo: ["./more", "/abs/path"],
-      ro: ["../ro"],
-      dockerfile: "./Dockerfile",
+      repo: ".",
+      extraRepo: ["../sibling", "/abs/path"],
+      ro: ["../docs", "~/not-expanded"],
+      dockerfile: "Dockerfile",
       base: "main",
     };
     const out = resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml");
     expect(out).toEqual({
-      repo: "/repo/.claude-airgap/sub",
-      extraRepo: ["/repo/.claude-airgap/more", "/abs/path"],
-      ro: ["/repo/ro"],
+      repo: "/repo",
+      extraRepo: ["/sibling", "/abs/path"],
+      ro: ["/docs", "/repo/~/not-expanded"],
       dockerfile: "/repo/.claude-airgap/Dockerfile",
       base: "main",
+    });
+  });
+
+  it("dockerfile still anchors on config dir even when workspace anchor differs", () => {
+    const cfg = { repo: ".", dockerfile: "./Dockerfile" };
+    const out = resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml");
+    expect(out.repo).toBe("/repo");
+    expect(out.dockerfile).toBe("/repo/.claude-airgap/Dockerfile");
+  });
+
+  it("falls back to config dir when config is not in a .claude-airgap/ dir", () => {
+    const cfg = {
+      repo: "./sub",
+      extraRepo: ["./more"],
+      ro: ["../ro"],
+      dockerfile: "./Dockerfile",
+    };
+    const out = resolveConfigPaths(cfg, "/some/other/my-config.yaml");
+    expect(out).toEqual({
+      repo: "/some/other/sub",
+      extraRepo: ["/some/other/more"],
+      ro: ["/some/ro"],
+      dockerfile: "/some/other/Dockerfile",
     });
   });
 

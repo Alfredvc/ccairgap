@@ -163,6 +163,59 @@ In order:
 12. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
 13. Exec the `docker run` command.
 
+## Config file
+
+YAML file that mirrors launch flags. Default location: `<git-root>/.claude-airgap/config.yaml`. Override: `--config <path>`.
+
+- **Load:** the CLI walks up from `cwd` to find the git root; if `<git-root>/.claude-airgap/config.yaml` exists it's loaded. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
+- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth.
+- **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
+- **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
+
+### Relative path resolution
+
+Three anchors, chosen by the semantic of each key. Absolute paths bypass anchoring.
+
+| Keys | Anchor | Rationale |
+|------|--------|-----------|
+| `repo`, `extra-repo`, `ro` | **Workspace anchor.** When the config lives at the canonical `<X>/.claude-airgap/config.yaml`, anchor = `<X>` (= the git root). When `--config` points elsewhere (e.g. `/tmp/cfg.yaml`), anchor = `dirname(configPath)`. | These paths describe the user's repo-space — "my repo", "a sibling repo", "the docs dir next to my project". Anchoring on the git root (in the canonical case) makes `repo: .` mean the workspace, `ro: ../docs` mean a sibling of the workspace. Anchoring on the `.claude-airgap/` subdir (an implementation detail of ccairgap) would force every user to write `repo: ..` and `ro: ../../docs`. |
+| `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in this same directory". |
+| `cp`, `sync`, `mount` | **Workspace repo root**, resolved at launch against the final `--repo` value. | See §"Build artifact paths". These name paths inside the workspace, not paths relative to the config file's location. |
+
+Implementation: `src/config.ts` `resolveConfigPaths` handles `repo`/`extra-repo`/`ro`/`dockerfile`; `src/artifacts.ts` handles `cp`/`sync`/`mount` at launch.
+
+### Example
+
+```yaml
+# <git-root>/.claude-airgap/config.yaml
+
+# Workspace-space (anchored on git root)
+repo: .                 # optional; defaults to git root anyway
+extra-repo:
+  - ../sibling          # sibling of git root
+ro:
+  - ../docs             # sibling of git root
+
+# Sidecar (anchored on config file dir)
+dockerfile: Dockerfile  # = <git-root>/.claude-airgap/Dockerfile
+
+# Workspace-repo-root anchored (at launch)
+cp:
+  - node_modules        # = <git-root>/node_modules
+sync:
+  - dist
+mount:
+  - .cache
+
+docker-build-arg:
+  CLAUDE_CODE_VERSION: "1.2.3"
+docker-run-arg:
+  - "-p 8080:8080"
+hooks:
+  enable:
+    - "python3 *"
+```
+
 ## Container mount manifest
 
 | Host source | Container path | Mode | Notes |

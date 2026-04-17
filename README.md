@@ -109,22 +109,41 @@ See `docs/SPEC.md` §"Raw docker run args" for the full spec.
 
 Any launch flag can live in a YAML file. Default location: `<git-root>/.claude-airgap/config.yaml`. Override with `--config <path>`.
 
-Precedence: **CLI > config > built-in defaults**. Scalars (`repo`, `base`, `dockerfile`, `print`, `keep-container`, `rebuild`, `warn-docker-args`): CLI wins. Arrays (`extra-repo`, `ro`, `docker-run-arg`): concat across sources. `docker-build-arg` map merges per-key with CLI winning. Relative paths inside the config resolve against the config file's directory.
+Precedence: **CLI > config > built-in defaults**. Scalars (`repo`, `base`, `dockerfile`, `print`, `keep-container`, `rebuild`, `warn-docker-args`): CLI wins. Arrays (`extra-repo`, `ro`, `docker-run-arg`): concat across sources. `docker-build-arg` map merges per-key with CLI winning.
 
-Example `.claude-airgap/config.yaml`:
+### Relative path resolution
+
+Relative paths inside the config resolve against one of two anchors, depending on the key:
+
+| Keys | Anchor | Why |
+|------|--------|-----|
+| `repo`, `extra-repo`, `ro` | **Workspace anchor** — the git root when the config lives at `<git-root>/.claude-airgap/config.yaml` (the canonical case); the config file's directory otherwise (e.g. when `--config /elsewhere/cfg.yaml` is passed). | These describe your project's repo-space. `repo: .` should mean "my repo", `ro: ../docs` should mean "the dir next to my repo" — not surprises mediated by the `.claude-airgap/` subdir. |
+| `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in `.claude-airgap/`". |
+| `cp`, `sync`, `mount` | **Workspace repo root** (resolved at launch, against `--repo`). | These name paths inside the workspace (`node_modules`, `dist`, `.cache`). `--cp node_modules` with `--repo ~/src/foo` → `~/src/foo/node_modules`. |
+
+Absolute paths always work and bypass anchoring.
+
+Example `<git-root>/.claude-airgap/config.yaml`:
 
 ```yaml
-repo: .
+# repo / extra-repo / ro — anchored on the git root (parent of .claude-airgap/)
+repo: .                    # = the git root
 extra-repo:
-  - ../sibling
+  - ../sibling             # sibling of the git root
 ro:
-  - ../docs
+  - ../docs                # sibling of the git root
+
+# cp / sync / mount — anchored on the workspace repo root at launch
 cp:
-  - node_modules
+  - node_modules           # = <git-root>/node_modules
 sync:
-  - dist
+  - dist                   # = <git-root>/dist
 mount:
-  - .cache
+  - .cache                 # = <git-root>/.cache
+
+# dockerfile — anchored on the config file's directory
+dockerfile: Dockerfile     # = <git-root>/.claude-airgap/Dockerfile
+
 base: main
 rebuild: false
 keep-container: false
@@ -141,7 +160,7 @@ docker-run-arg:
 # warn-docker-args: false
 ```
 
-Build-artifact keys (`cp`, `sync`, `mount`) take relative paths resolved against the workspace repo root at launch (not the config file's directory — unlike `repo` / `ro`). Use absolute paths to break out of the workspace.
+`repo` is optional — if omitted, it defaults to the git root that contains the config (or the cwd if no config is loaded). Most canonical setups can drop the key entirely.
 
 Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are accepted. Unknown keys and wrong types are rejected with a clear error.
 
