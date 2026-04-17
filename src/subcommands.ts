@@ -30,11 +30,12 @@ export async function recover(ts?: string): Promise<void> {
     process.exit(1);
   }
   const result = await handoff(sd, cliVersion());
-  const fetched = result.fetched.filter((f) => f.ok).length;
+  const counts = { fetched: 0, empty: 0, failed: 0 };
+  for (const f of result.fetched) counts[f.status]++;
   console.log(
-    `recovered ${ts}: ${fetched}/${result.fetched.length} branches fetched, ` +
+    `recovered ${ts}: ${counts.fetched} fetched, ${counts.empty} empty, ${counts.failed} failed, ` +
       `${result.transcriptsCopied} transcript dirs copied, ` +
-      `session dir ${result.removed ? "removed" : "kept"}`,
+      `session dir ${result.removed ? "removed" : result.preserved ? "preserved" : "kept"}`,
   );
   if (result.warnings.length > 0) process.exitCode = 1;
 }

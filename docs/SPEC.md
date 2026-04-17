@@ -309,9 +309,9 @@ If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fat
 - Commits by the container go into the session clone's own `.git/objects/` (at `<hostPath>/.git/objects/` inside the container) — never touch host.
 
 **Exit handoff:**
-- On container exit, the CLI runs `git -C <real-host-path> fetch $SESSION/repos/<name> sandbox/<ts>:sandbox/<ts>`.
+- On container exit, the CLI runs `git -C <real-host-path> fetch $SESSION/repos/<name> sandbox/<ts>:sandbox/<ts>` — but only if the sandbox branch has commits the host doesn't already have (see §"Handoff routine" for the empty-branch skip and orphan-branch preservation).
 - This happens on the host, not in the container. Container never has write access to the real repo.
-- Result: a new branch `sandbox/<ts>` in the host repo containing Claude's commits. Host user reviews / merges / discards.
+- Result: a new branch `sandbox/<ts>` in the host repo containing Claude's commits. If the session made no commits, no branch is created. Host user reviews / merges / discards.
 
 **Host constraints during session:**
 - Do not run `git gc --prune=now` or `git prune` on the real repo — would delete objects the session clone references via alternates.
@@ -434,14 +434,17 @@ Used by both the exit trap and `claude-airlock recover`. Takes a `$SESSION/<ts>/
 
 1. Read `$SESSION/<ts>/manifest.json`. Check the top-level `"version"` field; if it is unknown to the current CLI, abort with a clear message (`"manifest v<N> requires claude-airlock ≥ <X.Y.Z>"`). Otherwise extract the repo→host-path mapping.
 2. For each entry in the manifest:
-   - `git -C <real-host-path> fetch $SESSION/<ts>/repos/<basename> sandbox/<ts>:sandbox/<ts>`
-   - `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
-   - If fetch fails (no commits, branch doesn't exist, host path gone), log and continue — not fatal.
+   - Rewrite the session clone's `.git/objects/info/alternates` back to `<real-host-path>/.git/objects/` so host `git` can traverse history (the container-side path `/host-git-alternates/...` is meaningless on the host).
+   - Count commits on `sandbox/<ts>` not reachable from any `origin/*` ref in the session clone: `git -C <session-clone> rev-list --count sandbox/<ts> --not --remotes=origin`.
+     - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
+     - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<ts>/repos/<basename> sandbox/<ts>:sandbox/<ts>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
+   - If fetch fails (branch doesn't exist, host path gone), log and continue — not fatal.
 3. For each `<path-encoded-cwd>` dir in `$SESSION/<ts>/transcripts/`:
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
-4. `rm -rf $SESSION/<ts>`
+4. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 5) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `sandbox/<ts>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `claude-airlock discard <ts>` to drop it — or re-run `claude-airlock recover <ts>` (the same warning repeats until discard).
+5. `rm -rf $SESSION/<ts>` unless step 4 preserved it.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
 
