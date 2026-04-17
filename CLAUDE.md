@@ -38,7 +38,7 @@ src/
   dockerRunArgs.ts --docker-run-arg tokenization (shell-quote) + dangerous-arg scanner
   hooks.ts        enumerate + filter hook entries across user/plugin/project sources
   mcp.ts          enumerate MCP server definitions across user/project/plugin sources
-  settings.ts     settings.json manipulation: env enumeration, marketplace scan, hook policy patching
+  settings.ts     settings.json read-only enumeration: env vars + extraKnownMarketplaces
   inspectFormat.ts pretty-print tables for `ccairgap inspect --pretty`
   plugins.ts      plugin marketplace directory/file-source discovery
   credentials.ts  macOS: `security find-generic-password -s "Claude Code-credentials"` → $SESSION/creds. Linux: verify ~/.claude/.credentials.json exists.
