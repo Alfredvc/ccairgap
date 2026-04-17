@@ -5,9 +5,9 @@ CLI that runs `claude --dangerously-skip-permissions` inside a Docker container 
 ## Stack
 
 - TypeScript, ESM, Node ≥ 20. Bundled via **tsup** to single `dist/cli.js` (see `tsup.config.ts`).
-- Deps: `commander` (args), `execa` (shell out to `docker`/`git`), `yaml` (config file). No runtime config libs beyond that.
+- Deps: `commander` (args), `execa` (shell out to `docker`/`git`), `yaml` (config file), `shell-quote` (tokenize `--docker-run-arg`). No runtime config libs beyond that.
 - Tests: **vitest** (`*.test.ts` colocated in `src/`). Type check: `tsc --noEmit`.
-- Distribution: npm `ccairgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`.
+- Distribution: npm `ccairgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`, `SECURITY.md`.
 
 ## Scripts
 
@@ -26,14 +26,21 @@ src/
   cli.ts          commander entry; arg parse, config merge, dispatch
   config.ts       YAML config load + CLI-vs-config merge (CLI > config > defaults)
   launch.ts       main launch pipeline: clone, mounts, docker run, exit trap
-  subcommands.ts  list / recover / discard / doctor / hooks
+  subcommands.ts  list / recover / discard / doctor / inspect / init
   handoff.ts      exit trap + recover logic (git fetch sandbox branch, copy transcripts, rm session)
   manifest.ts     $SESSION/manifest.json read/write; carries "version": 1
   orphans.ts      scan $XDG_STATE_HOME for sessions without live container
   git.ts          resolve real git dir (dir / file-worktree), clone --shared, branch
   alternates.ts   rewrite .git/objects/info/alternates to /host-git-alternates/<name>/objects
   mounts.ts       build docker -v list per SPEC §Container mount manifest
-  plugins.ts      jq-equivalent scan of settings.json extraKnownMarketplaces
+  artifacts.ts    --cp/--sync/--mount path resolution + pre-launch rsync + exit copy-out
+  binaries.ts     host-binary preflight (docker/git/rsync/cp on PATH)
+  dockerRunArgs.ts --docker-run-arg tokenization (shell-quote) + dangerous-arg scanner
+  hooks.ts        enumerate + filter hook entries across user/plugin/project sources
+  mcp.ts          enumerate MCP server definitions across user/project/plugin sources
+  settings.ts     settings.json read-only enumeration: env vars + extraKnownMarketplaces
+  inspectFormat.ts pretty-print tables for `ccairgap inspect --pretty`
+  plugins.ts      plugin marketplace directory/file-source discovery
   credentials.ts  macOS: `security find-generic-password -s "Claude Code-credentials"` → $SESSION/creds. Linux: verify ~/.claude/.credentials.json exists.
   image.ts        docker build; tag = ccairgap:<cli-version> or :custom-<sha256(dockerfile)[:12]>
   paths.ts        XDG state dir resolution; CCAIRGAP_HOME override

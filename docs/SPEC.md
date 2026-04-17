@@ -106,9 +106,9 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<ts>`. |
 | `recover [<ts>]` | Run the handoff routine against `$SESSION/<ts>/`. Idempotent. With no `<ts>` argument, equivalent to `list`. |
 | `discard <ts>` | Delete `$SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
-| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.claude-airgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
-| `hooks` | Enumerate hook entries ccairgap would see at launch, across every source (user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json`, and `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`). Output is JSON to stdout — one object per hook entry with `source`, `sourcePath`, `event`, `matcher`, and `command`. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
-| `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.claude-airgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
+| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
+| `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
+| `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
 
 **Examples:**
 
@@ -142,7 +142,7 @@ In order:
    - Otherwise: if `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
-2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, or `init`, run that handler per §Recovery / §Doctor / §"Container image customization" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
+2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, `inspect`, or `init`, run that handler per §Recovery / §Doctor / §"Container image customization" / §"Hook policy" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
 3. Host-binary preflight: verify `docker`, `git`, `rsync`, and `cp` are all resolvable via PATH (POSIX `command -v`). On failure, error with the list of missing binaries and exit 1 before any session-dir side effects. This catches the ENOENT-during-launch failure mode; `ccairgap doctor` performs the same check plus a `docker version` probe for the daemon.
 4. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
 5. Resolve host credentials (see §"Authentication flow"):
@@ -385,7 +385,7 @@ Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the ima
 Two supported paths to change what's inside the image:
 
 1. **`--docker-build-arg KEY=VAL`** — the bundled Dockerfile exposes `CLAUDE_CODE_VERSION`. Pin Claude Code without touching the Dockerfile.
-2. **Sidecar Dockerfile via `ccairgap init`** — materialize the bundled `Dockerfile` + `entrypoint.sh` into the config dir (default `<git-root>/.claude-airgap/`, or `dirname(--config)` if `--config` is passed). Edit in place. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo.
+2. **Sidecar Dockerfile via `ccairgap init`** — materialize the bundled `Dockerfile` + `entrypoint.sh` into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo.
 
 `ccairgap init` writes three files: `Dockerfile`, `entrypoint.sh`, `config.yaml`. If any of the three already exist, `init` aborts with an error listing them; `--force` overwrites all three unconditionally (no merge — any prior edits to `config.yaml` are lost).
 
@@ -462,7 +462,7 @@ The resolved git dir's `objects/` subdir becomes the RO mount source. `--shared`
 
 **LFS:**
 
-If `<resolved-git-dir>/lfs/objects/` exists on the host, it is additionally RO-mounted at `<original-host-path>/.git/lfs/objects/` in the container. `git-lfs` binary is installed in the container. Checkout/smudge in the session clone resolves LFS content from the mount without network fetches.
+If `<resolved-git-dir>/lfs/objects/` exists on the host, it is additionally RO-mounted at `/host-git-alternates/<basename>/lfs/objects/` in the container, and the session clone's `.git/lfs/objects/` is replaced with a symlink to that mount path (same pattern as the alternates `objects/` mount — neutral container path keeps the session clone's own RW space uncovered). `git-lfs` binary is installed in the container. Checkout/smudge in the session clone resolves LFS content from the mount without network fetches.
 
 If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fatal.
 

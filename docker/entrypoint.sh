@@ -77,8 +77,9 @@ fi
 
 # Hook script: emits sessionTitle on every UserPromptSubmit so Claude renames the
 # session (same effect as /rename — TUI TextInput border recolors, top-border
-# label shows the name). `claude -n` alone seeds the label but doesn't fire the
-# rename event; see the NAME_ARGS block below for why the two values must differ.
+# label shows the name, status line reflects the name). `claude -n` alone seeds
+# the label but doesn't fire the rename event and doesn't update the status line;
+# see the NAME_ARGS block below for why the two values must differ.
 # Injected after HOST_PATCHED_SETTINGS so it is not subject to --hook-enable filtering.
 TITLE_HOOK="/tmp/ccairgap-session-title.sh"
 cat > "$TITLE_HOOK" << 'HOOK_EOF'

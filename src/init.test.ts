@@ -29,12 +29,12 @@ function initGitRepo(dir: string): void {
 }
 
 describe("resolveInitTarget", () => {
-  it("uses <git-root>/.claude-airgap when no --config is passed", () => {
+  it("uses <git-root>/.ccairgap when no --config is passed", () => {
     const repo = join(root, "repo");
     mkdirSync(repo);
     initGitRepo(repo);
     expect(resolveInitTarget({ cwd: repo, force: false })).toBe(
-      join(repo, ".claude-airgap"),
+      join(repo, ".ccairgap"),
     );
   });
 
@@ -70,7 +70,7 @@ describe("initCmd", () => {
 
     initCmd({ cwd: repo, force: false });
 
-    const target = join(repo, ".claude-airgap");
+    const target = join(repo, ".ccairgap");
     expect(readFileSync(join(target, "Dockerfile"), "utf8")).toBe(
       readFileSync(defaultDockerfile(), "utf8"),
     );
@@ -86,7 +86,7 @@ describe("initCmd", () => {
     const repo = join(root, "repo");
     mkdirSync(repo);
     initGitRepo(repo);
-    const target = join(repo, ".claude-airgap");
+    const target = join(repo, ".ccairgap");
     mkdirSync(target);
     writeFileSync(join(target, "Dockerfile"), "USER edited\n");
 
@@ -101,7 +101,7 @@ describe("initCmd", () => {
     const repo = join(root, "repo");
     mkdirSync(repo);
     initGitRepo(repo);
-    const target = join(repo, ".claude-airgap");
+    const target = join(repo, ".ccairgap");
     mkdirSync(target);
     writeFileSync(join(target, "Dockerfile"), "USER edited\n");
     writeFileSync(join(target, "entrypoint.sh"), "#!/bin/sh\necho user\n");
@@ -125,7 +125,7 @@ describe("initCmd", () => {
     const repo = join(root, "repo");
     mkdirSync(repo);
     initGitRepo(repo);
-    const target = join(repo, ".claude-airgap");
+    const target = join(repo, ".ccairgap");
     expect(existsSync(target)).toBe(false);
 
     initCmd({ cwd: repo, force: false });

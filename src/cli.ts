@@ -129,7 +129,7 @@ async function main() {
     )
     .option(
       "-n, --name <name>",
-      "session name. Used as branch suffix (`ccairgap/<name>`) and forwarded to `claude -n <name>`. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
+      "session name. Used as branch suffix (`ccairgap/<name>`) and forwarded to `claude -n \"[ccairgap] <name>\"` so the session shows up with that label in `/resume` and the terminal title. The `[ccairgap]` prefix is always applied. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
     )
     .option(
       "--hook-enable <glob>",
@@ -349,13 +349,13 @@ async function main() {
     .command("init")
     .description(
       "materialize the bundled Dockerfile, entrypoint.sh, and a minimal " +
-        "config.yaml into <git-root>/.claude-airgap/ (or dirname(--config) if " +
+        "config.yaml into <git-root>/.ccairgap/ (or dirname(--config) if " +
         "--config is passed). Lets you customize the container image without " +
         "forking the repo.",
     )
     .option(
       "--config <path>",
-      "target a specific config file location instead of <git-root>/.claude-airgap/config.yaml",
+      "target a specific config file location instead of <git-root>/.ccairgap/config.yaml",
     )
     .option(
       "--force",
