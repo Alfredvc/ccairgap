@@ -29,6 +29,7 @@ import {
   imageExistsLocally,
 } from "./image.js";
 import { probeCredentials } from "./credentials.js";
+import { checkHostBinary } from "./binaries.js";
 import { enumerateHooks } from "./hooks.js";
 import { enumerateMcpServers } from "./mcp.js";
 import { enumerateEnv, enumerateMarketplaces } from "./settings.js";
@@ -111,21 +112,6 @@ function checkStateDir(): DoctorCheck {
   }
 }
 
-async function checkHostBinary(name: string): Promise<DoctorCheck> {
-  // Use `command -v` (POSIX, works on macOS + Linux without assuming --version
-  // support: BSD `cp` has none). Run through sh so the shell builtin is used.
-  try {
-    const { stdout } = await execa("sh", ["-c", `command -v ${name}`], { timeout: 3_000 });
-    return { name, ok: true, detail: stdout.trim() || "found on PATH" };
-  } catch {
-    return {
-      name,
-      ok: false,
-      detail: "not found on PATH (used for --cp / --sync copies and handoff)",
-    };
-  }
-}
-
 async function checkImage(): Promise<DoctorCheck> {
   try {
     const tag = computeTag(defaultDockerfile(), defaultDockerfile());
@@ -204,6 +190,7 @@ export async function doctor(): Promise<void> {
   checks.push(await checkCredentials());
   checks.push(checkStateDir());
   checks.push(checkSessions());
+  checks.push(await checkHostBinary("git"));
   checks.push(await checkHostBinary("rsync"));
   checks.push(await checkHostBinary("cp"));
   checks.push(await checkImage());

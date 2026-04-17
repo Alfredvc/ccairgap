@@ -30,6 +30,7 @@ import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { applyHookPolicy } from "./hooks.js";
+import { requireHostBinaries } from "./binaries.js";
 import {
   formatDangerWarnings,
   parseDockerRunArgs,
@@ -117,6 +118,15 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const home = env.HOME ?? homedir();
 
   // ---- Validation phase: no side effects ----
+
+  // Host-binary preflight. Runs before any mkdir / clone / docker call so a
+  // missing binary surfaces as a clean error instead of a mid-pipeline
+  // execa ENOENT with a partial $SESSION left on disk.
+  try {
+    await requireHostBinaries(["docker", "git", "rsync", "cp"]);
+  } catch (e) {
+    die((e as Error).message);
+  }
 
   // repos must be unique; repos + ros may not overlap
   const repoSet = new Set<string>();

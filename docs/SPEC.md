@@ -106,7 +106,7 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<ts>`. |
 | `recover [<ts>]` | Run the handoff routine against `$SESSION/<ts>/`. Idempotent. With no `<ts>` argument, equivalent to `list`. |
 | `discard <ts>` | Delete `$SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
-| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `rsync` + `cp` on PATH for `--cp` / `--sync` / handoff, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.claude-airgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
+| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.claude-airgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
 | `hooks` | Enumerate hook entries ccairgap would see at launch, across every source (user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json`, and `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`). Output is JSON to stdout — one object per hook entry with `source`, `sourcePath`, `event`, `matcher`, and `command`. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
 | `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.claude-airgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
 
@@ -143,20 +143,21 @@ In order:
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
 2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, or `init`, run that handler per §Recovery / §Doctor / §"Container image customization" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
-3. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
-4. Resolve host credentials (see §"Authentication flow"):
+3. Host-binary preflight: verify `docker`, `git`, `rsync`, and `cp` are all resolvable via PATH (POSIX `command -v`). On failure, error with the list of missing binaries and exit 1 before any session-dir side effects. This catches the ENOENT-during-launch failure mode; `ccairgap doctor` performs the same check plus a `docker version` probe for the daemon.
+4. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
+5. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
    - Non-macOS: verify host `~/.claude/.credentials.json` exists. If missing, print "run `claude` on the host to log in" and exit.
-5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/ccairgap/sessions/<ts>/`.
-6. For each repo in the set (`--repo` plus every `--extra-repo`):
+6. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/ccairgap/sessions/<ts>/`.
+7. For each repo in the set (`--repo` plus every `--extra-repo`):
    - `git clone --shared <path> $SESSION/repos/<basename>`
    - `cd $SESSION/repos/<basename> && git checkout -b <branch> [<base>]`
    - `<branch>` is `ccairgap/<ts>` by default, or `ccairgap/<--name>` when `--name` was passed. The name is validated (`git check-ref-format refs/heads/<branch>`) and checked for collision on the workspace repo (`--repo`) before side effects.
-7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; those builds used the `sandbox/` prefix, so the handoff routine falls back to `sandbox/<ts>` in that case to keep recover working on pre-existing on-disk sessions.
-8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/ccairgap/output/` (idempotent).
-9. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
-10. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
-11. Build `docker run` command:
+8. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; those builds used the `sandbox/` prefix, so the handoff routine falls back to `sandbox/<ts>` in that case to keep recover working on pre-existing on-disk sessions.
+9. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/ccairgap/output/` (idempotent).
+10. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
+11. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
+12. Build `docker run` command:
     - `--rm` (omit if `--keep-container` was passed)
     - `--cap-drop=ALL`
     - `--security-opt=no-new-privileges`
@@ -165,8 +166,8 @@ In order:
     - Mount list per §"Container mount manifest"
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
     - Image: `ccairgap:<cli-version>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
-12. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
-13. Exec the `docker run` command.
+13. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
+14. Exec the `docker run` command.
 
 ## Config file
 
