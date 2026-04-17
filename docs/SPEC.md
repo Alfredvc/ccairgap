@@ -95,6 +95,7 @@ Default (no subcommand): start a new session.
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
 | `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--network`, `--cap-drop`, etc.). Repeatable. See §"Raw docker run args". |
 | `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
+| `--bare` | no | Launch a "naked" container: no config-file loading, no workspace-repo inference from cwd. User mounts whatever they need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. All Claude config flow is unchanged (`~/.claude` RO mount, credentials, plugins cache, etc.). See §"Bare mode". |
 
 No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
@@ -133,10 +134,11 @@ ccairgap --rebuild --docker-build-arg CLAUDE_CODE_VERSION=1.2.3 --repo ~/src/foo
 In order:
 
 1. Parse flags. Resolve `--repo` (single, workspace), `--extra-repo` (repeatable), `--ro` (repeatable), `--base`.
-   - If `--repo` is unset and `$(pwd)` is a git repo, default `--repo` to `$(pwd)`.
-   - If `--repo` is still unset and `--extra-repo` is non-empty, error: "--extra-repo requires --repo <path> (workspace)."
-   - If `--repo` is still unset and `--ro` is non-empty, proceed with no session clone (Claude only gets RO views; no sandbox branch).
-   - If `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
+   - If `--bare` was passed, skip every inference and error-on-empty rule below: the user is opting into a naked container. Still require `--repo` before `--extra-repo` (workspace semantics unchanged). See §"Bare mode".
+   - Otherwise: if `--repo` is unset and `$(pwd)` is a git repo, default `--repo` to `$(pwd)`.
+   - Otherwise: if `--repo` is still unset and `--extra-repo` is non-empty, error: "--extra-repo requires --repo <path> (workspace)."
+   - Otherwise: if `--repo` is still unset and `--ro` is non-empty, proceed with no session clone (Claude only gets RO views; no sandbox branch).
+   - Otherwise: if `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
 2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
@@ -181,7 +183,7 @@ Three anchors, chosen by the semantic of each key. Absolute paths bypass anchori
 |------|--------|-----------|
 | `repo`, `extra-repo`, `ro` | **Workspace anchor.** When the config lives at the canonical `<X>/.claude-airgap/config.yaml`, anchor = `<X>` (= the git root). When `--config` points elsewhere (e.g. `/tmp/cfg.yaml`), anchor = `dirname(configPath)`. | These paths describe the user's repo-space — "my repo", "a sibling repo", "the docs dir next to my project". Anchoring on the git root (in the canonical case) makes `repo: .` mean the workspace, `ro: ../docs` mean a sibling of the workspace. Anchoring on the `.claude-airgap/` subdir (an implementation detail of ccairgap) would force every user to write `repo: ..` and `ro: ../../docs`. |
 | `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in this same directory". |
-| `cp`, `sync`, `mount` | **Workspace repo root**, resolved at launch against the final `--repo` value. | See §"Build artifact paths". These name paths inside the workspace, not paths relative to the config file's location. |
+| `cp`, `sync`, `mount` | **Workspace repo root**, resolved at launch against the final `--repo` value. Under `--bare`, anchor on CLI `$(pwd)` instead (see §"Bare mode"). | See §"Build artifact paths". These name paths inside the workspace, not paths relative to the config file's location. |
 
 Implementation: `src/config.ts` `resolveConfigPaths` handles `repo`/`extra-repo`/`ro`/`dockerfile`; `src/artifacts.ts` handles `cp`/`sync`/`mount` at launch.
 
@@ -217,6 +219,42 @@ hooks:
     - "python3 *"
 ```
 
+## Bare mode
+
+`--bare` launches a container with nothing pre-wired beyond Claude's own config (`~/.claude` RO mount, credentials, plugins cache, `~/.claude.json`). It is the escape hatch for users who want to opt out of every ccairgap convenience and mount exactly what they want.
+
+**What `--bare` turns off:**
+
+- **Config file loading.** The default `<git-root>/.claude-airgap/config.yaml` is ignored even if present. `--bare` + explicit `--config <path>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
+- **Workspace inference from cwd.** Normal mode defaults `--repo` to `$(pwd)` when cwd is a git repo. `--bare` skips this — the workspace stays unset unless `--repo` is passed explicitly.
+- **Empty-session guard.** Normal mode errors when no `--repo` / `--ro` / git-repo-cwd is available. `--bare` proceeds with zero mounts; the user gets a Claude-only container with no host repos or reference material at all.
+
+**What `--bare` does not change:**
+
+- Claude config flow: `~/.claude` RO mount, `~/.claude.json` passthrough, credentials, plugins cache, plugin marketplace discovery, MCP servers — unchanged.
+- Authentication flow — unchanged (host login still required).
+- Extraction — `/output` is still mounted at `$CLAUDE_AIRGAP_HOME/output/`, transcripts still flow to `~/.claude/projects/<encoded>/` on exit.
+- All other CLI flags — `--repo`, `--extra-repo`, `--ro`, `--cp`, `--sync`, `--mount`, `--docker-run-arg`, etc. all work normally when passed alongside `--bare`.
+- `--extra-repo` without `--repo` still errors. Workspace semantics are unchanged; `--bare` only disables inference, not validation.
+
+**Relative path resolution under `--bare`:**
+
+`--cp` / `--sync` / `--mount` relative paths anchor on `$(pwd)` (the CLI invocation cwd), not on the workspace repo root. Rationale: `--bare` is a "do what I say" mode — if the user is running from some directory and passes `--cp foo`, they mean `$(pwd)/foo`. Under normal mode the same invocation would anchor on the workspace repo root, which can differ from cwd. Absolute paths bypass anchoring as usual.
+
+**Examples:**
+
+```bash
+# Naked container — just Claude + host config, no repos
+ccairgap --bare
+
+# Naked container + one explicit repo
+ccairgap --bare --repo ~/src/foo
+
+# Bare mode outside a git repo, with a user-supplied Dockerfile via --config
+cd /tmp
+ccairgap --bare --config ~/my-cfg.yaml
+```
+
 ## Container mount manifest
 
 | Host source | Container path | Mode | Notes |
@@ -246,7 +284,7 @@ Absolute paths are preserved between host and container so `settings.json` refer
 
 **Resolution rules (shared):**
 
-- Relative paths resolve against the **workspace** repo root (i.e. the first entry of `--repo` + `--extra-repo`). `--cp node_modules` with `--repo ~/src/foo` → source `~/src/foo/node_modules`.
+- Relative paths resolve against the **workspace** repo root (i.e. the first entry of `--repo` + `--extra-repo`). `--cp node_modules` with `--repo ~/src/foo` → source `~/src/foo/node_modules`. Under `--bare`, relative paths anchor on the CLI invocation `$(pwd)` instead — the workspace repo root is not used even when `--repo` is passed. See §"Bare mode".
 - Absolute paths are allowed but warn on stderr if they fall outside every declared repo tree.
 - The path must exist on host at launch. Missing path → launch aborts.
 - Paths are repeatable across flags but not across sources: any given host path may appear in **at most one** of `--repo`, `--extra-repo`, `--ro`, `--cp`, `--sync`, `--mount`. Overlap is a hard error at launch.

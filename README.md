@@ -59,6 +59,7 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
 | `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted, e.g. `--docker-run-arg "-p 8080:8080"` → two tokens. Appended after built-ins so docker's last-wins lets user args override defaults. Escape hatch — can weaken isolation. |
 | `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). |
+| `--bare` | no | Launch a naked container: skip config-file discovery and cwd-as-workspace inference. Mount whatever you need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. Relative `--cp`/`--sync`/`--mount` paths anchor on cwd. `--config` still loads when explicit. See `docs/SPEC.md` §"Bare mode". |
 
 ## Hooks
 

@@ -195,4 +195,53 @@ describe("resolveArtifacts", () => {
     });
     expect(r.entries[0]!.srcHost).toBe(join(repoPath, "one_file.txt"));
   });
+
+  it("relativeAnchor overrides workspace anchor for relative paths (bare mode)", () => {
+    // Seed a file outside the repo, under a custom anchor dir.
+    const anchor = join(root, "anchor");
+    mkdirSync(join(anchor, "stuff"), { recursive: true });
+    const r = resolveArtifacts({
+      cp: ["stuff"],
+      sync: [],
+      mount: [],
+      repos, // workspace exists but must be ignored
+      roPaths: [],
+      sessionDir,
+      relativeAnchor: anchor,
+    });
+    const e = r.entries[0]!;
+    expect(e.srcHost).toBe(join(anchor, "stuff"));
+    expect(e.insideRepoClone).toBe(false);
+  });
+
+  it("relativeAnchor with no repos resolves relative paths (bare, no --repo)", () => {
+    const anchor = join(root, "anchor");
+    mkdirSync(join(anchor, "stuff"), { recursive: true });
+    const r = resolveArtifacts({
+      cp: ["stuff"],
+      sync: [],
+      mount: [],
+      repos: [],
+      roPaths: [],
+      sessionDir,
+      relativeAnchor: anchor,
+    });
+    expect(r.entries[0]!.srcHost).toBe(join(anchor, "stuff"));
+  });
+
+  it("relativeAnchor does not affect absolute paths", () => {
+    const anchor = join(root, "anchor");
+    mkdirSync(anchor, { recursive: true });
+    const outside = join(root, "outside");
+    const r = resolveArtifacts({
+      cp: [outside],
+      sync: [],
+      mount: [],
+      repos: [],
+      roPaths: [],
+      sessionDir,
+      relativeAnchor: anchor,
+    });
+    expect(r.entries[0]!.srcHost).toBe(outside);
+  });
 });
