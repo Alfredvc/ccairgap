@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
 import { doctor, discard, listOrphans, recover } from "./subcommands.js";
+import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
 
 function parseBuildArg(v: string, acc: Record<string, string>): Record<string, string> {
   const eq = v.indexOf("=");
@@ -27,6 +28,29 @@ function collect(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
+/** Merge CLI > config. Arrays concat (config first, then CLI). Maps merge (CLI wins per-key). */
+function mergeRun(cli: {
+  repo: string[];
+  ro: string[];
+  base?: string;
+  keepContainer?: boolean;
+  dockerfile?: string;
+  dockerBuildArg?: Record<string, string>;
+  rebuild?: boolean;
+  print?: string;
+}, cfg: ConfigFile) {
+  return {
+    repos: [...(cfg.repo ?? []), ...cli.repo],
+    ros: [...(cfg.ro ?? []), ...cli.ro],
+    base: cli.base ?? cfg.base,
+    keepContainer: cli.keepContainer ?? cfg.keepContainer ?? false,
+    dockerfile: cli.dockerfile ?? cfg.dockerfile,
+    dockerBuildArgs: { ...(cfg.dockerBuildArg ?? {}), ...(cli.dockerBuildArg ?? {}) },
+    rebuild: cli.rebuild ?? cfg.rebuild ?? false,
+    print: cli.print ?? cfg.print,
+  };
+}
+
 async function main() {
   const program = new Command();
 
@@ -36,10 +60,11 @@ async function main() {
     .version(cliVersion(), "-v, --version");
 
   program
+    .option("--config <path>", "path to yaml config file (default: <git-root>/.claude-airgap/config.yaml)")
     .option("--repo <path>", "host repo to expose (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])
     .option("--base <ref>", "base ref for sandbox/<ts> branch (default: HEAD)")
-    .option("--keep-container", "do not pass --rm to docker run", false)
+    .option("--keep-container", "do not pass --rm to docker run")
     .option("--dockerfile <path>", "use a custom Dockerfile")
     .option(
       "--docker-build-arg <KEY=VAL>",
@@ -47,14 +72,41 @@ async function main() {
       parseBuildArg,
       {} as Record<string, string>,
     )
-    .option("--rebuild", "force image rebuild before launch", false)
+    .option("--rebuild", "force image rebuild before launch")
     .option(
       "-p, --print <prompt>",
       "run claude in non-interactive print mode: `claude -p \"<prompt>\"` (no REPL)",
     )
     .action(async (opts) => {
-      const repos: string[] = opts.repo;
-      const ros: string[] = opts.ro;
+      // Load config file (if any). Paths inside config resolve relative to config file dir.
+      let fileCfg: ConfigFile = {};
+      const loaded = loadConfig(opts.config);
+      if (loaded.path) {
+        fileCfg = resolveConfigPaths(loaded.config, loaded.path);
+      }
+
+      // dockerBuildArg only counts as "set via CLI" if non-empty (commander default is {}).
+      const cliBuildArg: Record<string, string> | undefined =
+        opts.dockerBuildArg && Object.keys(opts.dockerBuildArg).length > 0
+          ? opts.dockerBuildArg
+          : undefined;
+
+      const merged = mergeRun(
+        {
+          repo: opts.repo as string[],
+          ro: opts.ro as string[],
+          base: opts.base,
+          keepContainer: opts.keepContainer,
+          dockerfile: opts.dockerfile,
+          dockerBuildArg: cliBuildArg,
+          rebuild: opts.rebuild,
+          print: opts.print,
+        },
+        fileCfg,
+      );
+
+      const repos = merged.repos;
+      const ros = merged.ros;
 
       // Default --repo to cwd if it is a git repo, otherwise allow ro-only, otherwise error.
       if (repos.length === 0) {
@@ -84,7 +136,7 @@ async function main() {
       }
 
       // CLAUDE_AIRLOCK_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
-      const buildArgs: Record<string, string> = { ...(opts.dockerBuildArg ?? {}) };
+      const buildArgs: Record<string, string> = { ...merged.dockerBuildArgs };
       if (
         process.env.CLAUDE_AIRLOCK_CC_VERSION &&
         !buildArgs.CLAUDE_CODE_VERSION
@@ -95,12 +147,12 @@ async function main() {
       const result = await launch({
         repos,
         ros,
-        base: opts.base,
-        keepContainer: Boolean(opts.keepContainer),
-        dockerfile: opts.dockerfile,
+        base: merged.base,
+        keepContainer: merged.keepContainer,
+        dockerfile: merged.dockerfile,
         dockerBuildArgs: buildArgs,
-        rebuild: Boolean(opts.rebuild),
-        print: opts.print,
+        rebuild: merged.rebuild,
+        print: merged.print,
       });
       process.exit(result.exitCode);
     });

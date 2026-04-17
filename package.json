@@ -30,7 +30,8 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
-    "execa": "^9.5.1"
+    "execa": "^9.5.1",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
