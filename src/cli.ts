@@ -69,6 +69,15 @@ async function main() {
     .description("Run Claude Code with --dangerously-skip-permissions in a Docker container.")
     .version(cliVersion(), "-v, --version");
 
+  // Reject unknown positionals on the root command (e.g. `claude-airlock lsit`).
+  // Commander's unknownCommand path is gated on the root having no .action(), so
+  // without this hook typos fall through to the launch flow as ignored excess args.
+  program.hook("preAction", (thisCommand, actionCommand) => {
+    if (actionCommand !== thisCommand) return;
+    const first = thisCommand.args[0];
+    if (first !== undefined) program.error(`unknown command '${first}'`);
+  });
+
   program
     .option("--config <path>", "path to yaml config file (default: <git-root>/.claude-airgap/config.yaml)")
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")

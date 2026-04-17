@@ -134,7 +134,7 @@ In order:
    - If `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
-2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Launch flags are only consumed by the default (no-subcommand) invocation.
+2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `claude-airlock lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
 3. Scan `$XDG_STATE_HOME/claude-airlock/sessions/` for orphaned session dirs (dirs without a running container named `claude-airlock-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `claude-airlock recover <ts>` / `claude-airlock discard <ts>` commands. Do not auto-recover; continue to new session setup.
 4. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
