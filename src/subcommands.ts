@@ -26,7 +26,7 @@ export async function recover(ts?: string): Promise<void> {
   if (!ts) return listOrphans();
   const sd = sessionDirFn(ts);
   if (!existsSync(sd)) {
-    console.error(`claude-airlock: no session dir at ${sd}`);
+    console.error(`ccairlock: no session dir at ${sd}`);
     process.exit(1);
   }
   const result = await handoff(sd, cliVersion());
@@ -43,7 +43,7 @@ export async function recover(ts?: string): Promise<void> {
 export function discard(ts: string): void {
   const sd = sessionDirFn(ts);
   if (!existsSync(sd)) {
-    console.error(`claude-airlock: no session dir at ${sd}`);
+    console.error(`ccairlock: no session dir at ${sd}`);
     process.exit(1);
   }
   rmSync(sd, { recursive: true, force: true });

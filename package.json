@@ -26,7 +26,7 @@
     "dangerously-skip-permissions"
   ],
   "bin": {
-    "claude-airlock": "dist/cli.js"
+    "ccairlock": "dist/cli.js"
   },
   "files": [
     "dist",

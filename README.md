@@ -16,25 +16,25 @@ npm i -g claude-airlock
 
 Requires Node ≥ 20 and Docker. Works on macOS; Linux should work; Windows/WSL2 may need path tweaks.
 
-Log in on the host once with `claude` — `claude-airlock` inherits those credentials via a read-only mount.
+Log in on the host once with `claude` — `ccairlock` inherits those credentials via a read-only mount.
 
 ## Quick start
 
 ```bash
 # Interactive session in the current git repo
-claude-airlock
+ccairlock
 
 # Workspace + sibling repos + a reference dir
-claude-airlock --repo ~/src/foo --extra-repo ~/src/bar --ro ~/src/docs
+ccairlock --repo ~/src/foo --extra-repo ~/src/bar --ro ~/src/docs
 
 # Walk-away via tmux
-tmux new -s work 'claude-airlock --repo ~/src/foo'
+tmux new -s work 'ccairlock --repo ~/src/foo'
 
 # Non-interactive print mode
-claude-airlock -p "summarize README"
+ccairlock -p "summarize README"
 ```
 
-On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo). If the session made no commits, no branch is created. If Claude committed to a side branch but left `sandbox/<ts>` empty, the session dir is preserved with a warning so no work is lost — inspect it, recover what you need, then `claude-airlock discard <ts>`.
+On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo). If the session made no commits, no branch is created. If Claude committed to a side branch but left `sandbox/<ts>` empty, the session dir is preserved with a warning so no work is lost — inspect it, recover what you need, then `ccairlock discard <ts>`.
 
 Git identity (`user.name` / `user.email`) is read from the host at launch (`git config --get`, local-to-`--repo` overrides global) and passed to the container so `git commit` works. If the host has no identity configured, a placeholder (`claude-airlock <noreply@airlock.local>`) is used and a warning is printed — rewrite authors on the sandbox branch post-hoc if it matters. GPG/SSH signing is not supported inside the container.
 
@@ -66,10 +66,10 @@ Opt hooks back in with `--hook-enable <glob>` or `hooks.enable: [glob, ...]` in 
 
 ```bash
 # Enable just the python3 auto-deny / auto-approve hooks
-claude-airlock --hook-enable 'python3 *'
+ccairlock --hook-enable 'python3 *'
 
 # Enable two specific commands
-claude-airlock \
+ccairlock \
   --hook-enable 'python3 *' \
   --hook-enable 'bash ~/.claude/statusline.sh'
 ```

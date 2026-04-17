@@ -39,8 +39,8 @@ const SUPPORTED_VERSIONS = new Set<number>([MANIFEST_VERSION]);
 export class UnknownManifestVersionError extends Error {
   constructor(public readonly foundVersion: unknown, public readonly cliVersion: string) {
     super(
-      `manifest v${String(foundVersion)} is not supported by this claude-airlock (${cliVersion}). ` +
-        `Upgrade claude-airlock or delete the session dir.`,
+      `manifest v${String(foundVersion)} is not supported by this ccairlock (${cliVersion}). ` +
+        `Upgrade ccairlock or delete the session dir.`,
     );
     this.name = "UnknownManifestVersionError";
   }

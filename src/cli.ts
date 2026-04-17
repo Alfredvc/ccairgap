@@ -67,11 +67,11 @@ async function main() {
   const program = new Command();
 
   program
-    .name("claude-airlock")
+    .name("ccairlock")
     .description("Run Claude Code with --dangerously-skip-permissions in a Docker container.")
     .version(cliVersion(), "-v, --version");
 
-  // Reject unknown positionals on the root command (e.g. `claude-airlock lsit`).
+  // Reject unknown positionals on the root command (e.g. `ccairlock lsit`).
   // Commander's unknownCommand path is gated on the root having no .action(), so
   // without this hook typos fall through to the launch flow as ignored excess args.
   program.hook("preAction", (thisCommand, actionCommand) => {
@@ -172,13 +172,13 @@ async function main() {
           workspaceRepo = cwd;
         } else if (extraRepos.length > 0) {
           console.error(
-            "claude-airlock: --extra-repo requires --repo <path> (workspace). " +
+            "ccairlock: --extra-repo requires --repo <path> (workspace). " +
               "Pass --repo <path> or cd into a repo.",
           );
           process.exit(1);
         } else if (ros.length === 0) {
           console.error(
-            "claude-airlock: not in a git repo and no --repo / --ro passed. " +
+            "ccairlock: not in a git repo and no --repo / --ro passed. " +
               "Pass --repo <path> or cd into a repo.",
           );
           process.exit(1);
@@ -189,13 +189,13 @@ async function main() {
 
       for (const r of repos) {
         if (!existsSync(r) || !statSync(r).isDirectory()) {
-          console.error(`claude-airlock: repo path not a directory: ${r}`);
+          console.error(`ccairlock: repo path not a directory: ${r}`);
           process.exit(1);
         }
       }
       for (const r of ros) {
         if (!existsSync(r)) {
-          console.error(`claude-airlock: --ro path does not exist: ${r}`);
+          console.error(`ccairlock: --ro path does not exist: ${r}`);
           process.exit(1);
         }
       }
@@ -259,6 +259,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(`claude-airlock: ${(e as Error).message}`);
+  console.error(`ccairlock: ${(e as Error).message}`);
   process.exit(1);
 });

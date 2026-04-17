@@ -63,7 +63,7 @@ export interface LaunchResult {
 }
 
 function die(msg: string): never {
-  console.error(`claude-airlock: ${msg}`);
+  console.error(`ccairlock: ${msg}`);
   process.exit(1);
 }
 
@@ -193,7 +193,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   } catch (e) {
     die((e as Error).message);
   }
-  for (const w of artifacts.warnings) console.error(`claude-airlock: ${w}`);
+  for (const w of artifacts.warnings) console.error(`ccairlock: ${w}`);
 
   const hostClaude = realpath(hostClaudeDir(env));
   const marketplaces = discoverLocalMarketplaces(hostClaude, home);
@@ -201,12 +201,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // ---- Orphan scan (advisory only) ----
   const orphans = await scanOrphans(cliVersion());
   if (orphans.length > 0) {
-    console.error("claude-airlock: orphaned sessions detected:");
+    console.error("ccairlock: orphaned sessions detected:");
     for (const o of orphans) {
       console.error(`  ${o.ts}  repos=${o.repos.join(",") || "(none)"}`);
     }
-    console.error("  Recover: claude-airlock recover <ts>");
-    console.error("  Discard: claude-airlock discard <ts>");
+    console.error("  Recover: ccairlock recover <ts>");
+    console.error("  Discard: ccairlock discard <ts>");
     console.error("");
   }
 
@@ -339,7 +339,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const hostIdentity = await readHostGitIdentity(identityCwd);
   if (!hostIdentity.name || !hostIdentity.email) {
     console.error(
-      `claude-airlock: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airlock <noreply@airlock.local>". Rewrite authors on ${branch} if needed.`,
+      `ccairlock: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airlock <noreply@airlock.local>". Rewrite authors on ${branch} if needed.`,
     );
   }
   const gitUserName = hostIdentity.name ?? "claude-airlock";
@@ -375,8 +375,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     try {
       await handoff(sessionPath, cliVersion());
     } catch (e) {
-      console.error(`claude-airlock: handoff failed: ${(e as Error).message}`);
-      console.error(`  Recover manually: claude-airlock recover ${ts}`);
+      console.error(`ccairlock: handoff failed: ${(e as Error).message}`);
+      console.error(`  Recover manually: ccairlock recover ${ts}`);
     }
   }
 

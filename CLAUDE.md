@@ -56,7 +56,7 @@ docs/SPEC.md      authoritative design
 - **Image tag = CLI version**, or `custom-<hash>` when `--dockerfile`. Rebuild only on: tag missing / `--rebuild` / custom-hash changed. Never auto-rebuild on age — `doctor` warns >14 days.
 - **Manifest `version` field gates handoff.** Bump when shape changes incompatibly. Handoff aborts with clear error on unknown version.
 - **Flag names + subcommand names are public API.** Rename = major bump.
-- **Exit trap is best-effort.** SIGKILL of CLI leaves session on disk; user runs `claude-airlock recover <ts>`. Handoff must stay idempotent.
+- **Exit trap is best-effort.** SIGKILL of CLI leaves session on disk; user runs `ccairlock recover <ts>`. Handoff must stay idempotent.
 - **`--cap-drop=ALL`, no `--privileged`, no `docker.sock` mount, no `SYS_ADMIN`.** Don't lower default Docker isolation.
 
 ## Config file

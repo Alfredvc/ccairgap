@@ -4,7 +4,7 @@
 
 Open a [GitHub issue](https://github.com/alfredvc/claude-airlock/issues). Include:
 
-- Affected version (`claude-airlock --version`)
+- Affected version (`ccairlock --version`)
 - Host OS
 - Reproduction steps or PoC
 - Expected vs. actual behavior
