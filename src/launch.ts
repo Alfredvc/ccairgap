@@ -369,7 +369,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   if (!opts.keepContainer) dockerArgs.push("--rm");
   // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
   dockerArgs.push(opts.print ? "-i" : "-it");
-  dockerArgs.push("--cap-drop=ALL", "--name", `ccairgap-${ts}`);
+  dockerArgs.push("--cap-drop=ALL", "--security-opt=no-new-privileges", "--name", `ccairgap-${ts}`);
   dockerArgs.push("-e", `CCAIRGAP_CWD=${containerCwd}`);
   dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);

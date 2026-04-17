@@ -158,6 +158,7 @@ In order:
 11. Build `docker run` command:
     - `--rm` (omit if `--keep-container` was passed)
     - `--cap-drop=ALL`
+    - `--security-opt=no-new-privileges`
     - `-it` (interactive)
     - `--name ccairgap-<ts>`
     - Mount list per §"Container mount manifest"
@@ -612,6 +613,7 @@ Entrypoint ends with `exec claude --dangerously-skip-permissions`.
 
 - Default Docker bridge network. Full outbound.
 - Capabilities: `--cap-drop=ALL` (no Linux capabilities granted). Container runs as a non-root user, needs no capabilities for normal Claude / git / node operation. Prevents raw sockets, ARP spoofing, firewall manipulation, chown, and everything else — does not block HTTP/HTTPS exfiltration (which is the accepted risk).
+- `--security-opt=no-new-privileges`: blocks setuid/setgid binaries and file capabilities from granting additional privileges inside the container. Defense-in-depth against a local-priv-esc primitive chained with any cap regression.
 
 ## Environment variables
 
