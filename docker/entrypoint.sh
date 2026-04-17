@@ -73,6 +73,15 @@ jq '.env = (.env // {}) + {
 } | .skipDangerousModePermissionPrompt = true' "$SETTINGS" > "$TMP_SETTINGS"
 mv "$TMP_SETTINGS" "$SETTINGS"
 
+# Git identity from host (CLI reads host git config and passes via env).
+# Host-side fallback ensures these are set even when host has no config.
+if [ -n "${AIRLOCK_GIT_USER_NAME:-}" ]; then
+    git config --global user.name "$AIRLOCK_GIT_USER_NAME"
+fi
+if [ -n "${AIRLOCK_GIT_USER_EMAIL:-}" ]; then
+    git config --global user.email "$AIRLOCK_GIT_USER_EMAIL"
+fi
+
 # cwd: first repo path (AIRLOCK_CWD), else /workspace.
 CWD="${AIRLOCK_CWD:-/workspace}"
 mkdir -p "$CWD"

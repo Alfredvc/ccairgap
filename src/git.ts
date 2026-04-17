@@ -75,6 +75,30 @@ export async function gitFetchSandbox(
   }
 }
 
+export interface GitIdentity {
+  name?: string;
+  email?: string;
+}
+
+/**
+ * Read host git identity. Uses `git config --get user.{name,email}` from `cwd`
+ * so repo-local config overrides global, matching git's own precedence.
+ * Missing values returned as undefined (not an error — caller decides fallback).
+ */
+export async function readHostGitIdentity(cwd: string): Promise<GitIdentity> {
+  const get = async (key: string): Promise<string | undefined> => {
+    try {
+      const { stdout } = await execa("git", ["config", "--get", key], { cwd, reject: false });
+      const v = stdout.trim();
+      return v.length > 0 ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const [name, email] = await Promise.all([get("user.name"), get("user.email")]);
+  return { name, email };
+}
+
 /** Count commits on `branch` that are not on `base` (for listing orphaned sessions). */
 export async function countCommitsAhead(repo: string, branch: string, base: string): Promise<number> {
   try {

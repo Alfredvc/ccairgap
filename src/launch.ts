@@ -12,7 +12,7 @@ import {
   sessionsDir as sessionsDirFn,
 } from "./paths.js";
 import { writeManifest, type Manifest } from "./manifest.js";
-import { gitCheckoutNewBranch, gitCloneShared, resolveGitDir } from "./git.js";
+import { gitCheckoutNewBranch, gitCloneShared, readHostGitIdentity, resolveGitDir } from "./git.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
 import { buildMounts, mountArg } from "./mounts.js";
 import { ensureImage, defaultDockerfile } from "./image.js";
@@ -232,6 +232,18 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     repoEntries.length > 0 ? (repoEntries[0] as (typeof repoEntries)[number]).hostPath : "/workspace";
   const trustedCwds = repoEntries.map((r) => r.hostPath).join("\n");
 
+  // Git identity: read from first repo (local > global precedence). Fallback so
+  // commits always succeed; user rewrites author post-hoc if the fallback leaked in.
+  const identityCwd = repoEntries[0]?.hostPath ?? process.cwd();
+  const hostIdentity = await readHostGitIdentity(identityCwd);
+  if (!hostIdentity.name || !hostIdentity.email) {
+    console.error(
+      `claude-airlock: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airlock <noreply@airlock.local>". Rewrite authors on sandbox/${ts} if needed.`,
+    );
+  }
+  const gitUserName = hostIdentity.name ?? "claude-airlock";
+  const gitUserEmail = hostIdentity.email ?? "noreply@airlock.local";
+
   const dockerArgs: string[] = ["run"];
   if (!opts.keepContainer) dockerArgs.push("--rm");
   // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
@@ -239,6 +251,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push("--cap-drop=ALL", "--name", `claude-airlock-${ts}`);
   dockerArgs.push("-e", `AIRLOCK_CWD=${containerCwd}`);
   dockerArgs.push("-e", `AIRLOCK_TRUSTED_CWDS=${trustedCwds}`);
+  dockerArgs.push("-e", `AIRLOCK_GIT_USER_NAME=${gitUserName}`);
+  dockerArgs.push("-e", `AIRLOCK_GIT_USER_EMAIL=${gitUserEmail}`);
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `AIRLOCK_PRINT=${opts.print}`);
   }

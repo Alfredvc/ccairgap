@@ -317,6 +317,16 @@ If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fat
 - Do not run `git gc --prune=now` or `git prune` on the real repo — would delete objects the session clone references via alternates.
 - Routine operations (checkout, commit, push, fetch, rebase, reset, auto-gc) are safe. The session clone has its own refs; host ref movement doesn't affect it.
 
+## Git identity passthrough
+
+Container needs `user.name` / `user.email` or `git commit` fails (`Author identity unknown`) and work is lost on handoff (fetch only moves reachable commits).
+
+- CLI reads host identity at launch: `git -C <--repo[0]> config --get user.name` and `user.email` (local → global precedence, so repo-local overrides work). Falls back to process cwd if no `--repo`.
+- Identity is passed to the container via env: `AIRLOCK_GIT_USER_NAME`, `AIRLOCK_GIT_USER_EMAIL`.
+- Entrypoint runs `git config --global user.name "$AIRLOCK_GIT_USER_NAME"` + `user.email` at container start.
+- If host has neither local nor global identity: CLI warns on stderr and falls back to `claude-airlock <noreply@airlock.local>` so commits still succeed. User rewrites author on the sandbox branch post-hoc if needed (`git rebase --exec 'git commit --amend --reset-author --no-edit'` or `git -c user.name=... -c user.email=... commit --amend`).
+- GPG / SSH signing is not supported inside the container (no keys). If host has `commit.gpgsign=true`, user must unset it for the sandbox branch or accept that the container will error on commit. The CLI does not override signing config — `~/.gitconfig` is not mounted in this passthrough mode.
+
 ## Transcripts
 
 - Claude writes session transcripts to `~/.claude/projects/<path-encoded-cwd>/` inside the container.
@@ -398,6 +408,16 @@ Also injected at the top level of the same file: `skipDangerousModePermissionPro
 These persist across `/clear` and any session restart inside the container.
 
 No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.claude/.credentials.json` via the RO mount.
+
+**Passed from host to container** — set by the CLI on `docker run`:
+
+| Env var | Source | Purpose |
+|---------|--------|---------|
+| `AIRLOCK_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
+| `AIRLOCK_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
+| `AIRLOCK_PRINT` | `--print` | Non-interactive prompt. |
+| `AIRLOCK_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `claude-airlock` if host has none. |
+| `AIRLOCK_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@airlock.local` if host has none. |
 
 **On the host** — read by the CLI:
 
