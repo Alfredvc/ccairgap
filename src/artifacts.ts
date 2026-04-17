@@ -38,6 +38,11 @@ export interface ResolveArtifactsInput {
   /** Resolved --ro paths; used for overlap detection. */
   roPaths: string[];
   sessionDir: string;
+  /**
+   * If set, relative --cp/--sync/--mount paths resolve against this anchor
+   * instead of `repos[0].hostPath`. Used by --bare (anchor = process.cwd()).
+   */
+  relativeAnchor?: string;
 }
 
 export interface ResolveArtifactsResult {
@@ -72,6 +77,8 @@ export function resolveArtifacts(i: ResolveArtifactsInput): ResolveArtifactsResu
     let abs: string;
     if (isAbsolute(raw)) {
       abs = resolve(raw);
+    } else if (i.relativeAnchor !== undefined) {
+      abs = resolve(i.relativeAnchor, raw);
     } else {
       if (!workspace) {
         diePrefix(

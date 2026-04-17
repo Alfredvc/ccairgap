@@ -66,6 +66,12 @@ export interface LaunchOptions {
   dockerRunArgs: string[];
   /** Print a warning when dockerRunArgs contains known-sharp tokens. Default true. */
   warnDockerArgs: boolean;
+  /**
+   * Bare mode: caller already skipped config-file loading and cwd-as-workspace
+   * inference. Here it switches relative --cp/--sync/--mount paths to anchor on
+   * process.cwd() instead of repos[0].hostPath.
+   */
+  bare: boolean;
 }
 
 export interface LaunchResult {
@@ -202,6 +208,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       })),
       roPaths: roResolved,
       sessionDir: sessionPath,
+      relativeAnchor: opts.bare ? process.cwd() : undefined,
     });
   } catch (e) {
     die((e as Error).message);

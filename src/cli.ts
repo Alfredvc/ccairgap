@@ -144,12 +144,24 @@ async function main() {
       [],
     )
     .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
+    .option(
+      "--bare",
+      "launch a naked container: skip config-file loading and cwd-as-workspace inference. " +
+        "The user must mount any repo via --repo (or reference material via --ro). Claude config " +
+        "(~/.claude, credentials, plugins) flows as usual. Relative --cp/--sync/--mount paths " +
+        "anchor on cwd. --config still loads when explicit.",
+    )
     .action(async (opts, cmd) => {
+      const bare = Boolean(opts.bare);
+
       // Load config file (if any). Paths inside config resolve relative to config file dir.
+      // Under --bare, skip the default-path walk entirely — only an explicit --config loads.
       let fileCfg: ConfigFile = {};
-      const loaded = loadConfig(opts.config);
-      if (loaded.path) {
-        fileCfg = resolveConfigPaths(loaded.config, loaded.path);
+      if (!bare || opts.config) {
+        const loaded = loadConfig(opts.config);
+        if (loaded.path) {
+          fileCfg = resolveConfigPaths(loaded.config, loaded.path);
+        }
       }
 
       // dockerBuildArg only counts as "set via CLI" if non-empty (commander default is {}).
@@ -191,7 +203,17 @@ async function main() {
       const ros = merged.ros;
 
       // Default --repo to cwd if it is a git repo, otherwise allow ro-only, otherwise error.
-      if (!workspaceRepo) {
+      // Under --bare: skip all inference; still reject --extra-repo without --repo so the
+      // workspace contract stays explicit.
+      if (bare) {
+        if (!workspaceRepo && extraRepos.length > 0) {
+          console.error(
+            "ccairgap: --extra-repo requires --repo <path> (workspace). " +
+              "Pass --repo <path>.",
+          );
+          process.exit(1);
+        }
+      } else if (!workspaceRepo) {
         const cwd = process.cwd();
         if (isGitRepo(cwd)) {
           workspaceRepo = cwd;
@@ -250,6 +272,7 @@ async function main() {
         hookEnable: merged.hookEnable,
         dockerRunArgs: merged.dockerRunArg,
         warnDockerArgs: merged.warnDockerArgs,
+        bare,
       });
       process.exit(result.exitCode);
     });
