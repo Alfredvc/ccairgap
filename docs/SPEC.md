@@ -508,7 +508,13 @@ Host files are never mutated; all patched copies live under `$SESSION/hook-polic
 - Flag: `--hook-enable <glob>` — repeatable.
 - Config file key: `hooks.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
 - Merge: CLI values append to config values (same semantics as `--ro` / `--extra-repo`).
-- Introspection: `ccairgap inspect` prints the full config surface ccairgap would see at launch — both hook entries (all three sources) and MCP server definitions — as JSON `{hooks, mcpServers}`. Users can build their enable-globs from the exact `command` strings, and see which MCP servers would load (plus their required host binaries) without walking plugin caches, project settings, or `~/.claude.json` by hand. Read-only.
+- Introspection: `ccairgap inspect` prints the full config surface ccairgap would see at launch as JSON `{hooks, mcpServers, env, marketplaces}`:
+  - `hooks` — every hook entry across all sources (user settings, enabled plugins, project settings).
+  - `mcpServers` — every MCP server definition (user, user-project, project, plugin; with approval state for project-scope).
+  - `env` — every `env` var set in user / project / project-local `settings.json`.
+  - `marketplaces` — every `extraKnownMarketplaces` entry across the same three scopes, with a `sourceType` shortcut (`github` / `git` / `directory` / `file` / `hostPattern` / `settings`) and a `hostPath` shortcut for `directory` / `file` types.
+  Users can build their enable-globs from the exact `command` strings, see which MCPs would load, confirm `env` passthroughs, and know which marketplace source paths will be RO-mounted, without walking plugin caches, project settings, or `~/.claude.json` by hand. Read-only.
+  Managed-settings tiers (OS-level policy files, MDM plist/registry, Anthropic-delivered server-managed) are intentionally omitted — they aren't mounted into the container and don't affect what Claude sees inside the sandbox.
 
 ## Plugins, skills, commands, CLAUDE.md
 

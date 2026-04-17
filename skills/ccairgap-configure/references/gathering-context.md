@@ -68,7 +68,7 @@ Skip:
 
 ### Claude setup
 
-**Canonical probe: `ccairgap inspect`.** One call, JSON `{hooks, mcpServers}`, covers every surface the container would see at launch. Use this instead of hand-walking config files — walking with `jq` misses plugin hooks and plugin-shipped MCP servers.
+**Canonical probe: `ccairgap inspect`.** One call, JSON `{hooks, mcpServers, env, marketplaces}`, covers every surface the container would see at launch. Use this instead of hand-walking config files — walking with `jq` misses plugin hooks, plugin-shipped MCP servers, and splits env/marketplace entries across four separate files.
 
 ```bash
 ccairgap inspect                                   # cwd is a git repo
@@ -79,13 +79,17 @@ Record-shape cheat-sheet:
 
 - `hooks[]` — `{source: "user" | "plugin" | "project", sourcePath, event, matcher?, command, plugin?, repo?}`.
 - `mcpServers[]` — `{source: "user" | "user-project" | "project" | "plugin", sourcePath, name, definition, plugin?, repo?, projectPath?, approvalState?}`. `definition` is the raw server object (`command`, `args`, `env`, `url`, `type`, ...). `approvalState` on `project`-source servers is `"approved" | "denied" | "unapproved"` — unapproved MCPs will prompt on startup and won't load in non-interactive `-p` runs.
+- `env[]` — `{source: "user" | "project", sourcePath, name, value, repo?}`. Every `env` var ccairgap will inject into Claude's process.
+- `marketplaces[]` — `{source: "user" | "project", sourcePath, name, entry, sourceType?, hostPath?, repo?}`. `sourceType` is `github | git | directory | file | hostPattern | settings`. `hostPath` is set only for `directory` / `file` types — those are the host paths ccairgap auto-RO-mounts.
+
+Managed-settings tiers (OS-level policy files, MDM plist/registry, server-delivered) are intentionally omitted — they aren't mounted into the container. If the user's org pushes config that way, it won't appear in `inspect` output.
 
 Fallback hand-walk only when `inspect` is unavailable (older ccairgap version):
 
 ```bash
-cat ~/.claude/settings.json       # hooks, enabledPlugins, enabledMcpjsonServers
+cat ~/.claude/settings.json       # hooks, env, extraKnownMarketplaces, enabledPlugins, enabledMcpjsonServers
 cat ~/.claude.json                # top-level mcpServers + projects[<path>].mcpServers
-cat <repo>/.claude/settings.json  # project hooks, enabledMcpjsonServers
+cat <repo>/.claude/settings.json  # project hooks, env, extraKnownMarketplaces, enabledMcpjsonServers
 cat <repo>/.claude/settings.local.json
 cat <repo>/.mcp.json              # project-scope MCPs
 ```
@@ -94,7 +98,8 @@ Extract:
 
 - **Hooks** — every `hooks[].command` string. These will be filtered by `--hook-enable` globs. A hook referencing a host-only path (`~/scripts/...`, `/opt/homebrew/bin/...`) is a tell the user will need to either enable + install the binary in a custom Dockerfile, or leave the hook disabled.
 - **MCP servers** — every `mcpServers[].definition.command` (or `url` for http/sse type). If the command isn't in the base image's PATH, it needs either a Dockerfile extension or it won't work inside the container. Pay attention to `approvalState` on `project`-source servers: `unapproved` means the user hasn't accepted the `.mcp.json`, and it won't run inside the sandbox.
-- **Plugin marketplaces** — `extraKnownMarketplaces` entries in `~/.claude/settings.json` with `source.source: "directory"` or `"file"` are host paths that ccairgap auto-discovers and RO-mounts. User doesn't have to configure these.
+- **Env vars** — every `env[].value`. Ones referencing host-only paths (`/Users/...`, `/opt/homebrew/...`) or host binaries won't resolve inside the container; flag those for the user.
+- **Plugin marketplaces** — `marketplaces[]` entries with `sourceType: "directory"` or `"file"` surface a `hostPath`. ccairgap auto-RO-mounts those; user doesn't have to configure them. Other source types (`github`, `git`, `hostPattern`, `settings`) resolve via the plugin cache or inline config — no extra mount needed.
 - **Status line** — `statusLine.command` is a hook-like entry; filtered the same way.
 
 ### Binary dependencies inside the container

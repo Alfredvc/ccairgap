@@ -56,7 +56,7 @@ Work through these phases in order. Don't skip ahead.
 Probe the host so your recommendation is grounded. Read `references/gathering-context.md` for the full probe checklist; at minimum:
 
 - **Project shape.** Git repo root, dominant language / runtime (look for `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, etc.), sibling repos or docs dirs the user might be reading from.
-- **Claude setup.** User's `~/.claude/settings.json` (hooks, `extraKnownMarketplaces`, env), `~/.claude.json` (`mcpServers`), project `.claude/settings.json[.local]`, `<repo>/.mcp.json`. Prefer `ccairgap inspect` over hand-walking — one call returns JSON `{hooks, mcpServers}` covering every surface (user, user-project, plugin, project).
+- **Claude setup.** Run `ccairgap inspect` — one call returns JSON `{hooks, mcpServers, env, marketplaces}` covering every surface (user, user-project, plugin, project) including env vars and `extraKnownMarketplaces`. Only hand-walk the underlying files (`~/.claude/settings.json`, `~/.claude.json`, project `.claude/settings.json[.local]`, `<repo>/.mcp.json`) when `inspect` is unavailable on an older ccairgap version.
 - **Binary dependencies.** What does the user's workflow shell out to? Hook `command` strings, MCP `command` fields, `package.json` scripts, CI config, `.tool-versions`/`.nvmrc`/`.python-version`. Anything not in the base image (`node`, `npm`, `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`, `@anthropic-ai/claude-code`) is a Dockerfile candidate.
 - **Reference directories.** Sibling repos, shared type packages, docs trees, reference datasets — these become `--ro` mounts or `--extra-repo` entries. Be specific: identify what exists on the host and would actually be read during the session.
 

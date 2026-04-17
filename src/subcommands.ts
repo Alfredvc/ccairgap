@@ -16,6 +16,7 @@ import { defaultDockerfile, computeTag, imageExistsLocally } from "./image.js";
 import { probeCredentials } from "./credentials.js";
 import { enumerateHooks } from "./hooks.js";
 import { enumerateMcpServers } from "./mcp.js";
+import { enumerateEnv, enumerateMarketplaces } from "./settings.js";
 
 export async function listOrphans(): Promise<void> {
   const orphans = await scanOrphans(cliVersion());
@@ -138,12 +139,14 @@ function checkSessions(): DoctorCheck {
 }
 
 /**
- * `ccairgap inspect` — enumerate both hook entries and MCP server definitions the
- * container would see at launch. Sources walked mirror what the launch pipeline
- * actually reads (user settings, enabled plugins, per-repo project config,
- * `~/.claude.json`). Read-only; no session created. JSON to stdout.
+ * `ccairgap inspect` — enumerate the full config surface the container would
+ * see at launch. Sources walked mirror what the launch pipeline actually reads
+ * (user settings, enabled plugins, per-repo project config, `~/.claude.json`).
+ * Read-only; no session created. JSON to stdout.
  *
- * Output shape: `{ hooks: HookRecord[], mcpServers: McpRecord[] }`.
+ * Output shape: `{ hooks, mcpServers, env, marketplaces }`. Managed-settings
+ * tiers (OS-level policy files, MDM, server-delivered) are intentionally
+ * omitted — they aren't mounted into the container.
  */
 export function inspectCmd(opts: { repos: string[] }): void {
   const hcd = realpath(hostClaudeDirFn());
@@ -168,7 +171,9 @@ export function inspectCmd(opts: { repos: string[] }): void {
     pluginsCacheDir: pluginsCacheResolved,
     repos,
   });
-  console.log(JSON.stringify({ hooks, mcpServers }, null, 2));
+  const env = enumerateEnv({ hostClaudeDir: hcd, repos });
+  const marketplaces = enumerateMarketplaces({ hostClaudeDir: hcd, repos });
+  console.log(JSON.stringify({ hooks, mcpServers, env, marketplaces }, null, 2));
 }
 
 export async function doctor(): Promise<void> {

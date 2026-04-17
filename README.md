@@ -78,7 +78,7 @@ ccairgap \
 
 If a hook's command references a binary that isn't in your container image, opting it in still fails at invocation — extend the Dockerfile (`--dockerfile`) to include the binary.
 
-Unsure which hooks exist? `ccairgap inspect` dumps every hook entry — and every MCP server definition — the container would see at launch (user settings, enabled plugins, project `.claude/settings.json[.local]`, `~/.claude.json`, `<repo>/.mcp.json`) as JSON `{hooks, mcpServers}`. Pick globs from the real `command` strings, and see which MCPs would load, instead of hunting through config files by hand.
+Unsure what's in scope? `ccairgap inspect` dumps the full config surface the container would see at launch as JSON `{hooks, mcpServers, env, marketplaces}` — every hook entry, every MCP server definition, every `env` var, and every `extraKnownMarketplaces` entry across user settings, enabled plugins, project `.claude/settings.json[.local]`, `~/.claude.json`, and `<repo>/.mcp.json`. Pick globs from real `command` strings, see which MCPs would load, confirm env passthroughs, and know which marketplace source paths will be RO-mounted — without hunting through config files by hand.
 
 See `docs/SPEC.md` §"Hook policy" for the full mechanism.
 
@@ -174,7 +174,7 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 | `recover [<ts>]` | Run the handoff (fetch sandbox branch, copy transcripts, rm session dir). Idempotent. |
 | `discard <ts>` | Delete a session dir without running handoff. |
 | `doctor` | Preflight: Docker running, credentials present, image present/stale, state dir writable. |
-| `inspect` | Enumerate both hook entries and MCP server definitions the container would see at launch: user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json` / `.mcp.json` / `plugin.json#mcpServers`, project `.claude/settings.json[.local]`, `~/.claude.json` (user + user-project `mcpServers`), and `<repo>/.mcp.json` for `--repo` + every `--extra-repo`. JSON `{hooks, mcpServers}` to stdout. Read-only — useful for picking `--hook-enable` globs and confirming which MCPs will load. |
+| `inspect` | Enumerate the full config surface the container would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries. Walks user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json` / `.mcp.json` / `plugin.json#mcpServers`, project `.claude/settings.json[.local]`, `~/.claude.json` (user + user-project `mcpServers`), and `<repo>/.mcp.json` for `--repo` + every `--extra-repo`. JSON `{hooks, mcpServers, env, marketplaces}` to stdout. Managed-settings tiers (OS/MDM/server-delivered) omitted — not mounted into the container. Read-only — useful for picking `--hook-enable` globs, confirming which MCPs will load, and previewing the env + marketplace mounts. |
 
 ## Environment variables
 
