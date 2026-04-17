@@ -75,15 +75,32 @@ if [ -f "$HOST_PATCHED_SETTINGS" ]; then
     cp -L "$HOST_PATCHED_SETTINGS" "$SETTINGS"
 fi
 
-# Inject env vars into settings.json (preserve existing entries).
+# Hook script: emits sessionTitle on every UserPromptSubmit so Claude renames the
+# session (same effect as /rename — TUI TextInput border recolors, top-border
+# label shows the name). `claude -n` alone seeds the label but doesn't fire the
+# rename event; see the NAME_ARGS block below for why the two values must differ.
+# Injected after HOST_PATCHED_SETTINGS so it is not subject to --hook-enable filtering.
+TITLE_HOOK="/tmp/ccairgap-session-title.sh"
+cat > "$TITLE_HOOK" << 'HOOK_EOF'
+#!/bin/sh
+TITLE="${CCAIRGAP_NAME:+[ccairgap] $CCAIRGAP_NAME}"
+TITLE="${TITLE:-[ccairgap]}"
+printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","sessionTitle":"%s"}}\n' "$TITLE"
+HOOK_EOF
+chmod +x "$TITLE_HOOK"
+
+# Inject env vars + session title hook into settings.json (preserve existing entries).
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 chmod u+w "$SETTINGS"
 TMP_SETTINGS="$(mktemp)"
-jq '.env = (.env // {}) + {
+jq --arg hook "$TITLE_HOOK" '.env = (.env // {}) + {
     "DISABLE_AUTOUPDATER": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1"
-} | .skipDangerousModePermissionPrompt = true' "$SETTINGS" > "$TMP_SETTINGS"
+} | .skipDangerousModePermissionPrompt = true
+  | .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) + [
+      {"hooks": [{"type": "command", "command": $hook, "timeout": 5}]}
+    ]' "$SETTINGS" > "$TMP_SETTINGS"
 mv "$TMP_SETTINGS" "$SETTINGS"
 
 # Git identity from host (CLI reads host git config and passes via env).
@@ -100,13 +117,16 @@ CWD="${CCAIRGAP_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
-# Session name → `claude -n <name>` (shown in /resume and terminal title).
-# Always prefix with "[ccairgap]" so airgap sessions are visually distinct;
-# append user-supplied CCAIRGAP_NAME when set.
+# Session name → `claude -n <name>` (seeds /resume label + terminal title).
+# Intentionally differs from the UserPromptSubmit hook's sessionTitle output:
+# the hook applies "[ccairgap]" / "[ccairgap] $CCAIRGAP_NAME" on first prompt,
+# which renames the session and paints the TUI's TextInput border. If `-n` and
+# the hook emitted the same string, Claude's hook dedup (Ma8) would skip the
+# rename and the border recolor would never fire.
 if [ -n "${CCAIRGAP_NAME:-}" ]; then
-    NAME_ARGS=(-n "[ccairgap] $CCAIRGAP_NAME")
+    NAME_ARGS=(-n "$CCAIRGAP_NAME")
 else
-    NAME_ARGS=(-n "[ccairgap]")
+    NAME_ARGS=(-n "ccairgap")
 fi
 
 if [ -n "${CCAIRGAP_PRINT:-}" ]; then

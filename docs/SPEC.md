@@ -416,7 +416,7 @@ Runs at container start. Steps:
    }
    ```
 8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-9. Build the final `claude` args: always `--dangerously-skip-permissions`; always `-n "[ccairgap]"` so airgap sessions are visually distinct in `/resume` / terminal title, with `"[ccairgap] $CCAIRGAP_NAME"` when the env var is set; then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; `-n "ccairgap"` by default, or `-n "$CCAIRGAP_NAME"` when the env var is set, to seed the `/resume` label and terminal title. Note the `-n` value is intentionally *not* prefixed with `[ccairgap]`: a UserPromptSubmit hook injected by the entrypoint emits `sessionTitle: "[ccairgap]"` (or `"[ccairgap] $CCAIRGAP_NAME"`) on first prompt, and Claude Code's hook layer dedups against the current title — so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire. Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 
