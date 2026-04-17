@@ -9,6 +9,22 @@
     "type": "git",
     "url": "git+https://github.com/alfredvc/claude-airlock.git"
   },
+  "homepage": "https://github.com/alfredvc/claude-airlock#readme",
+  "bugs": {
+    "url": "https://github.com/alfredvc/claude-airlock/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "sandbox",
+    "docker",
+    "security",
+    "agent",
+    "ai",
+    "cli",
+    "dangerously-skip-permissions"
+  ],
   "bin": {
     "claude-airlock": "dist/cli.js"
   },
@@ -16,7 +32,8 @@
     "dist",
     "docker",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "SECURITY.md"
   ],
   "engines": {
     "node": ">=20"
