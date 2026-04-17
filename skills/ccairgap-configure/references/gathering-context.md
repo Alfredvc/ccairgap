@@ -21,20 +21,50 @@ Read `<repo>/.gitmodules` if present. Submodules are a known limitation — warn
 
 Look for manifests at the repo root:
 
-| File | Language / toolchain | Typical artifact dirs (informational) |
+| File | Language / toolchain | Gitignored build/cache dirs to probe |
 |------|----------------------|---------------------------------------|
-| `package.json` | Node | `node_modules/`, `dist/`, `.next/`, `build/` |
-| `pyproject.toml`, `requirements.txt`, `Pipfile` | Python | `.venv/`, `__pycache__/`, `.mypy_cache/` |
-| `Cargo.toml` | Rust | `target/` |
-| `go.mod` | Go | `$GOPATH/pkg/mod` |
-| `Gemfile` | Ruby | `vendor/bundle/` |
-| `pom.xml`, `build.gradle` | JVM | `target/`, `build/`, `.gradle/` |
-| `deno.json` | Deno | `.deno/` |
-| `bun.lockb` | Bun | `node_modules/` |
+| `package.json` | Node | `node_modules`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `dist`, `build`, `out`, `.cache` |
+| `bun.lockb` | Bun | same as Node |
+| `deno.json` | Deno | `.deno`, `node_modules` |
+| `pyproject.toml`, `requirements.txt`, `Pipfile`, `setup.py` | Python | `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox` |
+| `Cargo.toml` | Rust | `target` |
+| `go.mod` | Go | `vendor` (only if gitignored) |
+| `Gemfile` | Ruby | `vendor/bundle` |
+| `pom.xml`, `build.gradle`, `build.gradle.kts` | JVM | `target`, `build`, `.gradle` |
+| `*.xcodeproj`, `Podfile` | iOS / Xcode | `Pods`, `DerivedData` |
 
-The artifact dirs are listed for *awareness only* — their existence on the host is not a reason to add a config entry. Only escalate to `--cp` / `--sync` / `--mount` when the user asks to cache or preserve one. See the directory escalation ladder in SKILL.md.
+Read the manifest if present — `scripts` / `dependencies` / `devDependencies` hint at tools the workflow shells out to (Playwright, Puppeteer, Prisma, Cypress, etc.). These drive Dockerfile decisions.
 
-Read the manifest if it exists — `scripts` / `dependencies` / `devDependencies` hint at tools that will be shelled out (Playwright, Puppeteer, Prisma, Cypress, etc.). These drive Dockerfile decisions.
+### Gitignored-dir probe (drives the default `ro:` list)
+
+The workspace repo is cloned from git into session scratch — gitignored dirs (`node_modules`, `target`, `.venv`, etc.) are **not in the clone**. Without a mount, the container sees an empty path where deps should be; imports don't resolve, LSP doesn't work. The default fix is `ro:` (read-only access to the host cache).
+
+For each dir from the project-type table, verify both:
+
+```bash
+# Existence on host
+test -d <repo>/<dir>
+
+# Gitignored in this repo
+git -C <repo> check-ignore <dir>        # exit 0 = ignored
+```
+
+Example probe (adapt paths):
+
+```bash
+for d in node_modules .next dist .turbo; do
+  if [ -d "$REPO/$d" ] && git -C "$REPO" check-ignore "$d" >/dev/null 2>&1; then
+    echo "ro: $d"
+  fi
+done
+```
+
+Every dir that passes both checks goes into `ro:` by default. Include it in Phase 2 proposal so the user can confirm or override.
+
+Skip:
+- Tiny per-file caches (`__pycache__/`, `.DS_Store` etc.) — regeneration is trivial.
+- Non-gitignored dirs that happen to share a name (some monorepos commit a skeleton `dist/`).
+- Dirs outside the workspace repo (those are reference / sibling material — ask the user).
 
 ### Claude setup
 
@@ -110,14 +140,14 @@ After probing, state what you found and your proposed config. Be explicit about 
 
 Good framing:
 
-> Found: Node/TypeScript project at `~/src/foo`. `node_modules` is 1.2 GB. Your `~/.claude/settings.json` has two hooks (one `python3` auto-approve, one `bash` statusline). MCP servers: `grafana` (uses `docker` — won't work in sandbox without Dockerfile extension *and* a socket mount that defeats the sandbox, so don't enable), `puppeteer-mcp` (uses `npx`, should work).
+> Found: Node/TypeScript project at `~/src/foo`. Gitignored dirs present: `node_modules` (1.2 GB), `.next`, `dist`. Your `~/.claude/settings.json` has two hooks (one `python3` auto-approve, one `bash` statusline). MCP servers: `grafana` (uses `docker` — won't work in sandbox without Dockerfile extension *and* a socket mount that defeats the sandbox; don't enable), `puppeteer-mcp` (uses `npx`, should work).
 >
 > Proposed:
-> - `config.yaml`: no mounts beyond the default workspace. Enable two hooks: `python3 *`, `bash ~/.claude/statusline.sh`.
+> - `config.yaml`: `ro:` mount `node_modules`, `.next`, `dist` so Claude can read them (they're gitignored → missing from the session clone without this). Enable two hooks: `python3 *`, `bash ~/.claude/statusline.sh`.
 > - Custom `Dockerfile`: base + Python 3 (for the auto-approve hook).
 >
-> Not adding (ask if you want any of these):
-> - A `--mount node_modules` cache. The container will reinstall on first use; if that's unacceptable, we can add one.
+> Not adding (tell me if you want any of these):
+> - Write access to the above dirs. `npm install` / `npm run build` will fail inside the sandbox; escalate to `--cp` (session-local copy) or `--mount` (host writes) per dir if needed.
 > - Any port publish, env var passthrough, or network attach.
 > - Grafana MCP (needs host docker daemon → breaks sandbox).
 >

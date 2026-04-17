@@ -1,48 +1,105 @@
 # Directories: `--ro` vs `--cp` vs `--sync` vs `--mount`
 
-This skill's default stance on host directories is **conservative**: add the least permissive surface that works, and escalate only when the user asks. The full ladder:
+This skill's default stance on host directories: the least permissive surface that lets the workflow function. For gitignored build/cache dirs the floor is `--ro` (read access without host writes); escalate only when the user asks for writes.
 
 | Level | Surface | Host written? | Result preserved? | Default? |
 |-------|---------|---------------|-------------------|----------|
-| 0 | nothing | no | n/a | yes, for artifact dirs inside the workspace repo |
-| 1 | `ro` | no | n/a | yes, for reference material outside the workspace repo |
+| 0 | nothing | no | n/a | yes, for non-gitignored paths (already in the session clone) |
+| 1 | `ro` | no | n/a | **yes, for gitignored large build/cache dirs that exist on host** — and for reference material outside the repo |
 | 2 | `extra-repo` | no (sandbox branch) | yes, via fetch | when the user is editing a sibling repo alongside |
-| 3 | `cp` | no | no (discarded) | opt-in |
-| 4 | `sync` | no | yes, in `output/<ts>/` | opt-in |
-| 5 | `mount` | **yes, live** | yes (in place) | opt-in, with explicit user consent |
+| 3 | `cp` | no | no (discarded) | opt-in (user wants writes but not preservation) |
+| 4 | `sync` | no | yes, in `output/<ts>/` | opt-in (user wants writes + result preserved) |
+| 5 | `mount` | **yes, live** | yes (in place) | opt-in, with explicit user consent (writes land on host) |
 
-The key mental model: the workspace repo is already cloned into a session scratch dir at launch — artifacts inside it (`node_modules`, `dist`, `target`) will be regenerated from scratch on first use. That's fine by default. Escalation only happens when the user tells you regeneration is unacceptable, or the workflow literally cannot produce what they need without preservation.
+## The gitignore rule
 
-## Starting point by directory type
+`ccairgap` clones the workspace from git. Gitignored dirs (`node_modules`, `target/`, `.venv`, `dist/`, `.next/`) are **not in the session clone** — the container sees an empty / missing path. Without a mount, imports don't resolve, LSP can't find type info, and grep over deps is impossible.
 
-| Dir | Default | Promote when user says… |
-|-----|---------|-------------------------|
-| The workspace repo itself | built-in `--repo` mount (nothing to configure) | — |
-| Another git repo they're editing alongside | — | "I need to also edit `../sibling-repo`" → `extra-repo` |
-| Docs tree, shared types package, reference dataset | — | "Claude needs to read `../shared-types`" → `ro` |
-| `node_modules`, `.venv`, `.gradle`, `.m2` | nothing (container regenerates) | "reinstalling `node_modules` every session is too slow" → `mount` (user consents) or `cp` (no preservation) |
-| `target/` (Rust), build caches | nothing | "compile cache matters, rebuilds are minutes" → `mount` (user consents) |
-| `dist/`, `build/`, `.next/` | nothing | "I want the build output after the session" → `sync` |
-| Generated reports (Playwright, coverage) | nothing | "I want to look at the report afterwards" → `sync` |
-| Scratch dirs the agent might write | nothing | rarely worth configuring |
-| Host config dirs (`~/.config/*`, `~/.ssh`, `~/.aws`) | **never auto-mount** | see `secrets-and-sensitive-data.md` |
+For each known large build/cache dir:
 
-"The directory is big" is not an escalation trigger. "The user has told me regenerating it hurts their workflow" is.
+1. Run `git check-ignore <path>` — is it ignored?
+2. Does the path exist on the host?
+
+If both yes, the default is `ro:`. Claude gets read access to the host cache, writes are refused. If the user later asks Claude to run something that writes into that dir (install, build, test), escalate per the decision tree below.
+
+### Known dirs by project type
+
+| Project type | Dirs to check |
+|---|---|
+| Node / Bun / Deno | `node_modules`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `dist`, `build`, `out`, `.cache` |
+| Python | `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox` |
+| Rust | `target` |
+| Go | `vendor` (only if gitignored) |
+| JVM | `target`, `build`, `.gradle` |
+| Ruby | `vendor/bundle` |
+| iOS / Xcode | `Pods`, `DerivedData` |
+
+Rules:
+
+- Only include if `git check-ignore` says yes. Repos that commit `node_modules` or `vendor/` don't need the mount.
+- Only include if the dir exists on the host. Don't speculatively add `target` to a Node project.
+- Tiny ignored caches (`__pycache__/`, per-file caches) aren't worth an entry. The bar: would Claude benefit from reading the contents, and would regenerating them take more than a few seconds of useful work?
+- All of this is *inside* the workspace repo. Dirs outside it need the user to tell you what to expose (and usually those are source / reference dirs → `ro:` or `extra-repo:`, not artifact dirs).
 
 ## Decision tree for escalation requests
 
-When a user does ask to preserve a directory, walk this:
+When a user asks for writes to a `ro:` dir — "run `npm install`", "run the test suite", "recompile" — walk this:
 
 1. **Do they want container changes reflected on the host original path?**
    - Yes → `mount`. Fastest. Writes host live. Weakens the "host FS is immutable" invariant for that one path — name the tradeoff in your response.
    - No → keep going.
 2. **Do they want to keep the result anywhere?**
-   - No → `cp`. Session gets a copy at launch; discarded on exit. Host original untouched regardless.
+   - No → `cp`. Session gets a full mutable copy at launch; discarded on exit. Host original untouched.
    - Yes → `sync`. Result lands in `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Host original untouched.
 
-All three of `cp` / `sync` / `mount` resolve relative paths against the **workspace repo root** (not the config file dir). All three fail if the host path doesn't exist at launch. A given host path can appear in only one of `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`.
+All of `cp` / `sync` / `mount` resolve relative paths against the **workspace repo root** (not the config file dir). All fail if the host path doesn't exist at launch. A given host path can appear in only one of `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`.
 
 ## Worked examples
+
+### "Node project — standard setup"
+
+Host has `node_modules`, `.next`, `dist`. All gitignored.
+
+```yaml
+ro:
+  - node_modules
+  - .next
+  - dist
+```
+
+Claude can read deps, inspect build output, run typechecks that don't write. `npm install` / `npm run build` will fail; if the user needs those, escalate per the tree.
+
+### "Node project — I also need to run the test suite"
+
+Tests write to `node_modules/.cache/` and create snapshot files. Escalate `node_modules` only.
+
+```yaml
+ro:
+  - .next
+  - dist
+cp:
+  - node_modules          # writes land in session scratch, discarded on exit
+```
+
+If the user wants the test snapshot updates preserved instead, `sync: [node_modules]`. If they want the cache to persist across sessions, `mount: [node_modules]` (host writes).
+
+### "Rust project — just reading code"
+
+```yaml
+ro:
+  - target
+```
+
+Compilation won't work, but `cargo check` against already-compiled artifacts and reading dep source works.
+
+### "Rust project — recompiles are expensive, I want the cache live"
+
+User explicitly asked:
+
+```yaml
+mount:
+  - target
+```
 
 ### "Claude needs to read our shared types repo"
 
@@ -51,8 +108,6 @@ ro:
   - ../shared-types
 ```
 
-Read-only sibling. No escalation needed.
-
 ### "Claude needs to edit the shared types repo alongside my workspace"
 
 ```yaml
@@ -60,27 +115,9 @@ extra-repo:
   - ../shared-types
 ```
 
-Gets its own sandbox branch; fetch-on-exit mirrors the workspace flow. Host original repo untouched; you recover changes the same way as `--repo`.
+### "I want the build output after the session"
 
-### "Reinstalling node_modules every time is too slow" (user asked)
-
-```yaml
-mount:
-  - node_modules
-```
-
-Live bind. Regeneration cost paid once. Explicit opt-in to host writes for this one path.
-
-### "I want to try a build from a fresh node_modules, throw away result" (user asked)
-
-```yaml
-cp:
-  - node_modules
-```
-
-Session clone gets a fresh copy at launch; container modifies freely; session dir deleted on exit. Host `node_modules` unchanged.
-
-### "I want the build output after the session" (user asked)
+User asked for preservation:
 
 ```yaml
 sync:
@@ -89,29 +126,15 @@ sync:
 
 On exit, `dist/` copy lands at `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-repo>/dist/`. Host original untouched.
 
-### "Python project with Playwright, I want the report" (user asked for .venv cache + report)
-
-```yaml
-mount:
-  - .venv
-sync:
-  - playwright-report
-  - test-results
-```
-
-`.venv` persists across sessions (user consented to the live write). Reports land in `output/<ts>/`.
-
 ## Absolute vs relative paths
 
 - Relative paths (preferred in committed config): resolved against workspace repo root.
 - Absolute paths: allowed but warn if outside every declared repo tree.
 
-Examples:
-
 ```yaml
-cp:
+ro:
   - node_modules              # → <repo>/node_modules
-  - /var/cache/npm            # absolute, outside repo (warning)
+  - /opt/reference-data       # absolute (warning if outside repo)
 ```
 
 ## Things that are NOT artifact decisions

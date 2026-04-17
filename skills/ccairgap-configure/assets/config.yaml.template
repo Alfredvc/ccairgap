@@ -29,11 +29,18 @@
 # extra-repo:
 #   - ../sibling-repo
 
-# Read-only mounts. Use for reference material Claude needs to read
-# (docs, shared-type packages, datasets). Safe default for "give Claude
-# access to this dir".
+# Read-only mounts. Two use cases:
+#   1. Gitignored large build/cache dirs inside the workspace — these are NOT
+#      in the session clone (ccairgap clones from git), so without this mount
+#      Claude sees an empty path. RO gives read access without host writes.
+#      Fill in only the dirs that exist on host AND are gitignored.
+#   2. Reference material outside the workspace (docs, shared-type packages).
 # ro:
-#   - ../docs
+#   - node_modules                   # Node/Bun — gitignored, RO so imports resolve
+#   - target                         # Rust — gitignored, RO so dep source is visible
+#   - .venv                          # Python — gitignored
+#   - dist                           # build output — RO
+#   - ../docs                        # sibling docs tree
 #   # - /opt/reference-data          # absolute path always works
 
 # ---------------------------------------------------------------------------

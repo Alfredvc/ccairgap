@@ -19,6 +19,34 @@ Your core job is narrow:
 
 Everything else is opt-in.
 
+## The gitignore rule
+
+`ccairgap` clones the workspace repo into session scratch. Only **git-tracked files** land in the clone. Anything gitignored — `node_modules`, `target/`, `.venv`, `dist/`, `.next/`, etc. — is **missing from the container by default**. Claude opens the sandbox and sees a repo without its dependencies; imports fail to resolve, LSP doesn't work, grep over third-party code is impossible.
+
+For every known large build/cache directory that (a) exists on the host and (b) is gitignored, the default is to `--ro` mount it. Read-only is enough for Claude to resolve imports, read dep source, and understand the dep graph. If the user also needs to run builds/tests that write into those dirs, they will tell you — then escalate to `--mount` (host writes) or `--cp` (session-local, discarded on exit).
+
+### Known dirs to check
+
+Walk this list for each detected project type. For each dir: run `git check-ignore <path>` (or read `.gitignore`) AND confirm `<path>` exists on the host. If both, add to `ro:` by default.
+
+| Project type | Dirs to check |
+|---|---|
+| Node / Bun / Deno (`package.json`, `bun.lockb`, `deno.json`) | `node_modules`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `dist`, `build`, `out`, `.cache` |
+| Python (`pyproject.toml`, `requirements.txt`, `Pipfile`, `setup.py`) | `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox` |
+| Rust (`Cargo.toml`) | `target` |
+| Go (`go.mod`) | `vendor` (only if gitignored — some repos commit it) |
+| JVM (`pom.xml`, `build.gradle`, `build.gradle.kts`) | `target`, `build`, `.gradle` |
+| Ruby (`Gemfile`) | `vendor/bundle` |
+| iOS / Xcode (`*.xcodeproj`, `Podfile`) | `Pods`, `DerivedData` |
+
+Narrow rules:
+
+- **Only include a dir if it's gitignored on this repo.** `git check-ignore node_modules` returning 0 is the signal. A repo that commits `node_modules` (rare, but exists) doesn't need the mount.
+- **Only include a dir that actually exists on the host.** Don't add `target` to `ro:` for a Node project.
+- **Tiny caches aren't worth it.** `__pycache__` inside the tree is gitignored but regenerates in milliseconds; skip. The test is "would regeneration take more than a few seconds to start useful work" — if no, omit.
+- **Never escalate past `--ro` without user consent.** If the user asks Claude to run `npm install`, `cargo test`, or any command that writes to these dirs, say so: "that needs write access to `node_modules` — should I switch it to `--mount` (writes land on host) or `--cp` (session-local copy, discarded on exit)?"
+- **Dirs outside the workspace repo are out of scope for this rule.** The gitignore check is per-workspace. For sibling dirs Claude needs to read, ask the user what they want.
+
 ## Core flow
 
 Work through these phases in order. Don't skip ahead.
@@ -40,13 +68,13 @@ Do the probing with real tool calls — `git rev-parse --show-toplevel`, reading
 
 State back what you found and what you propose, **before writing any artifact**. Keep the proposal minimal. Example shape:
 
-> I see a Node/TypeScript project with `node_modules` and a `dist/` build output. Your `~/.claude/settings.json` has a `python3 ~/scripts/auto-approve.py` PreToolUse hook. Your `~/.claude.json` has a Playwright MCP server.
+> I see a Node/TypeScript project. Gitignored dirs present on host: `node_modules`, `.next`, `dist`. Your `~/.claude/settings.json` has a `python3 ~/scripts/auto-approve.py` PreToolUse hook. Your `~/.claude.json` has a Playwright MCP server.
 >
 > Proposed config:
-> - `config.yaml`: mount sibling repo `../shared-types` read-only; enable the `python3 *` hook.
+> - `config.yaml`: `ro:` mount `node_modules`, `.next`, `dist` (gitignored, so the session clone would be missing them — RO gives Claude read access without host writes); `ro:` sibling `../shared-types`; enable the `python3 *` hook.
 > - Custom `Dockerfile`: base + Python 3 (for the auto-approve hook) + Playwright system libs (for the MCP).
 >
-> I did *not* add: live mount for `node_modules` (the container will reinstall from the lockfile on first use — let me know if that's too slow and you want to cache it), sync-out for `dist/`, any port publish, any env var passthrough. Those are opt-in — tell me if any of them matter.
+> I did *not* add: write access for any of those dirs (so `npm install` / `npm run build` will fail inside the sandbox — tell me if you need those, and for which dirs I should escalate to `--cp` or `--mount`), any port publish, any env var passthrough. Those are opt-in.
 >
 > Confirm or tell me what to change.
 
@@ -71,16 +99,18 @@ This is the decision you'll make most often. Default to the *least* permissive o
 
 | Level | Surface | Host written? | Use when |
 |-------|---------|---------------|----------|
-| 0 — nothing | (no config entry) | no | The workspace repo itself; built-in mount already covers it. Container regenerates artifacts from scratch. |
-| 1 — read-only | `ro: [<path>]` | no | Reference material Claude needs to read: sibling types package, docs tree, reference data, shared config. **This is the default for any host dir you want Claude to see.** |
+| 0 — nothing | (no config entry) | no | The workspace repo itself (built-in mount covers it). Non-gitignored paths. |
+| 1 — read-only | `ro: [<path>]` | no | **Default for gitignored large build/cache dirs** (`node_modules`, `target`, `.venv`, etc. — see the gitignore rule above). Also for reference material outside the repo: sibling types package, docs tree, shared config. |
 | 2 — sibling repo, sandboxed | `extra-repo: [<path>]` | no (gets own sandbox branch) | A second git repo the user is actively editing alongside the workspace. Same safety as `--repo` — clone + sandbox branch + fetch-on-exit. |
-| 3 — copy in, discard | `cp: [<path>]` | no | Session wants a mutable starting state from host, but nothing should be preserved. Rare. |
+| 3 — copy in, discard | `cp: [<path>]` | no | User has asked Claude to run something that *writes* into the dir (build, test, install) but doesn't want those changes preserved. Session gets a full mutable copy; discarded on exit. |
 | 4 — copy in, copy out | `sync: [<path>]` | no | Build output the user wants after the session without touching the host original. Opt in when the user says "I want to keep the build". |
 | 5 — live bind, host writes | `mount: [<path>]` | **yes** | Cache/artifact dir where regeneration is expensive *and* the user has said so. Weakens the host-write invariant for that one path. Never default. |
 
 **Never escalate past level 1 without one of:**
-- The user explicitly asked for persistence / preservation.
-- The workflow literally cannot function otherwise (rare — most "slow" cases are acceptable on first run).
+- The user explicitly asked for persistence / preservation / writes.
+- The workflow literally cannot function otherwise (rare — first-run cost alone is not enough).
+
+When a user asks for something that needs writes to a `ro:` dir ("run the test suite", "install this package"), surface the tradeoff explicitly: "`node_modules` is currently `ro:`; for `npm install` I can switch to `--cp` (copy in, discard on exit) or `--mount` (writes land on your host). Which?"
 
 Full decision matrix with worked examples: `references/artifact-decision.md`.
 
