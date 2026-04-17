@@ -129,7 +129,7 @@ async function main() {
     )
     .option(
       "-n, --name <name>",
-      "session name. Used as branch suffix (`ccairgap/<name>`) and forwarded to `claude -n <name>`. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
+      "session name. Used as branch suffix (`ccairgap/<name>`) and forwarded to `claude -n \"[ccairgap] <name>\"` so the session shows up with that label in `/resume` and the terminal title. The `[ccairgap]` prefix is always applied. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
     )
     .option(
       "--hook-enable <glob>",
