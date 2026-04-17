@@ -28,9 +28,10 @@ function collect(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
-/** Merge CLI > config. Arrays concat (config first, then CLI). Maps merge (CLI wins per-key). */
+/** Merge CLI > config. Scalars: CLI wins. Arrays concat (config first, then CLI). Maps merge (CLI wins per-key). */
 function mergeRun(cli: {
-  repo: string[];
+  repo?: string;
+  extraRepo: string[];
   ro: string[];
   base?: string;
   keepContainer?: boolean;
@@ -40,7 +41,8 @@ function mergeRun(cli: {
   print?: string;
 }, cfg: ConfigFile) {
   return {
-    repos: [...(cfg.repo ?? []), ...cli.repo],
+    repo: cli.repo ?? cfg.repo,
+    extraRepos: [...(cfg.extraRepo ?? []), ...cli.extraRepo],
     ros: [...(cfg.ro ?? []), ...cli.ro],
     base: cli.base ?? cfg.base,
     keepContainer: cli.keepContainer ?? cfg.keepContainer ?? false,
@@ -61,7 +63,8 @@ async function main() {
 
   program
     .option("--config <path>", "path to yaml config file (default: <git-root>/.claude-airgap/config.yaml)")
-    .option("--repo <path>", "host repo to expose (cloned --shared). Repeatable.", collect, [])
+    .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
+    .option("--extra-repo <path>", "additional host repo exposed alongside --repo (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])
     .option("--base <ref>", "base ref for sandbox/<ts> branch (default: HEAD)")
     .option("--keep-container", "do not pass --rm to docker run")
@@ -93,7 +96,8 @@ async function main() {
 
       const merged = mergeRun(
         {
-          repo: opts.repo as string[],
+          repo: opts.repo as string | undefined,
+          extraRepo: opts.extraRepo as string[],
           ro: opts.ro as string[],
           base: opts.base,
           keepContainer: opts.keepContainer,
@@ -105,14 +109,21 @@ async function main() {
         fileCfg,
       );
 
-      const repos = merged.repos;
+      let workspaceRepo = merged.repo;
+      const extraRepos = merged.extraRepos;
       const ros = merged.ros;
 
       // Default --repo to cwd if it is a git repo, otherwise allow ro-only, otherwise error.
-      if (repos.length === 0) {
+      if (!workspaceRepo) {
         const cwd = process.cwd();
         if (isGitRepo(cwd)) {
-          repos.push(cwd);
+          workspaceRepo = cwd;
+        } else if (extraRepos.length > 0) {
+          console.error(
+            "claude-airlock: --extra-repo requires --repo <path> (workspace). " +
+              "Pass --repo <path> or cd into a repo.",
+          );
+          process.exit(1);
         } else if (ros.length === 0) {
           console.error(
             "claude-airlock: not in a git repo and no --repo / --ro passed. " +
@@ -122,9 +133,11 @@ async function main() {
         }
       }
 
+      const repos: string[] = workspaceRepo ? [workspaceRepo, ...extraRepos] : [...extraRepos];
+
       for (const r of repos) {
         if (!existsSync(r) || !statSync(r).isDirectory()) {
-          console.error(`claude-airlock: --repo not a directory: ${r}`);
+          console.error(`claude-airlock: repo path not a directory: ${r}`);
           process.exit(1);
         }
       }

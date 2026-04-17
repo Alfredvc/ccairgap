@@ -61,7 +61,7 @@ A session may cause writes to:
 1. `$XDG_STATE_HOME/claude-airlock/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow").
 2. `$XDG_STATE_HOME/claude-airlock/output/` — `/output` mount inside container.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
-4. Real host repos passed to `--repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
+4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
 
 No other host path is writable by the container. `~/.claude/`, `~/.claude.json`, plugin marketplace repos, `--ro` reference paths are all RO-mounted.
 
@@ -77,9 +77,10 @@ Default (no subcommand): start a new session.
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
-| `--repo <host-path>` | yes | Host repo to expose to container. Cloned with `--shared`, new branch `sandbox/<ts>` created. If no `--repo` is passed, defaults to the current working directory (must be a git repo). |
+| `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `sandbox/<ts>` created. If omitted, defaults to the current working directory (must be a git repo). |
+| `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `sandbox/<ts>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
-| `--base <ref>` | no | Base ref for `sandbox/<ts>` branch. Default: current HEAD of each `--repo`. |
+| `--base <ref>` | no | Base ref for `sandbox/<ts>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
 | `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm claude-airlock-<ts>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code. |
@@ -100,10 +101,10 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 **Examples:**
 
 ```bash
-# Interactive session with two repos and one reference dir
+# Interactive session: workspace repo + sibling repo + reference dir
 claude-airlock \
   --repo ~/src/foo \
-  --repo ~/src/bar \
+  --extra-repo ~/src/bar \
   --ro ~/src/docs
 
 # Walk-away (launch inside a host tmux)
@@ -121,23 +122,25 @@ claude-airlock --rebuild --docker-build-arg CLAUDE_CODE_VERSION=1.2.3 --repo ~/s
 
 In order:
 
-1. Parse flags. Gather `--repo` / `--ro` / `--base` lists.
-   - If `--repo` list is empty and `$(pwd)` is a git repo, default to `--repo $(pwd)`.
-   - If `--repo` list is still empty and `--ro` is non-empty, proceed with no session clone (Claude only gets RO views; no sandbox branch).
-   - If `--repo` list is still empty and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
-   - Error if the same resolved path appears in both the `--repo` and `--ro` lists.
+1. Parse flags. Resolve `--repo` (single, workspace), `--extra-repo` (repeatable), `--ro` (repeatable), `--base`.
+   - If `--repo` is unset and `$(pwd)` is a git repo, default `--repo` to `$(pwd)`.
+   - If `--repo` is still unset and `--extra-repo` is non-empty, error: "--extra-repo requires --repo <path> (workspace)."
+   - If `--repo` is still unset and `--ro` is non-empty, proceed with no session clone (Claude only gets RO views; no sandbox branch).
+   - If `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
+   - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
+   - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
 2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Launch flags are only consumed by the default (no-subcommand) invocation.
 3. Scan `$XDG_STATE_HOME/claude-airlock/sessions/` for orphaned session dirs (dirs without a running container named `claude-airlock-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `claude-airlock recover <ts>` / `claude-airlock discard <ts>` commands. Do not auto-recover; continue to new session setup.
 4. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
    - Non-macOS: verify host `~/.claude/.credentials.json` exists. If missing, print "run `claude` on the host to log in" and exit.
 5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/claude-airlock/sessions/<ts>/`.
-6. For each `--repo <path>`:
+6. For each repo in the set (`--repo` plus every `--extra-repo`):
    - `git clone --shared <path> $SESSION/repos/<basename>`
    - `cd $SESSION/repos/<basename> && git checkout -b sandbox/<ts> [<base>]`
 7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping, so `claude-airlock recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem.
 8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/claude-airlock/output/` (idempotent).
-9. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--ro` targets.
+9. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
 10. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
 11. Build `docker run` command:
     - `--rm` (omit if `--keep-container` was passed)
@@ -248,7 +251,7 @@ Runs at container start. Steps:
      }
    }
    ```
-7. If no `--repo` was passed, cwd defaults to `/workspace` (simple fallback). Otherwise cwd = first `--repo`'s preserved path.
+7. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
 8. If `AIRLOCK_PRINT` env var is set: `exec claude --dangerously-skip-permissions -p "$AIRLOCK_PRINT"`. Otherwise: `exec claude --dangerously-skip-permissions` (interactive REPL).
 
 ## Authentication flow
@@ -285,7 +288,7 @@ LFS gets the same pattern: host `lfs/objects/` at `/host-git-alternates/<basenam
 
 **Resolving the real git dir:**
 
-For each `--repo <path>`, the CLI determines the real `.git/` location before setting up mounts:
+For each repo in the set (`--repo` plus every `--extra-repo`), the CLI determines the real `.git/` location before setting up mounts:
 
 1. If `<path>/.git` is a directory: real git dir is `<path>/.git/`.
 2. If `<path>/.git` is a file (worktree): read it, extract the `gitdir:` line, follow to the main repo's `.git/worktrees/<name>/`. Walk up to the main repo's `.git/` dir (the parent of `worktrees/`). Real git dir is that main `.git/`.

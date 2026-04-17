@@ -78,11 +78,18 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   // ---- Validation phase: no side effects ----
 
-  // repos + ros may not overlap
-  const repoSet = new Set(opts.repos.map((p) => resolve(p)));
+  // repos must be unique; repos + ros may not overlap
+  const repoSet = new Set<string>();
+  for (const r of opts.repos) {
+    const abs = resolve(r);
+    if (repoSet.has(abs)) {
+      die(`duplicate repo path in --repo/--extra-repo: ${r}`);
+    }
+    repoSet.add(abs);
+  }
   for (const ro of opts.ros) {
     if (repoSet.has(resolve(ro))) {
-      die(`path appears in both --repo and --ro: ${ro}`);
+      die(`path appears in both repo (--repo/--extra-repo) and --ro: ${ro}`);
     }
   }
 

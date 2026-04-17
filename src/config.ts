@@ -11,7 +11,8 @@ export const DEFAULT_CONFIG_REL = ".claude-airgap/config.yaml";
  * Undefined = unset (not "use default").
  */
 export interface ConfigFile {
-  repo?: string[];
+  repo?: string;
+  extraRepo?: string[];
   ro?: string[];
   base?: string;
   keepContainer?: boolean;
@@ -24,6 +25,8 @@ export interface ConfigFile {
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
 const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "repo": "repo",
+  "extra-repo": "extraRepo",
+  "extraRepo": "extraRepo",
   "ro": "ro",
   "base": "base",
   "keep-container": "keepContainer",
@@ -128,7 +131,15 @@ export function parseConfig(text: string, source: string): ConfigFile {
     }
     switch (normKey) {
       case "repo":
-        cfg.repo = assertStringArray(val, "repo");
+        if (Array.isArray(val)) {
+          throw new Error(
+            `config.repo: expected single string (workspace). For multiple repos, use 'extra-repo' (array).`,
+          );
+        }
+        cfg.repo = assertString(val, "repo");
+        break;
+      case "extraRepo":
+        cfg.extraRepo = assertStringArray(val, "extra-repo");
         break;
       case "ro":
         cfg.ro = assertStringArray(val, "ro");
@@ -175,7 +186,8 @@ export function resolveConfigPaths(cfg: ConfigFile, configPath: string): ConfigF
   const base = dirname(configPath);
   const fixPath = (p: string) => (isAbsolute(p) ? p : resolve(base, p));
   const out: ConfigFile = { ...cfg };
-  if (cfg.repo) out.repo = cfg.repo.map(fixPath);
+  if (cfg.repo) out.repo = fixPath(cfg.repo);
+  if (cfg.extraRepo) out.extraRepo = cfg.extraRepo.map(fixPath);
   if (cfg.ro) out.ro = cfg.ro.map(fixPath);
   if (cfg.dockerfile) out.dockerfile = fixPath(cfg.dockerfile);
   return out;

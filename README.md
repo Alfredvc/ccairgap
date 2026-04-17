@@ -20,8 +20,8 @@ Log in on the host once with `claude` — `claude-airlock` inherits those creden
 # Interactive session in the current git repo
 claude-airlock
 
-# Multiple repos + a reference dir
-claude-airlock --repo ~/src/foo --repo ~/src/bar --ro ~/src/docs
+# Workspace + sibling repos + a reference dir
+claude-airlock --repo ~/src/foo --extra-repo ~/src/bar --ro ~/src/docs
 
 # Walk-away via tmux
 tmux new -s work 'claude-airlock --repo ~/src/foo'
@@ -30,14 +30,15 @@ tmux new -s work 'claude-airlock --repo ~/src/foo'
 claude-airlock -p "summarize README"
 ```
 
-On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each `--repo` via `git fetch` (container never has write access to the real repo).
+On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo).
 
 ## Launch flags
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
 | `--config <path>` | no | YAML config file. Default: `<git-root>/.claude-airgap/config.yaml`. |
-| `--repo <path>` | yes | Host repo to expose. Cloned `--shared`, branch `sandbox/<ts>` created. Defaults to cwd if it's a git repo. |
+| `--repo <path>` | no | Host repo to expose as the workspace (container cwd). Cloned `--shared`, branch `sandbox/<ts>` created. Defaults to cwd if it's a git repo. |
+| `--extra-repo <path>` | yes | Additional host repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | yes | Extra read-only bind mount. |
 | `--base <ref>` | no | Base ref for `sandbox/<ts>`. Default: HEAD of each `--repo`. |
 | `--keep-container` | no | Omit `docker run --rm` so the container persists for postmortem. |
@@ -50,13 +51,14 @@ On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each `--
 
 Any launch flag can live in a YAML file. Default location: `<git-root>/.claude-airgap/config.yaml`. Override with `--config <path>`.
 
-Precedence: **CLI > config > built-in defaults**. Arrays (`repo`, `ro`) concat across sources. `docker-build-arg` map merges per-key with CLI winning. Relative paths inside the config resolve against the config file's directory.
+Precedence: **CLI > config > built-in defaults**. Scalars (`repo`, `base`, `dockerfile`, `print`, `keep-container`, `rebuild`): CLI wins. Arrays (`extra-repo`, `ro`): concat across sources. `docker-build-arg` map merges per-key with CLI winning. Relative paths inside the config resolve against the config file's directory.
 
 Example `.claude-airgap/config.yaml`:
 
 ```yaml
-repo:
-  - .
+repo: .
+extra-repo:
+  - ../sibling
 ro:
   - ../docs
 base: main
