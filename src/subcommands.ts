@@ -1,0 +1,131 @@
+import { existsSync, mkdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { execa } from "execa";
+import { sessionDir as sessionDirFn, sessionsDir, stateRoot } from "./paths.js";
+import { handoff } from "./handoff.js";
+import { scanOrphans } from "./orphans.js";
+import { cliVersion } from "./version.js";
+import { defaultDockerfile, computeTag, imageExistsLocally } from "./image.js";
+import { probeCredentials } from "./credentials.js";
+
+export async function listOrphans(): Promise<void> {
+  const orphans = await scanOrphans(cliVersion());
+  if (orphans.length === 0) {
+    console.log("no orphaned sessions");
+    return;
+  }
+  for (const o of orphans) {
+    const commits = Object.entries(o.commits)
+      .map(([k, v]) => `${k}+${v}`)
+      .join(" ");
+    console.log(`${o.ts}  repos=${o.repos.join(",") || "(none)"}  ${commits}`);
+  }
+}
+
+export async function recover(ts?: string): Promise<void> {
+  if (!ts) return listOrphans();
+  const sd = sessionDirFn(ts);
+  if (!existsSync(sd)) {
+    console.error(`claude-airlock: no session dir at ${sd}`);
+    process.exit(1);
+  }
+  const result = await handoff(sd, cliVersion());
+  const fetched = result.fetched.filter((f) => f.ok).length;
+  console.log(
+    `recovered ${ts}: ${fetched}/${result.fetched.length} branches fetched, ` +
+      `${result.transcriptsCopied} transcript dirs copied, ` +
+      `session dir ${result.removed ? "removed" : "kept"}`,
+  );
+  if (result.warnings.length > 0) process.exitCode = 1;
+}
+
+export function discard(ts: string): void {
+  const sd = sessionDirFn(ts);
+  if (!existsSync(sd)) {
+    console.error(`claude-airlock: no session dir at ${sd}`);
+    process.exit(1);
+  }
+  rmSync(sd, { recursive: true, force: true });
+  console.log(`discarded ${ts}`);
+}
+
+interface DoctorCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+async function checkDocker(): Promise<DoctorCheck> {
+  try {
+    await execa("docker", ["version", "--format", "{{.Server.Version}}"], { timeout: 5_000 });
+    return { name: "docker", ok: true, detail: "running" };
+  } catch (e) {
+    return { name: "docker", ok: false, detail: (e as Error).message.split("\n")[0] ?? "not running" };
+  }
+}
+
+async function checkCredentials(): Promise<DoctorCheck> {
+  const r = await probeCredentials();
+  return { name: "host credentials", ok: r.ok, detail: r.detail };
+}
+
+function checkStateDir(): DoctorCheck {
+  const root = stateRoot();
+  try {
+    mkdirSync(root, { recursive: true });
+    const probe = join(root, ".doctor-probe");
+    writeFileSync(probe, "");
+    unlinkSync(probe);
+    return { name: "state dir", ok: true, detail: `${root} (writable)` };
+  } catch (e) {
+    return { name: "state dir", ok: false, detail: `${root}: ${(e as Error).message}` };
+  }
+}
+
+async function checkImage(): Promise<DoctorCheck> {
+  try {
+    const tag = computeTag(defaultDockerfile(), defaultDockerfile());
+    const present = await imageExistsLocally(tag);
+    if (!present) return { name: "image", ok: false, detail: `${tag} not built yet (first run will build)` };
+    const { stdout } = await execa("docker", ["image", "inspect", tag, "--format", "{{.Created}}"]);
+    const createdAt = new Date(stdout.trim());
+    const ageDays = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+    const stale = ageDays > 14;
+    return {
+      name: "image",
+      ok: !stale,
+      detail: `${tag} age=${ageDays.toFixed(1)}d${stale ? " (stale, consider --rebuild)" : ""}`,
+    };
+  } catch (e) {
+    return { name: "image", ok: false, detail: (e as Error).message };
+  }
+}
+
+function checkSessions(): DoctorCheck {
+  const d = sessionsDir();
+  if (!existsSync(d)) return { name: "sessions dir", ok: true, detail: `${d} (not created yet)` };
+  try {
+    const entries = statSync(d).isDirectory() ? true : false;
+    return { name: "sessions dir", ok: entries, detail: d };
+  } catch (e) {
+    return { name: "sessions dir", ok: false, detail: (e as Error).message };
+  }
+}
+
+export async function doctor(): Promise<void> {
+  const checks: DoctorCheck[] = [];
+  checks.push(await checkDocker());
+  checks.push(await checkCredentials());
+  checks.push(checkStateDir());
+  checks.push(checkSessions());
+  checks.push(await checkImage());
+
+  let anyFail = false;
+  for (const c of checks) {
+    const mark = c.ok ? "OK" : "FAIL";
+    console.log(`[${mark}] ${c.name}: ${c.detail}`);
+    if (!c.ok) anyFail = true;
+  }
+
+  if (anyFail) process.exitCode = 1;
+}

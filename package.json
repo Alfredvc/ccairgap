@@ -1,0 +1,41 @@
+{
+  "name": "claude-airlock",
+  "version": "0.1.0",
+  "description": "Run Claude Code with --dangerously-skip-permissions in a Docker container. Host filesystem cannot be mutated outside a small set of explicitly writable paths.",
+  "license": "MIT",
+  "type": "module",
+  "author": "Alfredo V. Clemente",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alfredvc/claude-airlock.git"
+  },
+  "bin": {
+    "claude-airlock": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "docker",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "execa": "^9.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
