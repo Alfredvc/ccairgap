@@ -506,7 +506,7 @@ Host files are never mutated; all patched copies live under `$SESSION/hook-polic
 - Flag: `--hook-enable <glob>` — repeatable.
 - Config file key: `hooks.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
 - Merge: CLI values append to config values (same semantics as `--ro` / `--extra-repo`).
-- Introspection: `ccairgap hooks` prints every hook entry ccairgap would see at launch (all three sources) as JSON, so users can build their enable-globs from the exact `command` strings without walking plugin caches or project settings by hand. Read-only.
+- Introspection: `ccairgap inspect` prints the full config surface ccairgap would see at launch — both hook entries (all three sources) and MCP server definitions — as JSON `{hooks, mcpServers}`. Users can build their enable-globs from the exact `command` strings, and see which MCP servers would load (plus their required host binaries) without walking plugin caches, project settings, or `~/.claude.json` by hand. Read-only.
 
 ## Plugins, skills, commands, CLAUDE.md
 
@@ -544,9 +544,10 @@ Post-processing in the CLI:
 - Plugin installs during a session are blocked by the RO `plugins/cache/` mount — any `/plugin install` attempt fails when it tries to write the cache. No separate marketplace allowlist needed.
 
 **MCP servers:**
-- `~/.claude.json` `mcpServers` block is copied as-is into container.
+- `~/.claude.json` `mcpServers` block (user scope) and `projects["<path>"].mcpServers` (local/user-project scope) are copied as-is into the container via the `/host-claude-json` mount + entrypoint `cp`. Project-scope `<repo>/.mcp.json` travels in with the session clone. Plugin-scope MCPs (`<plugin>/.mcp.json`, `<plugin>/plugin.json#mcpServers`) travel via the RO plugin-cache mount.
 - MCPs requiring binaries not present in container (e.g. `docker` for the grafana MCP) fail silently at startup.
 - Users who want specific MCPs to work extend the Dockerfile with their own `RUN apt-get install ...` or equivalent.
+- `ccairgap inspect` enumerates every surface above (plus approval state for project-scope servers) so users can tell at a glance which MCPs will actually load.
 
 **Plugin install during session:**
 - `~/.claude/plugins/cache/` is RO-mounted.

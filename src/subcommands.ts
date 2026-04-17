@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { execa } from "execa";
 import {
   hostClaudeDir as hostClaudeDirFn,
+  hostClaudeJson as hostClaudeJsonFn,
   realpath,
   sessionDir as sessionDirFn,
   sessionsDir,
@@ -14,6 +15,7 @@ import { cliVersion } from "./version.js";
 import { defaultDockerfile, computeTag, imageExistsLocally } from "./image.js";
 import { probeCredentials } from "./credentials.js";
 import { enumerateHooks } from "./hooks.js";
+import { enumerateMcpServers } from "./mcp.js";
 
 export async function listOrphans(): Promise<void> {
   const orphans = await scanOrphans(cliVersion());
@@ -136,12 +138,16 @@ function checkSessions(): DoctorCheck {
 }
 
 /**
- * `ccairgap hooks` — enumerate hook entries the container would see at launch,
- * across user settings, enabled plugins, and each repo's `.claude/settings.json[.local]`.
- * Read-only; no session created. JSON to stdout.
+ * `ccairgap inspect` — enumerate both hook entries and MCP server definitions the
+ * container would see at launch. Sources walked mirror what the launch pipeline
+ * actually reads (user settings, enabled plugins, per-repo project config,
+ * `~/.claude.json`). Read-only; no session created. JSON to stdout.
+ *
+ * Output shape: `{ hooks: HookRecord[], mcpServers: McpRecord[] }`.
  */
-export function hooksCmd(opts: { repos: string[] }): void {
+export function inspectCmd(opts: { repos: string[] }): void {
   const hcd = realpath(hostClaudeDirFn());
+  const claudeJsonPath = hostClaudeJsonFn();
   const pluginsCache = join(hcd, "plugins", "cache");
   // realpath only when the path exists — a fresh install with no plugins cache is valid.
   const pluginsCacheResolved = existsSync(pluginsCache) ? realpath(pluginsCache) : pluginsCache;
@@ -151,12 +157,18 @@ export function hooksCmd(opts: { repos: string[] }): void {
     return { basename: basename(resolved), hostPath: resolved };
   });
 
-  const records = enumerateHooks({
+  const hooks = enumerateHooks({
     hostClaudeDir: hcd,
     pluginsCacheDir: pluginsCacheResolved,
     repos,
   });
-  console.log(JSON.stringify(records, null, 2));
+  const mcpServers = enumerateMcpServers({
+    hostClaudeDir: hcd,
+    hostClaudeJsonPath: claudeJsonPath,
+    pluginsCacheDir: pluginsCacheResolved,
+    repos,
+  });
+  console.log(JSON.stringify({ hooks, mcpServers }, null, 2));
 }
 
 export async function doctor(): Promise<void> {

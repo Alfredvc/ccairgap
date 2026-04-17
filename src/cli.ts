@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
-import { doctor, discard, hooksCmd, listOrphans, recover } from "./subcommands.js";
+import { doctor, discard, inspectCmd, listOrphans, recover } from "./subcommands.js";
 import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
 
 function parseBuildArg(v: string, acc: Record<string, string>): Record<string, string> {
@@ -283,13 +283,15 @@ async function main() {
     });
 
   program
-    .command("hooks")
+    .command("inspect")
     .description(
-      "enumerate hook entries the container would see at launch (user settings, enabled plugins, " +
-        "project .claude/settings.json[.local]). JSON to stdout. Read-only.",
+      "enumerate the config surfaces the container would see at launch: hook entries " +
+        "(user settings, enabled plugins, project .claude/settings.json[.local]) and MCP " +
+        "server definitions (~/.claude.json user + user-project, <repo>/.mcp.json, plugin " +
+        "dirs). JSON `{hooks, mcpServers}` to stdout. Read-only.",
     )
     .option("--config <path>", "path to yaml config file (same semantics as launch)")
-    .option("--repo <path>", "host repo whose .claude/settings.json[.local] should be included. Defaults to cwd if it's a git repo.")
+    .option("--repo <path>", "host repo whose .claude/settings.json[.local] and .mcp.json should be included. Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo to include. Repeatable.", collect, [])
     .action((opts) => {
       let fileCfg: ConfigFile = {};
@@ -316,7 +318,7 @@ async function main() {
         }
       }
 
-      hooksCmd({ repos });
+      inspectCmd({ repos });
     });
 
   await program.parseAsync(process.argv);

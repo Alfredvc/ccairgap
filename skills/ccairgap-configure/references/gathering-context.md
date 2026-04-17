@@ -68,26 +68,33 @@ Skip:
 
 ### Claude setup
 
+**Canonical probe: `ccairgap inspect`.** One call, JSON `{hooks, mcpServers}`, covers every surface the container would see at launch. Use this instead of hand-walking config files — walking with `jq` misses plugin hooks and plugin-shipped MCP servers.
+
 ```bash
-ls -la ~/.claude/
-cat ~/.claude/settings.json       # if it exists
-cat ~/.claude.json                # mcpServers block
+ccairgap inspect                                   # cwd is a git repo
+ccairgap inspect --repo <path> --extra-repo <p2>   # match the launch you're configuring
 ```
 
-Also check project-scoped settings:
+Record-shape cheat-sheet:
+
+- `hooks[]` — `{source: "user" | "plugin" | "project", sourcePath, event, matcher?, command, plugin?, repo?}`.
+- `mcpServers[]` — `{source: "user" | "user-project" | "project" | "plugin", sourcePath, name, definition, plugin?, repo?, projectPath?, approvalState?}`. `definition` is the raw server object (`command`, `args`, `env`, `url`, `type`, ...). `approvalState` on `project`-source servers is `"approved" | "denied" | "unapproved"` — unapproved MCPs will prompt on startup and won't load in non-interactive `-p` runs.
+
+Fallback hand-walk only when `inspect` is unavailable (older ccairgap version):
 
 ```bash
-cat <repo>/.claude/settings.json
+cat ~/.claude/settings.json       # hooks, enabledPlugins, enabledMcpjsonServers
+cat ~/.claude.json                # top-level mcpServers + projects[<path>].mcpServers
+cat <repo>/.claude/settings.json  # project hooks, enabledMcpjsonServers
 cat <repo>/.claude/settings.local.json
+cat <repo>/.mcp.json              # project-scope MCPs
 ```
 
 Extract:
 
-- **Hooks** — every entry in `hooks.*` arrays has a `command` string. Record them; these will be filtered by `--hook-enable` globs. A hook referencing a host-only path (`~/scripts/...`, `/opt/homebrew/bin/...`) is a tell the user will need to either enable + install the binary in a custom Dockerfile, or leave the hook disabled.
-
-  **Use `ccairgap hooks` instead of hand-walking sources.** It enumerates every entry ccairgap would see at launch across all three sources (user settings, each enabled plugin's `hooks.json`, project `.claude/settings.json[.local]` for `--repo` + every `--extra-repo`) as JSON — one object per entry with `source`, `sourcePath`, `event`, `matcher`, `command`. Pass `--repo` / `--extra-repo` that match the launch you're configuring, or run inside the target repo and defaults match. This is the canonical way; walking files with `jq` misses plugin hooks.
-- **MCP servers** — `mcpServers` entries in `~/.claude.json` (and project `.claude.json` if present). Each has a `command` (binary) and optional `args`. If the command isn't in the base image's PATH, it needs either a Dockerfile extension or it won't work inside the container.
-- **Plugin marketplaces** — `extraKnownMarketplaces` entries with `source.source: "directory"` or `"file"` are host paths that ccairgap auto-discovers and RO-mounts. User doesn't have to configure these.
+- **Hooks** — every `hooks[].command` string. These will be filtered by `--hook-enable` globs. A hook referencing a host-only path (`~/scripts/...`, `/opt/homebrew/bin/...`) is a tell the user will need to either enable + install the binary in a custom Dockerfile, or leave the hook disabled.
+- **MCP servers** — every `mcpServers[].definition.command` (or `url` for http/sse type). If the command isn't in the base image's PATH, it needs either a Dockerfile extension or it won't work inside the container. Pay attention to `approvalState` on `project`-source servers: `unapproved` means the user hasn't accepted the `.mcp.json`, and it won't run inside the sandbox.
+- **Plugin marketplaces** — `extraKnownMarketplaces` entries in `~/.claude/settings.json` with `source.source: "directory"` or `"file"` are host paths that ccairgap auto-discovers and RO-mounts. User doesn't have to configure these.
 - **Status line** — `statusLine.command` is a hook-like entry; filtered the same way.
 
 ### Binary dependencies inside the container

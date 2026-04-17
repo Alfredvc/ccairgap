@@ -102,7 +102,7 @@ export function filterHooksField(hooks: unknown, globs: string[]): HooksField {
   return out;
 }
 
-function readJsonOrNull(path: string): unknown {
+export function readJsonOrNull(path: string): unknown {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch {
@@ -116,7 +116,7 @@ function writeJsonAtomic(path: string, data: unknown): void {
 }
 
 /** True if settings.json `enabledPlugins` entry is a literal `true`. */
-function isPluginEnabled(enabledPlugins: unknown, key: string): boolean {
+export function isPluginEnabled(enabledPlugins: unknown, key: string): boolean {
   if (!enabledPlugins || typeof enabledPlugins !== "object") return false;
   const v = (enabledPlugins as Record<string, unknown>)[key];
   return v === true;
@@ -130,7 +130,7 @@ function isPluginEnabled(enabledPlugins: unknown, key: string): boolean {
  * otherwise. Matches how Claude Code's cache is typically written (one version per
  * plugin); the fallback covers stale dirs without being wrong in practice.
  */
-interface PluginOnDisk {
+export interface PluginOnDisk {
   marketplace: string;
   plugin: string;
   version: string;
@@ -142,7 +142,7 @@ interface PluginOnDisk {
   key: string;
 }
 
-function listPluginsOnDisk(cacheDir: string, containerCacheDir: string): PluginOnDisk[] {
+export function listPluginsOnDisk(cacheDir: string, containerCacheDir: string): PluginOnDisk[] {
   const out: PluginOnDisk[] = [];
   if (!existsSync(cacheDir)) return out;
   let markets: string[];
