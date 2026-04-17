@@ -101,9 +101,12 @@ mkdir -p "$CWD"
 cd "$CWD"
 
 # Session name → `claude -n <name>` (shown in /resume and terminal title).
-NAME_ARGS=()
+# Always prefix with "[ccairgap]" so airgap sessions are visually distinct;
+# append user-supplied CCAIRGAP_NAME when set.
 if [ -n "${CCAIRGAP_NAME:-}" ]; then
-    NAME_ARGS=(-n "$CCAIRGAP_NAME")
+    NAME_ARGS=(-n "[ccairgap] $CCAIRGAP_NAME")
+else
+    NAME_ARGS=(-n "[ccairgap]")
 fi
 
 if [ -n "${CCAIRGAP_PRINT:-}" ]; then

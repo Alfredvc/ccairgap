@@ -416,7 +416,7 @@ Runs at container start. Steps:
    }
    ```
 8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-9. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$CCAIRGAP_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; always `-n "[ccairgap]"` so airgap sessions are visually distinct in `/resume` / terminal title, with `"[ccairgap] $CCAIRGAP_NAME"` when the env var is set; then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 

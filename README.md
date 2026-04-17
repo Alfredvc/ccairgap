@@ -55,7 +55,7 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. |
 | `--rebuild` | no | Force image rebuild. |
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
-| `-n, --name <name>` | no | Session name. Branch becomes `ccairgap/<name>` instead of `ccairgap/<ts>`; forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
+| `-n, --name <name>` | no | Session name. Branch becomes `ccairgap/<name>` instead of `ccairgap/<ts>`; forwarded to `claude -n "[ccairgap] <name>"` so the session shows up with that label in `/resume` and the terminal title. Without this flag the label is `[ccairgap]`; the prefix is always applied so airgap sessions are visually distinct. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
 | `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted, e.g. `--docker-run-arg "-p 8080:8080"` → two tokens. Appended after built-ins so docker's last-wins lets user args override defaults. Escape hatch — can weaken isolation. |
 | `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). |
