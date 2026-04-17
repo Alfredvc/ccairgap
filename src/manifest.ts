@@ -22,7 +22,7 @@ export interface ManifestV1 {
   branch?: string;
   /**
    * --sync entries recorded at launch so the exit-trap / recover handoff knows
-   * which in-session paths to rsync back out to $CLAUDE_AIRLOCK_HOME/output/<ts>/.
+   * which in-session paths to rsync back out to $CLAUDE_AIRGAP_HOME/output/<ts>/.
    * Additive field (optional): pre-existing v1 sessions without it recover fine.
    */
   sync?: Array<{ src_host: string; session_src: string }>;
@@ -39,8 +39,8 @@ const SUPPORTED_VERSIONS = new Set<number>([MANIFEST_VERSION]);
 export class UnknownManifestVersionError extends Error {
   constructor(public readonly foundVersion: unknown, public readonly cliVersion: string) {
     super(
-      `manifest v${String(foundVersion)} is not supported by this ccairlock (${cliVersion}). ` +
-        `Upgrade ccairlock or delete the session dir.`,
+      `manifest v${String(foundVersion)} is not supported by this ccairgap (${cliVersion}). ` +
+        `Upgrade ccairgap or delete the session dir.`,
     );
     this.name = "UnknownManifestVersionError";
   }

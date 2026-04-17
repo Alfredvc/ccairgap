@@ -1,4 +1,4 @@
-# claude-airlock
+# claude-airgap
 
 CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Keep those two authoritative — update them when behavior changes.
 
@@ -7,7 +7,7 @@ CLI that runs `claude --dangerously-skip-permissions` inside a Docker container 
 - TypeScript, ESM, Node ≥ 20. Bundled via **tsup** to single `dist/cli.js` (see `tsup.config.ts`).
 - Deps: `commander` (args), `execa` (shell out to `docker`/`git`), `yaml` (config file). No runtime config libs beyond that.
 - Tests: **vitest** (`*.test.ts` colocated in `src/`). Type check: `tsc --noEmit`.
-- Distribution: npm `claude-airlock`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`.
+- Distribution: npm `claude-airgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`.
 
 ## Scripts
 
@@ -35,8 +35,8 @@ src/
   mounts.ts       build docker -v list per SPEC §Container mount manifest
   plugins.ts      jq-equivalent scan of settings.json extraKnownMarketplaces
   credentials.ts  macOS: `security find-generic-password -s "Claude Code-credentials"` → $SESSION/creds. Linux: verify ~/.claude/.credentials.json exists.
-  image.ts        docker build; tag = claude-airlock:<cli-version> or :custom-<sha256(dockerfile)[:12]>
-  paths.ts        XDG state dir resolution; CLAUDE_AIRLOCK_HOME override
+  image.ts        docker build; tag = claude-airgap:<cli-version> or :custom-<sha256(dockerfile)[:12]>
+  paths.ts        XDG state dir resolution; CLAUDE_AIRGAP_HOME override
   version.ts      cliVersion() from package.json
 docker/
   Dockerfile      node:20-slim; claude-code@${CLAUDE_CODE_VERSION:-latest}; non-root `claude` at HOST_UID/HOST_GID
@@ -56,7 +56,7 @@ docs/SPEC.md      authoritative design
 - **Image tag = CLI version**, or `custom-<hash>` when `--dockerfile`. Rebuild only on: tag missing / `--rebuild` / custom-hash changed. Never auto-rebuild on age — `doctor` warns >14 days.
 - **Manifest `version` field gates handoff.** Bump when shape changes incompatibly. Handoff aborts with clear error on unknown version.
 - **Flag names + subcommand names are public API.** Rename = major bump.
-- **Exit trap is best-effort.** SIGKILL of CLI leaves session on disk; user runs `ccairlock recover <ts>`. Handoff must stay idempotent.
+- **Exit trap is best-effort.** SIGKILL of CLI leaves session on disk; user runs `ccairgap recover <ts>`. Handoff must stay idempotent.
 - **`--cap-drop=ALL`, no `--privileged`, no `docker.sock` mount, no `SYS_ADMIN`.** Don't lower default Docker isolation.
 
 ## Config file
@@ -65,8 +65,8 @@ docs/SPEC.md      authoritative design
 
 ## Host env vars
 
-- `CLAUDE_AIRLOCK_HOME` — override state dir root. Default `$XDG_STATE_HOME/claude-airlock/`.
-- `CLAUDE_AIRLOCK_CC_VERSION` — short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<val>`.
+- `CLAUDE_AIRGAP_HOME` — override state dir root. Default `$XDG_STATE_HOME/claude-airgap/`.
+- `CLAUDE_AIRGAP_CC_VERSION` — short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<val>`.
 
 ## When adding features
 

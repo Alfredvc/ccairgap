@@ -1,4 +1,4 @@
-# claude-airlock — Spec
+# claude-airgap — Spec
 
 Run `claude --dangerously-skip-permissions` in a Docker container so you can hand it a task and walk away. Exfiltration is an accepted risk; host state destruction is not.
 
@@ -19,20 +19,20 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 
 - **Language:** TypeScript, compiled to a single bundled JS file with [tsup](https://tsup.egoist.dev/).
 - **Runtime:** Node.js ≥ 20 on the host. The container uses its own Node 20 base image independently.
-- **Distribution:** npm package `claude-airlock`. Primary install path is `npm i -g claude-airlock`; `npx claude-airlock …` works for one-shot use.
+- **Distribution:** npm package `claude-airgap`. Primary install path is `npm i -g claude-airgap`; `npx claude-airgap …` works for one-shot use.
 - **Package layout:**
   - `dist/cli.js` — bundled entry, declared in `package.json` `bin`.
   - `docker/Dockerfile` — shipped as a package asset; copied out or read by the CLI at build time.
   - `docker/entrypoint.sh` — runs inside the container; stays in bash (fixed Alpine-ish environment, no portability concerns).
 - **Dependencies kept lean:** `commander` for arg parsing, `execa` for shelling out to `docker` / `git`. No runtime dep on external config libraries.
 - **License:** MIT.
-- **Repository:** `github.com/alfredvc/claude-airlock`.
+- **Repository:** `github.com/alfredvc/claude-airgap`.
 
 ## Versioning
 
 - **CLI:** semver. Patch = bug fixes, minor = new flags / new optional manifest fields, major = flag rename or removal, manifest shape change, or state-dir layout change.
 - **Container image tag** = CLI version (or `custom-<hash>` when built from a user Dockerfile). See §"Container image".
-- **Claude Code inside the image:** defaults to `@latest` at build time. Same CLI version can therefore produce images with different Claude Code versions over time. Users who want reproducibility pin via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CLAUDE_AIRLOCK_CC_VERSION=<semver>`.
+- **Claude Code inside the image:** defaults to `@latest` at build time. Same CLI version can therefore produce images with different Claude Code versions over time. Users who want reproducibility pin via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CLAUDE_AIRGAP_CC_VERSION=<semver>`.
 - **Manifest schema:** `$SESSION/manifest.json` carries a top-level `"version": <N>` field. The handoff routine reads it first and errors clearly on unknown versions. Bump only when the shape changes incompatibly.
 - **Flag stability:** launch-command flags and subcommand names are part of the public API. Renaming or removing either requires a major version bump.
 
@@ -41,7 +41,7 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 All paths follow XDG Base Directory convention.
 
 ```
-${XDG_STATE_HOME:-$HOME/.local/state}/claude-airlock/
+${XDG_STATE_HOME:-$HOME/.local/state}/claude-airgap/
 ├── sessions/
 │   └── <ts>/                      # per-session state, ephemeral
 │       ├── repos/
@@ -58,8 +58,8 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/claude-airlock/
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/claude-airlock/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
-2. `$XDG_STATE_HOME/claude-airlock/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
+1. `$XDG_STATE_HOME/claude-airgap/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
+2. `$XDG_STATE_HOME/claude-airgap/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
 5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This is the only class of write that can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
@@ -69,12 +69,12 @@ No other host path is writable by the container. `~/.claude/`, `~/.claude.json`,
 ## Command line interface
 
 ```
-ccairlock [SUBCOMMAND] [OPTIONS]
+ccairgap [SUBCOMMAND] [OPTIONS]
 ```
 
 Default (no subcommand): start a new session.
 
-**Launch flags** (apply to the default `ccairlock` invocation):
+**Launch flags** (apply to the default `ccairgap` invocation):
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
@@ -82,10 +82,10 @@ Default (no subcommand): start a new session.
 | `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `sandbox/<ts>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
 | `--cp <path>` | yes | Copy host path into the session at launch; container sees it RW at the same absolute path. Changes are discarded on exit (never reach host). Relative paths resolve against the workspace repo root. See §"Build artifact paths". |
-| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
+| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
 | `--mount <path>` | yes | RW bind-mount host path directly into the container at the same absolute path. Live host writes; no copy. Relative paths resolve against the workspace repo root. Breaks the "container never writes host repo directly" invariant for the declared path only — opt-in. See §"Build artifact paths". |
 | `--base <ref>` | no | Base ref for `sandbox/<ts>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
-| `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm claude-airlock-<ts>`. |
+| `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm claude-airgap-<ts>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
@@ -108,20 +108,20 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 
 ```bash
 # Interactive session: workspace repo + sibling repo + reference dir
-ccairlock \
+ccairgap \
   --repo ~/src/foo \
   --extra-repo ~/src/bar \
   --ro ~/src/docs
 
 # Walk-away (launch inside a host tmux)
-tmux new -s work 'ccairlock --repo ~/src/foo'
+tmux new -s work 'ccairgap --repo ~/src/foo'
 
 # Recover an orphaned session
-ccairlock list
-ccairlock recover 20260417T143022Z
+ccairgap list
+ccairgap recover 20260417T143022Z
 
 # Force image rebuild with a pinned Claude Code version
-ccairlock --rebuild --docker-build-arg CLAUDE_CODE_VERSION=1.2.3 --repo ~/src/foo
+ccairgap --rebuild --docker-build-arg CLAUDE_CODE_VERSION=1.2.3 --repo ~/src/foo
 ```
 
 ## CLI responsibilities
@@ -135,27 +135,27 @@ In order:
    - If `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
-2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairlock lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
-3. Scan `$XDG_STATE_HOME/claude-airlock/sessions/` for orphaned session dirs (dirs without a running container named `claude-airlock-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairlock recover <ts>` / `ccairlock discard <ts>` commands. Do not auto-recover; continue to new session setup.
+2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
+3. Scan `$XDG_STATE_HOME/claude-airgap/sessions/` for orphaned session dirs (dirs without a running container named `claude-airgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
 4. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
    - Non-macOS: verify host `~/.claude/.credentials.json` exists. If missing, print "run `claude` on the host to log in" and exit.
-5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/claude-airlock/sessions/<ts>/`.
+5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/claude-airgap/sessions/<ts>/`.
 6. For each repo in the set (`--repo` plus every `--extra-repo`):
    - `git clone --shared <path> $SESSION/repos/<basename>`
    - `cd $SESSION/repos/<basename> && git checkout -b <branch> [<base>]`
    - `<branch>` is `sandbox/<ts>` by default, or `sandbox/<--name>` when `--name` was passed. The name is validated (`git check-ref-format refs/heads/<branch>`) and checked for collision on the workspace repo (`--repo`) before side effects.
-7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairlock recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; the handoff routine falls back to `sandbox/<ts>` in that case.
-8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/claude-airlock/output/` (idempotent).
+7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; the handoff routine falls back to `sandbox/<ts>` in that case.
+8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/claude-airgap/output/` (idempotent).
 9. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
 10. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
 11. Build `docker run` command:
     - `--rm` (omit if `--keep-container` was passed)
     - `--cap-drop=ALL`
     - `-it` (interactive)
-    - `--name claude-airlock-<ts>`
+    - `--name claude-airgap-<ts>`
     - Mount list per §"Container mount manifest"
-    - Image: `claude-airlock:<cli-version>` by default, or `claude-airlock:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
+    - Image: `claude-airgap:<cli-version>` by default, or `claude-airgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 12. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
 13. Exec the `docker run` command.
 
@@ -171,7 +171,7 @@ In order:
 | `$SESSION/hook-policy/projects/<repo>/settings.json` (and `.local`) | `<original-host-path>/.claude/settings.json` (and `.local`) | ro | Nested single-file overlay on top of the session-clone's `.claude/` dir. One mount per repo `.claude/settings.json[.local]` that declares hooks. Only present when `--hook-enable` list is non-empty. |
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
-| `$XDG_STATE_HOME/claude-airlock/output/` | `/output` | rw | Artifact drop. |
+| `$XDG_STATE_HOME/claude-airgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<repo>/` | `<original-host-path>` | rw | Session clone. |
 | `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>/objects/` | ro | Alternates target for `--shared` clone. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
 | `<resolved-git-dir>/lfs/objects/` | `/host-git-alternates/<basename>/lfs/objects/` | ro | LFS content. Session clone's `.git/lfs/objects/` is replaced with a symlink to this path. Mount is optional — skipped if source dir doesn't exist. |
@@ -203,9 +203,9 @@ Absolute paths are preserved between host and container so `settings.json` refer
 **`--sync` (copy-in, copy-out-on-exit):**
 
 - Identical setup to `--cp`.
-- On container exit, the handoff routine rsyncs `<session-target>/` → `$CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-src>/`. Session-scoped (`<ts>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
+- On container exit, the handoff routine rsyncs `<session-target>/` → `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Session-scoped (`<ts>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
 - The original host path is **never** written. Users who want to promote results back manually `cp -a` from the output tree.
-- Recorded in `manifest.json` under `sync` so `ccairlock recover <ts>` performs the same copy-out.
+- Recorded in `manifest.json` under `sync` so `ccairgap recover <ts>` performs the same copy-out.
 
 **`--mount` (live RW bind):**
 
@@ -249,7 +249,7 @@ docker build \
   --build-arg HOST_UID=$(id -u) \
   --build-arg HOST_GID=$(id -g) \
   --build-arg CLAUDE_CODE_VERSION=latest \
-  -t claude-airlock:<cli-version> .
+  -t claude-airgap:<cli-version> .
 ```
 
 Dockerfile:
@@ -268,8 +268,8 @@ Docker's layer cache handles rebuild on UID/GID change — the CLI always passes
 
 | Invocation | Tag |
 |------------|-----|
-| Default | `claude-airlock:<cli-version>` |
-| `--dockerfile <path>` | `claude-airlock:custom-<sha256(dockerfile)[:12]>` |
+| Default | `claude-airgap:<cli-version>` |
+| `--dockerfile <path>` | `claude-airgap:custom-<sha256(dockerfile)[:12]>` |
 
 The hash suffix for custom Dockerfiles is deterministic: the same Dockerfile content always produces the same tag, so rebuilds are skipped when nothing changed. Custom and default tags coexist without collision.
 
@@ -278,7 +278,7 @@ The hash suffix for custom Dockerfiles is deterministic: the same Dockerfile con
 2. `--rebuild` was passed.
 3. `--dockerfile` was passed and its content hash differs from any existing `custom-*` tag.
 
-Image age is never auto-rebuilt. `ccairlock doctor` surfaces a warning if the image is older than a threshold (default: 14 days) so the user can explicitly `--rebuild`.
+Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the image is older than a threshold (default: 14 days) so the user can explicitly `--rebuild`.
 
 ## Entrypoint
 
@@ -304,7 +304,7 @@ Runs at container start. Steps:
    }
    ```
 8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-9. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$AIRLOCK_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$AIRLOCK_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$AIRGAP_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$AIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 
@@ -320,7 +320,7 @@ The `/host-claude` RO mount (the rest of `~/.claude/`) does not include `.creden
 Behavior:
 
 - Log in on the host once with `claude` (normal host login).
-- `ccairlock` inherits those credentials for the duration of the container.
+- `ccairgap` inherits those credentials for the duration of the container.
 - The container's `~/.claude/` is writable (normal home dir), so session mutations (permission cache, prompt history in `.claude.json`) stay in-container and die with it — host state is untouched.
 - To switch accounts, log in differently on the host before launching. Multi-profile support is out of scope.
 
@@ -373,9 +373,9 @@ If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fat
 Container needs `user.name` / `user.email` or `git commit` fails (`Author identity unknown`) and work is lost on handoff (fetch only moves reachable commits).
 
 - CLI reads host identity at launch: `git -C <--repo[0]> config --get user.name` and `user.email` (local → global precedence, so repo-local overrides work). Falls back to process cwd if no `--repo`.
-- Identity is passed to the container via env: `AIRLOCK_GIT_USER_NAME`, `AIRLOCK_GIT_USER_EMAIL`.
-- Entrypoint runs `git config --global user.name "$AIRLOCK_GIT_USER_NAME"` + `user.email` at container start.
-- If host has neither local nor global identity: CLI warns on stderr and falls back to `claude-airlock <noreply@airlock.local>` so commits still succeed. User rewrites author on the sandbox branch post-hoc if needed (`git rebase --exec 'git commit --amend --reset-author --no-edit'` or `git -c user.name=... -c user.email=... commit --amend`).
+- Identity is passed to the container via env: `AIRGAP_GIT_USER_NAME`, `AIRGAP_GIT_USER_EMAIL`.
+- Entrypoint runs `git config --global user.name "$AIRGAP_GIT_USER_NAME"` + `user.email` at container start.
+- If host has neither local nor global identity: CLI warns on stderr and falls back to `claude-airgap <noreply@airgap.local>` so commits still succeed. User rewrites author on the sandbox branch post-hoc if needed (`git rebase --exec 'git commit --amend --reset-author --no-edit'` or `git -c user.name=... -c user.email=... commit --amend`).
 - GPG / SSH signing is not supported inside the container (no keys). If host has `commit.gpgsign=true`, user must unset it for the sandbox branch or accept that the container will error on commit. The CLI does not override signing config — `~/.gitconfig` is not mounted in this passthrough mode.
 
 ## Transcripts
@@ -468,8 +468,8 @@ Post-processing in the CLI:
 
 Entrypoint ends with `exec claude --dangerously-skip-permissions`.
 
-- `ccairlock` drops directly into Claude's REPL.
-- For walk-away use, user wraps in tmux on the host: `tmux new -s work 'ccairlock ...'`.
+- `ccairgap` drops directly into Claude's REPL.
+- For walk-away use, user wraps in tmux on the host: `tmux new -s work 'ccairgap ...'`.
 - No in-container tmux; the Dockerfile does not install it.
 
 ## Network
@@ -495,39 +495,39 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 
 | Env var | Source | Purpose |
 |---------|--------|---------|
-| `AIRLOCK_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
-| `AIRLOCK_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
-| `AIRLOCK_PRINT` | `--print` | Non-interactive prompt. |
-| `AIRLOCK_NAME` | `--name` | Session display name; forwarded to `claude -n <name>` in the entrypoint. Unset when `--name` was not passed. |
-| `AIRLOCK_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `claude-airlock` if host has none. |
-| `AIRLOCK_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@airlock.local` if host has none. |
+| `AIRGAP_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
+| `AIRGAP_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
+| `AIRGAP_PRINT` | `--print` | Non-interactive prompt. |
+| `AIRGAP_NAME` | `--name` | Session display name; forwarded to `claude -n <name>` in the entrypoint. Unset when `--name` was not passed. |
+| `AIRGAP_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `claude-airgap` if host has none. |
+| `AIRGAP_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@airgap.local` if host has none. |
 
 **On the host** — read by the CLI:
 
 | Env var | Effect |
 |---------|--------|
-| `CLAUDE_AIRLOCK_HOME` | Overrides the state dir. Default: `$XDG_STATE_HOME/claude-airlock/` (which itself defaults to `~/.local/state/claude-airlock/`). If set, this path replaces the default root wholesale — both `sessions/` and `output/` live underneath. |
-| `CLAUDE_AIRLOCK_CC_VERSION` | Short-form override for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Used at image build time. |
+| `CLAUDE_AIRGAP_HOME` | Overrides the state dir. Default: `$XDG_STATE_HOME/claude-airgap/` (which itself defaults to `~/.local/state/claude-airgap/`). If set, this path replaces the default root wholesale — both `sessions/` and `output/` live underneath. |
+| `CLAUDE_AIRGAP_CC_VERSION` | Short-form override for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Used at image build time. |
 
 Other XDG env vars (`XDG_STATE_HOME`, etc.) are respected per the XDG Base Directory spec.
 
 ## Handoff routine
 
-Used by both the exit trap and `ccairlock recover`. Takes a `$SESSION/<ts>/` dir as input. Must be idempotent — safe to run multiple times on the same dir.
+Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<ts>/` dir as input. Must be idempotent — safe to run multiple times on the same dir.
 
-1. Read `$SESSION/<ts>/manifest.json`. Check the top-level `"version"` field; if it is unknown to the current CLI, abort with a clear message (`"manifest v<N> requires ccairlock ≥ <X.Y.Z>"`). Otherwise extract the repo→host-path mapping.
+1. Read `$SESSION/<ts>/manifest.json`. Check the top-level `"version"` field; if it is unknown to the current CLI, abort with a clear message (`"manifest v<N> requires ccairgap ≥ <X.Y.Z>"`). Otherwise extract the repo→host-path mapping.
 2. For each entry in the manifest:
    - Rewrite the session clone's `.git/objects/info/alternates` back to `<real-host-path>/.git/objects/` so host `git` can traverse history (the container-side path `/host-git-alternates/...` is meaningless on the host).
    - Count commits on `sandbox/<ts>` not reachable from any `origin/*` ref in the session clone: `git -C <session-clone> rev-list --count sandbox/<ts> --not --remotes=origin`.
      - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
      - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<ts>/repos/<basename> sandbox/<ts>:sandbox/<ts>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
    - If fetch fails (branch doesn't exist, host path gone), log and continue — not fatal.
-3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CLAUDE_AIRLOCK_HOME/output/<ts>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
+3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CLAUDE_AIRGAP_HOME/output/<ts>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
 4. For each `<path-encoded-cwd>` dir in `$SESSION/<ts>/transcripts/`:
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
-5. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 6) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `sandbox/<ts>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `ccairlock discard <ts>` to drop it — or re-run `ccairlock recover <ts>` (the same warning repeats until discard).
+5. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 6) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `sandbox/<ts>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `ccairgap discard <ts>` to drop it — or re-run `ccairgap recover <ts>` (the same warning repeats until discard).
 6. `rm -rf $SESSION/<ts>` unless step 5 preserved it.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
@@ -536,20 +536,20 @@ Failure at any step does not cause the routine to skip subsequent steps. Goal is
 
 On container exit (any reason — normal, error, signal), the CLI runs the handoff routine against the current session's `$SESSION/<ts>/`.
 
-Exit trap is **not** guaranteed to fire. If `ccairlock` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairlock recover <ts>` to finish it manually.
+Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairgap recover <ts>` to finish it manually.
 
 ## Recovery
 
-`ccairlock list` — list orphaned sessions:
-- Scan `$XDG_STATE_HOME/claude-airlock/sessions/` (or `$CLAUDE_AIRLOCK_HOME/sessions/` if overridden).
-- For each entry: if a container named `claude-airlock-<ts>` is currently running (`docker ps`), skip (live session in another terminal). Otherwise classify as orphan.
+`ccairgap list` — list orphaned sessions:
+- Scan `$XDG_STATE_HOME/claude-airgap/sessions/` (or `$CLAUDE_AIRGAP_HOME/sessions/` if overridden).
+- For each entry: if a container named `claude-airgap-<ts>` is currently running (`docker ps`), skip (live session in another terminal). Otherwise classify as orphan.
 - Print timestamp, repos involved (from manifest), and commit counts on `sandbox/<ts>` in each session clone.
 
-`ccairlock recover [<ts>]` — with `<ts>`, run the handoff routine against `$SESSION/<ts>/` (idempotent; safe to re-run). Without `<ts>`, equivalent to `list`.
+`ccairgap recover [<ts>]` — with `<ts>`, run the handoff routine against `$SESSION/<ts>/` (idempotent; safe to re-run). Without `<ts>`, equivalent to `list`.
 
-`ccairlock discard <ts>` — `rm -rf $SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
+`ccairgap discard <ts>` — `rm -rf $SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
 
-On every normal `ccairlock` startup, orphaned sessions are detected and a warning banner is printed with the suggested `recover` / `discard` commands. They are not auto-recovered.
+On every normal `ccairgap` startup, orphaned sessions are detected and a warning banner is printed with the suggested `recover` / `discard` commands. They are not auto-recovered.
 
 ## Known constraints
 
@@ -557,7 +557,7 @@ On every normal `ccairlock` startup, orphaned sessions are detected and a warnin
 - **Submodules not supported.** `.gitmodules` is copied into the session clone but submodule `.git/` dirs are not RO-mounted. `git submodule update --init` inside the container falls back to fetching from each submodule's remote URL (works for public submodules, fails for private). Work inside the container proceeds without initialized submodules.
 - **macOS only tested.** Linux should work; Windows / WSL2 may need path adjustments.
 - **Docker required.** No Podman-specific handling.
-- **Single concurrent session per host recommended.** Multiple simultaneous sessions work but share `$XDG_STATE_HOME/claude-airlock/output/`. Sessions don't overlap on `<ts>` so repo clones are fine.
+- **Single concurrent session per host recommended.** Multiple simultaneous sessions work but share `$XDG_STATE_HOME/claude-airgap/output/`. Sessions don't overlap on `<ts>` so repo clones are fine.
 - **MCP servers that require host resources (docker.sock, local sockets, host binaries) will not work** unless the user extends the Dockerfile. Intentional.
 
 ## Out of scope

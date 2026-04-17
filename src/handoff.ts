@@ -183,7 +183,7 @@ export async function handoff(
         warnings.push(
           `${repo.host_path}: ${branch} empty, but other local branches have commits: ${desc}. ` +
             `session preserved at ${sessionDirPath}. Inspect: \`git -C ${sessionClone} log <branch>\`. ` +
-            `Drop when done: \`ccairlock discard ${ts}\`.`,
+            `Drop when done: \`ccairgap discard ${ts}\`.`,
         );
       }
       fetched.push({ hostPath: repo.host_path, branch, status: "empty" });
@@ -240,7 +240,7 @@ export async function handoff(
 
   if (preserved) {
     warnings.push(
-      `session dir preserved at ${sessionDirPath}. Drop when done: \`ccairlock discard ${ts}\`.`,
+      `session dir preserved at ${sessionDirPath}. Drop when done: \`ccairgap discard ${ts}\`.`,
     );
   } else {
     try {

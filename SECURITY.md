@@ -2,9 +2,9 @@
 
 ## Reporting a vulnerability
 
-Open a [GitHub issue](https://github.com/alfredvc/claude-airlock/issues). Include:
+Open a [GitHub issue](https://github.com/alfredvc/claude-airgap/issues). Include:
 
-- Affected version (`ccairlock --version`)
+- Affected version (`ccairgap --version`)
 - Host OS
 - Reproduction steps or PoC
 - Expected vs. actual behavior
@@ -50,4 +50,4 @@ Pre-1.0. Only the latest minor receives security fixes. After 1.0, the latest tw
 
 ## Scope of this policy
 
-Covers the `claude-airlock` CLI, its shipped `docker/Dockerfile`, and `docker/entrypoint.sh`. Bugs in upstream Claude Code, Docker, Node, or the host kernel are not covered here — report those upstream.
+Covers the `claude-airgap` CLI, its shipped `docker/Dockerfile`, and `docker/entrypoint.sh`. Bugs in upstream Claude Code, Docker, Node, or the host kernel are not covered here — report those upstream.

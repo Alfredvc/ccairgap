@@ -67,11 +67,11 @@ async function main() {
   const program = new Command();
 
   program
-    .name("ccairlock")
+    .name("ccairgap")
     .description("Run Claude Code with --dangerously-skip-permissions in a Docker container.")
     .version(cliVersion(), "-v, --version");
 
-  // Reject unknown positionals on the root command (e.g. `ccairlock lsit`).
+  // Reject unknown positionals on the root command (e.g. `ccairgap lsit`).
   // Commander's unknownCommand path is gated on the root having no .action(), so
   // without this hook typos fall through to the launch flow as ignored excess args.
   program.hook("preAction", (thisCommand, actionCommand) => {
@@ -93,7 +93,7 @@ async function main() {
     )
     .option(
       "--sync <path>",
-      "like --cp, but on exit the container-written copy is mirrored to $CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-src>/. Repeatable.",
+      "like --cp, but on exit the container-written copy is mirrored to $CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/. Repeatable.",
       collect,
       [],
     )
@@ -172,13 +172,13 @@ async function main() {
           workspaceRepo = cwd;
         } else if (extraRepos.length > 0) {
           console.error(
-            "ccairlock: --extra-repo requires --repo <path> (workspace). " +
+            "ccairgap: --extra-repo requires --repo <path> (workspace). " +
               "Pass --repo <path> or cd into a repo.",
           );
           process.exit(1);
         } else if (ros.length === 0) {
           console.error(
-            "ccairlock: not in a git repo and no --repo / --ro passed. " +
+            "ccairgap: not in a git repo and no --repo / --ro passed. " +
               "Pass --repo <path> or cd into a repo.",
           );
           process.exit(1);
@@ -189,24 +189,24 @@ async function main() {
 
       for (const r of repos) {
         if (!existsSync(r) || !statSync(r).isDirectory()) {
-          console.error(`ccairlock: repo path not a directory: ${r}`);
+          console.error(`ccairgap: repo path not a directory: ${r}`);
           process.exit(1);
         }
       }
       for (const r of ros) {
         if (!existsSync(r)) {
-          console.error(`ccairlock: --ro path does not exist: ${r}`);
+          console.error(`ccairgap: --ro path does not exist: ${r}`);
           process.exit(1);
         }
       }
 
-      // CLAUDE_AIRLOCK_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
+      // CLAUDE_AIRGAP_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
       const buildArgs: Record<string, string> = { ...merged.dockerBuildArgs };
       if (
-        process.env.CLAUDE_AIRLOCK_CC_VERSION &&
+        process.env.CLAUDE_AIRGAP_CC_VERSION &&
         !buildArgs.CLAUDE_CODE_VERSION
       ) {
-        buildArgs.CLAUDE_CODE_VERSION = process.env.CLAUDE_AIRLOCK_CC_VERSION;
+        buildArgs.CLAUDE_CODE_VERSION = process.env.CLAUDE_AIRGAP_CC_VERSION;
       }
 
       const result = await launch({
@@ -259,6 +259,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(`ccairlock: ${(e as Error).message}`);
+  console.error(`ccairgap: ${(e as Error).message}`);
   process.exit(1);
 });

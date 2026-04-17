@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# claude-airlock container entrypoint.
+# claude-airgap container entrypoint.
 # Copies host ~/.claude/ (RO-mounted at /host-claude) into container ~/.claude/,
 # patches ~/.claude.json, injects env vars into settings.json, execs claude.
 
@@ -48,9 +48,9 @@ if [ -f "$HOST_CLAUDE_JSON" ]; then
     cp -L "$HOST_CLAUDE_JSON" "$HOME_DIR/.claude.json"
     chmod u+w "$HOME_DIR/.claude.json"
 
-    # AIRLOCK_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
+    # AIRGAP_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
     TMP_JSON="$(mktemp)"
-    jq --arg trusted "${AIRLOCK_TRUSTED_CWDS:-}" '
+    jq --arg trusted "${AIRGAP_TRUSTED_CWDS:-}" '
         .hasCompletedOnboarding = true
         | (.projects //= {})
         | ($trusted | split("\n") | map(select(length > 0))) as $cwds
@@ -83,26 +83,26 @@ mv "$TMP_SETTINGS" "$SETTINGS"
 
 # Git identity from host (CLI reads host git config and passes via env).
 # Host-side fallback ensures these are set even when host has no config.
-if [ -n "${AIRLOCK_GIT_USER_NAME:-}" ]; then
-    git config --global user.name "$AIRLOCK_GIT_USER_NAME"
+if [ -n "${AIRGAP_GIT_USER_NAME:-}" ]; then
+    git config --global user.name "$AIRGAP_GIT_USER_NAME"
 fi
-if [ -n "${AIRLOCK_GIT_USER_EMAIL:-}" ]; then
-    git config --global user.email "$AIRLOCK_GIT_USER_EMAIL"
+if [ -n "${AIRGAP_GIT_USER_EMAIL:-}" ]; then
+    git config --global user.email "$AIRGAP_GIT_USER_EMAIL"
 fi
 
-# cwd: first repo path (AIRLOCK_CWD), else /workspace.
-CWD="${AIRLOCK_CWD:-/workspace}"
+# cwd: first repo path (AIRGAP_CWD), else /workspace.
+CWD="${AIRGAP_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
 # Session name → `claude -n <name>` (shown in /resume and terminal title).
 NAME_ARGS=()
-if [ -n "${AIRLOCK_NAME:-}" ]; then
-    NAME_ARGS=(-n "$AIRLOCK_NAME")
+if [ -n "${AIRGAP_NAME:-}" ]; then
+    NAME_ARGS=(-n "$AIRGAP_NAME")
 fi
 
-if [ -n "${AIRLOCK_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" -p "$AIRLOCK_PRINT"
+if [ -n "${AIRGAP_PRINT:-}" ]; then
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" -p "$AIRGAP_PRINT"
 else
     exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}"
 fi

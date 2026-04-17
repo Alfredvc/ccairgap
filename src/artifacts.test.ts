@@ -12,7 +12,7 @@ let repos: RepoForArtifacts[];
 
 beforeEach(() => {
   // realpath to dodge macOS /var → /private/var symlink divergence.
-  root = realpathSync(mkdtempSync(join(tmpdir(), "airlock-art-")));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "airgap-art-")));
   repoPath = join(root, "repo");
   sessionDir = join(root, "session");
   mkdirSync(repoPath, { recursive: true });

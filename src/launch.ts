@@ -63,7 +63,7 @@ export interface LaunchResult {
 }
 
 function die(msg: string): never {
-  console.error(`ccairlock: ${msg}`);
+  console.error(`ccairgap: ${msg}`);
   process.exit(1);
 }
 
@@ -193,7 +193,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   } catch (e) {
     die((e as Error).message);
   }
-  for (const w of artifacts.warnings) console.error(`ccairlock: ${w}`);
+  for (const w of artifacts.warnings) console.error(`ccairgap: ${w}`);
 
   const hostClaude = realpath(hostClaudeDir(env));
   const marketplaces = discoverLocalMarketplaces(hostClaude, home);
@@ -201,12 +201,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // ---- Orphan scan (advisory only) ----
   const orphans = await scanOrphans(cliVersion());
   if (orphans.length > 0) {
-    console.error("ccairlock: orphaned sessions detected:");
+    console.error("ccairgap: orphaned sessions detected:");
     for (const o of orphans) {
       console.error(`  ${o.ts}  repos=${o.repos.join(",") || "(none)"}`);
     }
-    console.error("  Recover: ccairlock recover <ts>");
-    console.error("  Discard: ccairlock discard <ts>");
+    console.error("  Recover: ccairgap recover <ts>");
+    console.error("  Discard: ccairgap discard <ts>");
     console.error("");
   }
 
@@ -339,26 +339,26 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const hostIdentity = await readHostGitIdentity(identityCwd);
   if (!hostIdentity.name || !hostIdentity.email) {
     console.error(
-      `ccairlock: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airlock <noreply@airlock.local>". Rewrite authors on ${branch} if needed.`,
+      `ccairgap: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airgap <noreply@airgap.local>". Rewrite authors on ${branch} if needed.`,
     );
   }
-  const gitUserName = hostIdentity.name ?? "claude-airlock";
-  const gitUserEmail = hostIdentity.email ?? "noreply@airlock.local";
+  const gitUserName = hostIdentity.name ?? "claude-airgap";
+  const gitUserEmail = hostIdentity.email ?? "noreply@airgap.local";
 
   const dockerArgs: string[] = ["run"];
   if (!opts.keepContainer) dockerArgs.push("--rm");
   // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
   dockerArgs.push(opts.print ? "-i" : "-it");
-  dockerArgs.push("--cap-drop=ALL", "--name", `claude-airlock-${ts}`);
-  dockerArgs.push("-e", `AIRLOCK_CWD=${containerCwd}`);
-  dockerArgs.push("-e", `AIRLOCK_TRUSTED_CWDS=${trustedCwds}`);
-  dockerArgs.push("-e", `AIRLOCK_GIT_USER_NAME=${gitUserName}`);
-  dockerArgs.push("-e", `AIRLOCK_GIT_USER_EMAIL=${gitUserEmail}`);
+  dockerArgs.push("--cap-drop=ALL", "--name", `claude-airgap-${ts}`);
+  dockerArgs.push("-e", `AIRGAP_CWD=${containerCwd}`);
+  dockerArgs.push("-e", `AIRGAP_TRUSTED_CWDS=${trustedCwds}`);
+  dockerArgs.push("-e", `AIRGAP_GIT_USER_NAME=${gitUserName}`);
+  dockerArgs.push("-e", `AIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
   if (opts.print !== undefined) {
-    dockerArgs.push("-e", `AIRLOCK_PRINT=${opts.print}`);
+    dockerArgs.push("-e", `AIRGAP_PRINT=${opts.print}`);
   }
   if (opts.name !== undefined) {
-    dockerArgs.push("-e", `AIRLOCK_NAME=${opts.name}`);
+    dockerArgs.push("-e", `AIRGAP_NAME=${opts.name}`);
   }
   for (const m of mounts) dockerArgs.push(...mountArg(m));
   dockerArgs.push(image.tag);
@@ -375,8 +375,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     try {
       await handoff(sessionPath, cliVersion());
     } catch (e) {
-      console.error(`ccairlock: handoff failed: ${(e as Error).message}`);
-      console.error(`  Recover manually: ccairlock recover ${ts}`);
+      console.error(`ccairgap: handoff failed: ${(e as Error).message}`);
+      console.error(`  Recover manually: ccairgap recover ${ts}`);
     }
   }
 

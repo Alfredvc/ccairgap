@@ -1,5 +1,5 @@
 {
-  "name": "claude-airlock",
+  "name": "claude-airgap",
   "version": "0.1.0",
   "description": "Run Claude Code with --dangerously-skip-permissions in a Docker container. Host filesystem cannot be mutated outside a small set of explicitly writable paths.",
   "license": "MIT",
@@ -7,11 +7,11 @@
   "author": "Alfredo V. Clemente",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alfredvc/claude-airlock.git"
+    "url": "git+https://github.com/alfredvc/claude-airgap.git"
   },
-  "homepage": "https://github.com/alfredvc/claude-airlock#readme",
+  "homepage": "https://github.com/alfredvc/claude-airgap#readme",
   "bugs": {
-    "url": "https://github.com/alfredvc/claude-airlock/issues"
+    "url": "https://github.com/alfredvc/claude-airgap/issues"
   },
   "keywords": [
     "claude",
@@ -26,7 +26,7 @@
     "dangerously-skip-permissions"
   ],
   "bin": {
-    "ccairlock": "dist/cli.js"
+    "ccairgap": "dist/cli.js"
   },
   "files": [
     "dist",

@@ -3,13 +3,13 @@ import { join, resolve } from "node:path";
 import { realpathSync } from "node:fs";
 
 /**
- * State root: CLAUDE_AIRLOCK_HOME > XDG_STATE_HOME/claude-airlock > ~/.local/state/claude-airlock.
- * If CLAUDE_AIRLOCK_HOME is set, both sessions/ and output/ live underneath it.
+ * State root: CLAUDE_AIRGAP_HOME > XDG_STATE_HOME/claude-airgap > ~/.local/state/claude-airgap.
+ * If CLAUDE_AIRGAP_HOME is set, both sessions/ and output/ live underneath it.
  */
 export function stateRoot(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.CLAUDE_AIRLOCK_HOME) return resolve(env.CLAUDE_AIRLOCK_HOME);
+  if (env.CLAUDE_AIRGAP_HOME) return resolve(env.CLAUDE_AIRGAP_HOME);
   const xdg = env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
-  return join(xdg, "claude-airlock");
+  return join(xdg, "claude-airgap");
 }
 
 export function sessionsDir(env?: NodeJS.ProcessEnv): string {

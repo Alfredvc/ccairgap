@@ -43,11 +43,11 @@ export function defaultDockerfile(): string {
 /** Compute the image tag for a given Dockerfile path. */
 export function computeTag(dockerfile: string, defaultPath: string): string {
   if (resolve(dockerfile) === resolve(defaultPath)) {
-    return `claude-airlock:${cliVersion()}`;
+    return `claude-airgap:${cliVersion()}`;
   }
   const content = readFileSync(dockerfile);
   const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
-  return `claude-airlock:custom-${hash}`;
+  return `claude-airgap:custom-${hash}`;
 }
 
 export async function imageExistsLocally(tag: string): Promise<boolean> {
