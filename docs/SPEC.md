@@ -462,7 +462,7 @@ The resolved git dir's `objects/` subdir becomes the RO mount source. `--shared`
 
 **LFS:**
 
-If `<resolved-git-dir>/lfs/objects/` exists on the host, it is additionally RO-mounted at `<original-host-path>/.git/lfs/objects/` in the container. `git-lfs` binary is installed in the container. Checkout/smudge in the session clone resolves LFS content from the mount without network fetches.
+If `<resolved-git-dir>/lfs/objects/` exists on the host, it is additionally RO-mounted at `/host-git-alternates/<basename>/lfs/objects/` in the container, and the session clone's `.git/lfs/objects/` is replaced with a symlink to that mount path (same pattern as the alternates `objects/` mount — neutral container path keeps the session clone's own RW space uncovered). `git-lfs` binary is installed in the container. Checkout/smudge in the session clone resolves LFS content from the mount without network fetches.
 
 If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fatal.
 
