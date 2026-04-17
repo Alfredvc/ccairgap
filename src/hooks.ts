@@ -1,13 +1,22 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import type { Mount } from "./mounts.js";
 
 /**
  * Hook policy: default is "all hooks off". Users opt-in specific hooks by a glob
  * matched against the raw `command` string in each hook definition. Claude Code has
  * no native per-hook disable, so for non-empty enable lists we filter hook JSON at
- * three sources (user settings, enabled plugin hooks.json, project settings) and
- * deliver the patched files as nested bind mounts (single-file overlays).
+ * four sources (user settings, cache-backed plugin hooks.json, directory-sourced
+ * plugin hooks.json, project settings) and deliver the patched files as nested
+ * bind mounts (single-file overlays).
  *
  * When `enableGlobs` is empty we skip filtering entirely and rely on Claude Code's
  * top-level `disableAllHooks: true` — cheapest path, catches everything including
@@ -140,6 +149,73 @@ export interface PluginOnDisk {
   containerDir: string;
   /** Claude Code enabledPlugins key. */
   key: string;
+}
+
+/**
+ * Directory-sourced plugin: the marketplace entry in `settings.json` has
+ * `source.source === "directory"`, so Claude Code resolves the plugin via
+ * `<marketplaceDir>/.claude-plugin/marketplace.json` and reads `hooks/hooks.json`
+ * from the plugin's own source tree — NOT from `~/.claude/plugins/cache/`.
+ *
+ * The source tree is RO-mounted 1:1 into the container by `discoverLocalMarketplaces`,
+ * so the overlay dst = host path. Without this the cache-only filter in
+ * `listPluginsOnDisk` misses these plugins entirely and their hooks fire verbatim.
+ */
+export interface DirectoryPlugin {
+  marketplace: string;
+  plugin: string;
+  /** Absolute resolved host path to the plugin's root (where `hooks/hooks.json` lives). */
+  hostDir: string;
+  /** Absolute path to the plugin's hooks.json (may not exist). */
+  hooksJsonPath: string;
+  /** Claude Code enabledPlugins key. */
+  key: string;
+}
+
+export function listDirectoryPlugins(hostClaudeDir: string): DirectoryPlugin[] {
+  const out: DirectoryPlugin[] = [];
+  const settings = readJsonOrNull(join(hostClaudeDir, "settings.json")) as
+    | Record<string, unknown>
+    | null;
+  if (!settings) return out;
+  const extra = (settings as { extraKnownMarketplaces?: Record<string, unknown> })
+    .extraKnownMarketplaces;
+  if (!extra || typeof extra !== "object") return out;
+
+  for (const [marketName, entry] of Object.entries(extra)) {
+    const src = (entry as { source?: { source?: string; path?: string } })?.source;
+    if (!src || src.source !== "directory" || typeof src.path !== "string") continue;
+    let marketDir: string;
+    try {
+      marketDir = realpathSync(src.path);
+    } catch {
+      continue;
+    }
+    const mJsonPath = join(marketDir, ".claude-plugin", "marketplace.json");
+    const mJson = readJsonOrNull(mJsonPath) as { plugins?: unknown } | null;
+    if (!mJson || !Array.isArray(mJson.plugins)) continue;
+    for (const pRaw of mJson.plugins) {
+      const p = pRaw as { name?: string; source?: unknown };
+      if (typeof p?.name !== "string") continue;
+      // `source` is optional and conventionally `"./"`; treat missing/non-string as `"./"`.
+      const sourceRel = typeof p.source === "string" ? p.source : "./";
+      const joined = isAbsolute(sourceRel) ? sourceRel : join(marketDir, sourceRel);
+      let pluginDir: string;
+      try {
+        pluginDir = realpathSync(joined);
+      } catch {
+        continue;
+      }
+      out.push({
+        marketplace: marketName,
+        plugin: p.name,
+        hostDir: pluginDir,
+        hooksJsonPath: join(pluginDir, "hooks", "hooks.json"),
+        key: `${p.name}@${marketName}`,
+      });
+    }
+  }
+  return out;
 }
 
 export function listPluginsOnDisk(cacheDir: string, containerCacheDir: string): PluginOnDisk[] {
@@ -279,6 +355,23 @@ export function enumerateHooks(input: EnumerateHooksInput): HookRecord[] {
     );
   }
 
+  // Directory-sourced plugins (loaded from the marketplace source tree, not cache).
+  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
+    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
+    if (!existsSync(dp.hooksJsonPath)) continue;
+    const raw = readJsonOrNull(dp.hooksJsonPath);
+    if (!raw || typeof raw !== "object") continue;
+    collectHookRecords(
+      (raw as { hooks?: unknown }).hooks,
+      {
+        source: "plugin",
+        sourcePath: dp.hooksJsonPath,
+        plugin: { marketplace: dp.marketplace, plugin: dp.plugin, version: "directory" },
+      },
+      out,
+    );
+  }
+
   // Project settings.
   for (const r of repos) {
     for (const fname of ["settings.json", "settings.local.json"]) {
@@ -357,6 +450,33 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
     overrideMounts.push({
       src: outPath,
       dst: join(p.containerDir, "hooks", "hooks.json"),
+      mode: "ro",
+    });
+  }
+
+  // Directory-sourced plugins: marketplace's source tree is RO-mounted 1:1, so
+  // overlay at the host path (= container path for these mounts). Claude Code
+  // reads hooks.json from here, not from the cache copy.
+  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
+    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
+    if (!existsSync(dp.hooksJsonPath)) continue;
+    const raw = readJsonOrNull(dp.hooksJsonPath);
+    if (!raw || typeof raw !== "object") continue;
+    const rawHooks = (raw as { hooks?: unknown }).hooks;
+    const filtered = filterHooksField(rawHooks, globs);
+    const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+    patched.hooks = filtered;
+    const outPath = join(
+      policyDir,
+      "dir-plugins",
+      dp.marketplace,
+      dp.plugin,
+      "hooks.json",
+    );
+    writeJsonAtomic(outPath, patched);
+    overrideMounts.push({
+      src: outPath,
+      dst: dp.hooksJsonPath,
       mode: "ro",
     });
   }

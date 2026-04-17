@@ -1,4 +1,11 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +14,7 @@ import {
   enumerateHooks,
   filterHooksField,
   globToRegex,
+  listDirectoryPlugins,
   matchesEnable,
 } from "./hooks.js";
 
@@ -74,6 +82,62 @@ describe("filterHooksField", () => {
     expect(filterHooksField(null, ["*"])).toEqual({});
     expect(filterHooksField("x", ["*"])).toEqual({});
     expect(filterHooksField([], ["*"])).toEqual({});
+  });
+});
+
+describe("listDirectoryPlugins", () => {
+  let root: string;
+  let hostClaude: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "dp-test-"));
+    hostClaude = join(root, "host-claude");
+    mkdirSync(hostClaude, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeJSON(path: string, data: unknown): void {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify(data));
+  }
+
+  it("returns each plugin declared in a directory-source marketplace", () => {
+    const marketDir = join(root, "mkt");
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "switchboard",
+      plugins: [
+        { name: "switchboard", source: "./" },
+        { name: "extra", source: "./plugins/extra" },
+      ],
+    });
+    mkdirSync(join(marketDir, "plugins", "extra"), { recursive: true });
+    writeJSON(join(hostClaude, "settings.json"), {
+      extraKnownMarketplaces: {
+        switchboard: { source: { source: "directory", path: marketDir } },
+      },
+    });
+
+    const out = listDirectoryPlugins(hostClaude);
+    expect(out).toHaveLength(2);
+    const byKey = Object.fromEntries(out.map((p) => [p.key, p]));
+    expect(byKey["switchboard@switchboard"]!.hostDir).toBe(realpathSync(marketDir));
+    expect(byKey["extra@switchboard"]!.hostDir).toBe(
+      realpathSync(join(marketDir, "plugins", "extra")),
+    );
+  });
+
+  it("skips non-directory sources and missing marketplace.json", () => {
+    writeJSON(join(hostClaude, "settings.json"), {
+      extraKnownMarketplaces: {
+        gh: { source: { source: "github", repo: "x/y" } },
+        broken: { source: { source: "directory", path: join(root, "does-not-exist") } },
+      },
+    });
+    expect(listDirectoryPlugins(hostClaude)).toEqual([]);
   });
 });
 
@@ -187,6 +251,82 @@ describe("applyHookPolicy", () => {
     mkdirSync(join(pluginsCache, "m", "p", "1.0.0", "hooks"), { recursive: true });
     writeJSON(join(pluginsCache, "m", "p", "1.0.0", "hooks", "hooks.json"), {
       hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "python3 x" }] }] },
+    });
+    const res = applyHookPolicy({
+      policy: { enableGlobs: ["python3 *"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+    expect(res.overrideMounts).toEqual([]);
+  });
+
+  it("directory-sourced plugin hooks.json gets overlaid at the plugin host path", () => {
+    const marketDir = join(root, "markets", "switchboard");
+    const pluginDir = marketDir; // `source: "./"` convention
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "switchboard",
+      plugins: [{ name: "switchboard", source: "./" }],
+    });
+    mkdirSync(join(pluginDir, "hooks"), { recursive: true });
+    writeJSON(join(pluginDir, "hooks", "hooks.json"), {
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              { type: "command", command: "switchboard-hook" },
+              { type: "command", command: "python3 keep.py" },
+            ],
+          },
+        ],
+      },
+    });
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "switchboard@switchboard": true },
+      extraKnownMarketplaces: {
+        switchboard: { source: { source: "directory", path: marketDir } },
+      },
+    });
+
+    const res = applyHookPolicy({
+      policy: { enableGlobs: ["python3 *"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+
+    const dp = res.overrideMounts.find(
+      (m) => m.dst === join(realpathSync(pluginDir), "hooks", "hooks.json"),
+    );
+    expect(dp).toBeDefined();
+    expect(dp!.mode).toBe("ro");
+    const patched = JSON.parse(readFileSync(dp!.src, "utf8"));
+    expect(patched.hooks.SessionStart[0].hooks).toEqual([
+      { type: "command", command: "python3 keep.py" },
+    ]);
+  });
+
+  it("directory plugin overlay is skipped when plugin is not enabled", () => {
+    const marketDir = join(root, "markets", "off");
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "off",
+      plugins: [{ name: "off", source: "./" }],
+    });
+    mkdirSync(join(marketDir, "hooks"), { recursive: true });
+    writeJSON(join(marketDir, "hooks", "hooks.json"), {
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "python3 x" }] }] },
+    });
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "off@off": false },
+      extraKnownMarketplaces: {
+        off: { source: { source: "directory", path: marketDir } },
+      },
     });
     const res = applyHookPolicy({
       policy: { enableGlobs: ["python3 *"] },
@@ -352,6 +492,41 @@ describe("enumerateHooks", () => {
       repos: [],
     });
     expect(records).toEqual([]);
+  });
+
+  it("includes directory-sourced plugin hooks when the plugin is enabled", () => {
+    const marketDir = join(root, "markets", "switchboard");
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "switchboard",
+      plugins: [{ name: "switchboard", source: "./" }],
+    });
+    mkdirSync(join(marketDir, "hooks"), { recursive: true });
+    writeJSON(join(marketDir, "hooks", "hooks.json"), {
+      hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: "switchboard-hook" }] }],
+      },
+    });
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "switchboard@switchboard": true },
+      extraKnownMarketplaces: {
+        switchboard: { source: { source: "directory", path: marketDir } },
+      },
+    });
+
+    const records = enumerateHooks({
+      hostClaudeDir: hostClaude,
+      pluginsCacheDir: pluginsCache,
+      repos: [],
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0]!.command).toBe("switchboard-hook");
+    expect(records[0]!.source).toBe("plugin");
+    expect(records[0]!.plugin).toEqual({
+      marketplace: "switchboard",
+      plugin: "switchboard",
+      version: "directory",
+    });
   });
 
   it("tolerates missing settings.json, missing plugins cache, and repos without .claude/", () => {
