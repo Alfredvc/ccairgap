@@ -51,6 +51,7 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. |
 | `--rebuild` | no | Force image rebuild. |
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
+| `-n, --name <name>` | no | Session name. Branch becomes `sandbox/<name>` instead of `sandbox/<ts>`; forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
 
 ## Config file
 

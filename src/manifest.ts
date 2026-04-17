@@ -14,6 +14,13 @@ export interface ManifestV1 {
     base_ref?: string;
   }>;
   /**
+   * Sandbox branch name used in the session clones (e.g. `sandbox/<ts>` by
+   * default, or `sandbox/<--name>` when the user passed `--name`). Optional for
+   * v1 back-compat: pre-existing sessions without it fall back to `sandbox/<ts>`
+   * in handoff/orphan scanning.
+   */
+  branch?: string;
+  /**
    * --sync entries recorded at launch so the exit-trap / recover handoff knows
    * which in-session paths to rsync back out to $CLAUDE_AIRLOCK_HOME/output/<ts>/.
    * Additive field (optional): pre-existing v1 sessions without it recover fine.

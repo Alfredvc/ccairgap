@@ -59,6 +59,30 @@ export async function gitCheckoutNewBranch(
   await execa("git", args, { stdio: "inherit" });
 }
 
+/** `git check-ref-format <ref>`. Returns true if the ref name is valid. */
+export async function checkRefFormat(ref: string): Promise<boolean> {
+  try {
+    await execa("git", ["check-ref-format", ref], { reject: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Returns true if `refs/heads/<branch>` exists in `repo`. */
+export async function gitBranchExists(repo: string, branch: string): Promise<boolean> {
+  try {
+    await execa(
+      "git",
+      ["-C", repo, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { reject: true },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** `git -C <realRepo> fetch <sessionClone> <branch>:<branch>`. Returns true on success. */
 export async function gitFetchSandbox(
   realRepo: string,

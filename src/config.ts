@@ -23,6 +23,7 @@ export interface ConfigFile {
   dockerBuildArg?: Record<string, string>;
   rebuild?: boolean;
   print?: string;
+  name?: string;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -42,6 +43,7 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "dockerBuildArg": "dockerBuildArg",
   "rebuild": "rebuild",
   "print": "print",
+  "name": "name",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -176,6 +178,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "print":
         cfg.print = assertString(val, "print");
+        break;
+      case "name":
+        cfg.name = assertString(val, "name");
         break;
     }
   }

@@ -141,7 +141,9 @@ export async function handoff(
     };
   }
 
-  const branch = `sandbox/${ts}`;
+  // Manifests from older CLI builds lack `branch`; fall back to the default
+  // name so recover still works on them.
+  const branch = manifest.branch ?? `sandbox/${ts}`;
 
   for (const repo of manifest.repos) {
     const sessionClone = join(sessionDirPath, "repos", repo.basename);

@@ -87,8 +87,14 @@ CWD="${AIRLOCK_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
+# Session name → `claude -n <name>` (shown in /resume and terminal title).
+NAME_ARGS=()
+if [ -n "${AIRLOCK_NAME:-}" ]; then
+    NAME_ARGS=(-n "$AIRLOCK_NAME")
+fi
+
 if [ -n "${AIRLOCK_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions -p "$AIRLOCK_PRINT"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" -p "$AIRLOCK_PRINT"
 else
-    exec claude --dangerously-skip-permissions
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}"
 fi

@@ -39,12 +39,13 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
     try {
       const m = readManifest(sd, cliVer);
       repos = m.repos.map((r) => r.host_path);
+      const branch = m.branch ?? `sandbox/${ts}`;
       for (const r of m.repos) {
         const sessionClone = join(sd, "repos", r.basename);
         if (existsSync(sessionClone)) {
           commits[r.basename] = await countCommitsAhead(
             sessionClone,
-            `sandbox/${ts}`,
+            branch,
             r.base_ref ?? "HEAD",
           );
         }

@@ -12,7 +12,14 @@ import {
   sessionsDir as sessionsDirFn,
 } from "./paths.js";
 import { writeManifest, type Manifest } from "./manifest.js";
-import { gitCheckoutNewBranch, gitCloneShared, readHostGitIdentity, resolveGitDir } from "./git.js";
+import {
+  checkRefFormat,
+  gitBranchExists,
+  gitCheckoutNewBranch,
+  gitCloneShared,
+  readHostGitIdentity,
+  resolveGitDir,
+} from "./git.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
 import { buildMounts, mountArg } from "./mounts.js";
 import { ensureImage, defaultDockerfile } from "./image.js";
@@ -36,6 +43,8 @@ export interface LaunchOptions {
   rebuild: boolean;
   /** If set, container runs `claude -p "<prompt>"` instead of interactive REPL. */
   print?: string;
+  /** If set, sandbox branch becomes `sandbox/<name>` (instead of `sandbox/<ts>`) and is forwarded to `claude -n <name>`. */
+  name?: string;
 }
 
 export interface LaunchResult {
@@ -102,6 +111,16 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const ts = compactTimestamp();
   const sessionPath = sessionDirFn(ts, env);
 
+  // Branch name: `sandbox/<name ?? ts>`. `<ts>` is always well-formed; a user-
+  // supplied `<name>` is validated via `git check-ref-format` on the full ref.
+  const branchSuffix = opts.name ?? ts;
+  const branch = `sandbox/${branchSuffix}`;
+  if (opts.name !== undefined) {
+    if (!(await checkRefFormat(`refs/heads/${branch}`))) {
+      die(`--name "${opts.name}" is not a valid git ref component (branch would be ${branch})`);
+    }
+  }
+
   // Resolve every repo's real git dir upfront so failure aborts before any writes.
   type RepoPlan = {
     basename: string;
@@ -133,6 +152,19 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const roResolved = dedupeResolved(opts.ros);
   for (const r of roResolved) {
     if (!existsSync(r)) die(`--ro path does not exist: ${r}`);
+  }
+
+  // Branch-collision check (only meaningful when --name is passed; `sandbox/<ts>`
+  // is always unique). Check only the workspace repo (repoPlans[0]); extra repos
+  // ride along and are left to surface their own collision at fetch time if any.
+  if (opts.name !== undefined && repoPlans.length > 0) {
+    const workspace = repoPlans[0]!;
+    if (await gitBranchExists(workspace.hostPath, branch)) {
+      die(
+        `branch ${branch} already exists in ${workspace.hostPath}. ` +
+          `Pick a different --name or delete the existing branch.`,
+      );
+    }
   }
 
   // Resolve cp/sync/mount: validate, detect overlaps, plan copies & mounts.
@@ -184,7 +216,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     for (const plan of repoPlans) {
       const clonePath = plan.sessionClonePath;
       await gitCloneShared(plan.hostPath, clonePath);
-      await gitCheckoutNewBranch(clonePath, `sandbox/${ts}`, opts.base);
+      await gitCheckoutNewBranch(clonePath, branch, opts.base);
 
       // Point alternates at the container-side mount so the container can
       // commit into its own objects dir without colliding with the RO host
@@ -238,6 +270,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       host_path: r.hostPath,
       base_ref: r.baseRef,
     })),
+    branch,
     sync: artifacts.syncRecords,
     claude_code: {
       host_version: await hostClaudeCodeVersion(),
@@ -275,7 +308,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const hostIdentity = await readHostGitIdentity(identityCwd);
   if (!hostIdentity.name || !hostIdentity.email) {
     console.error(
-      `claude-airlock: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airlock <noreply@airlock.local>". Rewrite authors on sandbox/${ts} if needed.`,
+      `claude-airlock: no git user.${!hostIdentity.name ? "name" : "email"} on host; using fallback "claude-airlock <noreply@airlock.local>". Rewrite authors on ${branch} if needed.`,
     );
   }
   const gitUserName = hostIdentity.name ?? "claude-airlock";
@@ -292,6 +325,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push("-e", `AIRLOCK_GIT_USER_EMAIL=${gitUserEmail}`);
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `AIRLOCK_PRINT=${opts.print}`);
+  }
+  if (opts.name !== undefined) {
+    dockerArgs.push("-e", `AIRLOCK_NAME=${opts.name}`);
   }
   for (const m of mounts) dockerArgs.push(...mountArg(m));
   dockerArgs.push(image.tag);

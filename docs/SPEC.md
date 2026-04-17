@@ -90,6 +90,7 @@ Default (no subcommand): start a new session.
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
 | `-p, --print <prompt>` | no | Run Claude Code in non-interactive print mode: `claude -p "<prompt>"` instead of the REPL. The container still runs with full permissions and all mounts; it just does a single prompt and exits. Useful for smoke tests and scripted runs. |
+| `-n, --name <name>` | no | Session name. Replaces `<ts>` in the sandbox branch (so the branch becomes `sandbox/<name>`) and is forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Validated with `git check-ref-format refs/heads/sandbox/<name>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref or if `sandbox/<name>` already exists in `--repo`'s host repo. Collision is checked only against the workspace repo (`--repo`); `--extra-repo` entries are not pre-checked, so a stale branch in one of them will surface at fetch time on exit. |
 
 No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
@@ -141,8 +142,9 @@ In order:
 5. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/claude-airlock/sessions/<ts>/`.
 6. For each repo in the set (`--repo` plus every `--extra-repo`):
    - `git clone --shared <path> $SESSION/repos/<basename>`
-   - `cd $SESSION/repos/<basename> && git checkout -b sandbox/<ts> [<base>]`
-7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping, so `claude-airlock recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem.
+   - `cd $SESSION/repos/<basename> && git checkout -b <branch> [<base>]`
+   - `<branch>` is `sandbox/<ts>` by default, or `sandbox/<--name>` when `--name` was passed. The name is validated (`git check-ref-format refs/heads/<branch>`) and checked for collision on the workspace repo (`--repo`) before side effects.
+7. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `claude-airlock recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; the handoff routine falls back to `sandbox/<ts>` in that case.
 8. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/claude-airlock/output/` (idempotent).
 9. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
 10. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
@@ -297,7 +299,7 @@ Runs at container start. Steps:
    }
    ```
 7. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-8. If `AIRLOCK_PRINT` env var is set: `exec claude --dangerously-skip-permissions -p "$AIRLOCK_PRINT"`. Otherwise: `exec claude --dangerously-skip-permissions` (interactive REPL).
+8. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$AIRLOCK_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$AIRLOCK_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 
@@ -460,6 +462,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 | `AIRLOCK_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
 | `AIRLOCK_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
 | `AIRLOCK_PRINT` | `--print` | Non-interactive prompt. |
+| `AIRLOCK_NAME` | `--name` | Session display name; forwarded to `claude -n <name>` in the entrypoint. Unset when `--name` was not passed. |
 | `AIRLOCK_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `claude-airlock` if host has none. |
 | `AIRLOCK_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@airlock.local` if host has none. |
 

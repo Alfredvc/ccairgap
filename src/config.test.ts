@@ -19,6 +19,7 @@ docker-build-arg:
   FOO: bar
 rebuild: false
 print: "hello"
+name: "my-session"
 `;
     expect(parseConfig(yaml, SRC)).toEqual({
       repo: "/a",
@@ -30,7 +31,12 @@ print: "hello"
       dockerBuildArg: { CLAUDE_CODE_VERSION: "1.2.3", FOO: "bar" },
       rebuild: false,
       print: "hello",
+      name: "my-session",
     });
+  });
+
+  it("rejects non-string name", () => {
+    expect(() => parseConfig("name: 42\n", SRC)).toThrow(/config\.name: expected string/);
   });
 
   it("accepts camelCase aliases", () => {

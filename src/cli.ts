@@ -42,6 +42,7 @@ function mergeRun(cli: {
   dockerBuildArg?: Record<string, string>;
   rebuild?: boolean;
   print?: string;
+  name?: string;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -56,6 +57,7 @@ function mergeRun(cli: {
     dockerBuildArgs: { ...(cfg.dockerBuildArg ?? {}), ...(cli.dockerBuildArg ?? {}) },
     rebuild: cli.rebuild ?? cfg.rebuild ?? false,
     print: cli.print ?? cfg.print,
+    name: cli.name ?? cfg.name,
   };
 }
 
@@ -104,6 +106,10 @@ async function main() {
       "-p, --print <prompt>",
       "run claude in non-interactive print mode: `claude -p \"<prompt>\"` (no REPL)",
     )
+    .option(
+      "-n, --name <name>",
+      "session name. Used as branch suffix (`sandbox/<name>`) and forwarded to `claude -n <name>`. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
+    )
     .action(async (opts) => {
       // Load config file (if any). Paths inside config resolve relative to config file dir.
       let fileCfg: ConfigFile = {};
@@ -132,6 +138,7 @@ async function main() {
           dockerBuildArg: cliBuildArg,
           rebuild: opts.rebuild,
           print: opts.print,
+          name: opts.name,
         },
         fileCfg,
       );
@@ -196,6 +203,7 @@ async function main() {
         dockerBuildArgs: buildArgs,
         rebuild: merged.rebuild,
         print: merged.print,
+        name: merged.name,
       });
       process.exit(result.exitCode);
     });
