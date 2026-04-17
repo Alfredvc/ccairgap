@@ -49,9 +49,14 @@ if [ -f "$HOST_CLAUDE_JSON" ]; then
     chmod u+w "$HOME_DIR/.claude.json"
 
     # AIRGAP_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
+    # installMethod / autoUpdatesProtectedForNative stripped: host may be "native"
+    # (binary at ~/.local/bin/claude) while container runs npm-global claude at
+    # /usr/local/bin/claude. Leaving host values triggers "claude command not found
+    # at /home/claude/.local/bin/claude" and PATH nags on every start.
     TMP_JSON="$(mktemp)"
     jq --arg trusted "${AIRGAP_TRUSTED_CWDS:-}" '
         .hasCompletedOnboarding = true
+        | del(.installMethod, .autoUpdatesProtectedForNative)
         | (.projects //= {})
         | ($trusted | split("\n") | map(select(length > 0))) as $cwds
         | reduce $cwds[] as $cwd (
