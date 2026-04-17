@@ -349,13 +349,13 @@ async function main() {
     .command("init")
     .description(
       "materialize the bundled Dockerfile, entrypoint.sh, and a minimal " +
-        "config.yaml into <git-root>/.claude-airgap/ (or dirname(--config) if " +
+        "config.yaml into <git-root>/.ccairgap/ (or dirname(--config) if " +
         "--config is passed). Lets you customize the container image without " +
         "forking the repo.",
     )
     .option(
       "--config <path>",
-      "target a specific config file location instead of <git-root>/.claude-airgap/config.yaml",
+      "target a specific config file location instead of <git-root>/.ccairgap/config.yaml",
     )
     .option(
       "--force",

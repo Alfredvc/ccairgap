@@ -213,7 +213,7 @@ function sha256File(path: string): string {
 
 /**
  * Hash-compare sidecar Dockerfile / entrypoint.sh under
- * <git-root>/.claude-airgap/ against the bundled copies. Returns undefined
+ * <git-root>/.ccairgap/ against the bundled copies. Returns undefined
  * when the sidecar dir does not exist (no drift to report). Returns a single
  * check summarizing per-file drift otherwise.
  */
@@ -228,7 +228,7 @@ function checkSidecarDrift(): DoctorCheck | undefined {
     // not in a git repo
   }
   if (!gitRoot) return undefined;
-  const sidecarDir = join(gitRoot, ".claude-airgap");
+  const sidecarDir = join(gitRoot, ".ccairgap");
   if (!existsSync(sidecarDir)) return undefined;
 
   const entries: Array<{ name: string; bundled: string }> = [
@@ -297,7 +297,7 @@ export function resolveInitTarget(opts: InitOptions): string {
       reject: false,
     });
     if (exitCode === 0 && stdout.trim()) {
-      return join(stdout.trim(), ".claude-airgap");
+      return join(stdout.trim(), ".ccairgap");
     }
   } catch {
     // fall through to error
