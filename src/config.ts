@@ -24,6 +24,7 @@ export interface ConfigFile {
   rebuild?: boolean;
   print?: string;
   name?: string;
+  hooks?: { enable?: string[] };
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -44,6 +45,7 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "rebuild": "rebuild",
   "print": "print",
   "name": "name",
+  "hooks": "hooks",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -182,9 +184,27 @@ export function parseConfig(text: string, source: string): ConfigFile {
       case "name":
         cfg.name = assertString(val, "name");
         break;
+      case "hooks":
+        cfg.hooks = assertHooksBlock(val);
+        break;
     }
   }
   return cfg;
+}
+
+function assertHooksBlock(v: unknown): { enable?: string[] } {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) {
+    throw new Error("config.hooks: expected map (e.g. `hooks: { enable: [...] }`)");
+  }
+  const out: { enable?: string[] } = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (k === "enable") {
+      out.enable = assertStringArray(val, "hooks.enable");
+    } else {
+      throw new Error(`config.hooks.${k}: unknown key. Allowed: enable`);
+    }
+  }
+  return out;
 }
 
 /** Load config from disk. Returns {} if no file. Throws on parse/validate error. */

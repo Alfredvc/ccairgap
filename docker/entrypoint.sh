@@ -10,6 +10,7 @@ CLAUDE_DIR="$HOME_DIR/.claude"
 HOST_CLAUDE="/host-claude"
 HOST_CLAUDE_JSON="/host-claude-json"
 HOST_CLAUDE_CREDS="/host-claude-creds"
+HOST_PATCHED_SETTINGS="/host-claude-patched-settings.json"
 
 mkdir -p "$CLAUDE_DIR"
 
@@ -61,8 +62,15 @@ if [ -f "$HOST_CLAUDE_JSON" ]; then
     mv "$TMP_JSON" "$HOME_DIR/.claude.json"
 fi
 
-# Inject env vars into settings.json (preserve existing entries).
+# Hook policy: overlay patched settings.json (strips/keeps hooks per --hook-enable)
+# on top of the rsync'd one BEFORE the env-merge jq step so env additions layer on
+# top of the filtered hooks.
 SETTINGS="$CLAUDE_DIR/settings.json"
+if [ -f "$HOST_PATCHED_SETTINGS" ]; then
+    cp -L "$HOST_PATCHED_SETTINGS" "$SETTINGS"
+fi
+
+# Inject env vars into settings.json (preserve existing entries).
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 chmod u+w "$SETTINGS"
 TMP_SETTINGS="$(mktemp)"

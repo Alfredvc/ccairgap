@@ -29,6 +29,7 @@ import { scanOrphans } from "./orphans.js";
 import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
+import { applyHookPolicy } from "./hooks.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -45,6 +46,13 @@ export interface LaunchOptions {
   print?: string;
   /** If set, sandbox branch becomes `sandbox/<name>` (instead of `sandbox/<ts>`) and is forwarded to `claude -n <name>`. */
   name?: string;
+  /**
+   * Globs matched against each hook's raw `command` string to opt it back in.
+   * Empty → all hooks disabled (top-level `disableAllHooks: true` injected).
+   * Non-empty → filter user settings + enabled plugin hooks.json + project
+   * settings and overlay the filtered copies via bind mounts.
+   */
+  hookEnable: string[];
 }
 
 export interface LaunchResult {
@@ -281,20 +289,43 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // Step 9: mounts
   const transcriptsDir = join(sessionPath, "transcripts");
   const pluginsCache = join(hostClaude, "plugins", "cache");
+  const homeInContainer = "/home/claude";
+  const pluginsCacheContainerPath = join(homeInContainer, ".claude", "plugins", "cache");
+
+  // Hook policy: default is disableAllHooks:true; non-empty --hook-enable list
+  // produces filtered overlays for user settings, each enabled plugin's hooks.json,
+  // and each repo's .claude/settings.json[.local]. Mounts are nested single-file
+  // binds that overlay RO mounts (plugin cache) and the RW session clones.
+  const hookPolicyResult = applyHookPolicy({
+    policy: { enableGlobs: opts.hookEnable },
+    sessionDir: sessionPath,
+    hostClaudeDir: hostClaude,
+    pluginsCacheDir: pluginsCache,
+    pluginsCacheContainerPath,
+    repos: repoEntries.map((r) => ({
+      basename: r.basename,
+      sessionClonePath: r.sessionClonePath,
+      hostPath: r.hostPath,
+    })),
+  });
+
   const mounts = buildMounts({
     hostClaudeDir: hostClaude,
     hostClaudeJson: realpath(hostClaudeJson(env)),
     hostCredsFile: creds.hostPath,
+    hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
     pluginsCacheDir: pluginsCache,
     sessionTranscriptsDir: transcriptsDir,
     outputDir: outputDirPath(env),
     repos: repoEntries,
     roPaths: roResolved,
     pluginMarketplaces: marketplaces,
-    homeInContainer: "/home/claude",
-    // --cp abs-source, --sync abs-source, --mount all bind RW. Appended AFTER
-    // repo mounts so overlapping paths (e.g. --mount inside a repo) win.
-    extraMounts: artifacts.extraMounts,
+    homeInContainer,
+    // --cp abs-source, --sync abs-source, --mount all bind RW. Hook-policy
+    // overrides are nested single-file overlays (RO) on top of the plugin
+    // cache and session clones. Appended AFTER repo/plugin-cache mounts so
+    // overlapping paths win — the overlay is the later mount.
+    extraMounts: [...artifacts.extraMounts, ...hookPolicyResult.overrideMounts],
   });
 
   // Step 10: docker run args

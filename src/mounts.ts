@@ -15,6 +15,13 @@ export interface BuildMountsInput {
   hostClaudeDir: string;
   hostClaudeJson: string;
   hostCredsFile: string;
+  /**
+   * Host path of the patched settings.json produced by the hook-policy pass.
+   * Mounted at `/host-claude-patched-settings.json` (single-file, RO); the
+   * entrypoint overlays it on the rsync'd settings.json before the env-merge
+   * jq step runs.
+   */
+  hostPatchedUserSettings?: string;
   pluginsCacheDir: string;
   sessionTranscriptsDir: string;
   outputDir: string;
@@ -41,6 +48,13 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
   mounts.push({ src: i.hostClaudeDir, dst: "/host-claude", mode: "ro" });
   mounts.push({ src: i.hostClaudeJson, dst: "/host-claude-json", mode: "ro" });
   mounts.push({ src: i.hostCredsFile, dst: "/host-claude-creds", mode: "ro" });
+  if (i.hostPatchedUserSettings) {
+    mounts.push({
+      src: i.hostPatchedUserSettings,
+      dst: "/host-claude-patched-settings.json",
+      mode: "ro",
+    });
+  }
 
   if (existsSync(i.pluginsCacheDir)) {
     mounts.push({

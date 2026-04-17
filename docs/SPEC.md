@@ -58,7 +58,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/claude-airlock/
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/claude-airlock/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow").
+1. `$XDG_STATE_HOME/claude-airlock/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
 2. `$XDG_STATE_HOME/claude-airlock/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
@@ -91,6 +91,7 @@ Default (no subcommand): start a new session.
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
 | `-p, --print <prompt>` | no | Run Claude Code in non-interactive print mode: `claude -p "<prompt>"` instead of the REPL. The container still runs with full permissions and all mounts; it just does a single prompt and exits. Useful for smoke tests and scripted runs. |
 | `-n, --name <name>` | no | Session name. Replaces `<ts>` in the sandbox branch (so the branch becomes `sandbox/<name>`) and is forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Validated with `git check-ref-format refs/heads/sandbox/<name>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref or if `sandbox/<name>` already exists in `--repo`'s host repo. Collision is checked only against the workspace repo (`--repo`); `--extra-repo` entries are not pre-checked, so a stale branch in one of them will surface at fetch time on exit. |
+| `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
 
 No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
@@ -165,6 +166,9 @@ In order:
 | `~/.claude/` (resolved) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds` row for credentials. |
 | `~/.claude.json` (resolved) | `/host-claude-json` | ro | Entrypoint copies to `~/.claude.json`, patches onboarding. |
 | macOS: `$SESSION/creds/.credentials.json` / Linux: `~/.claude/.credentials.json` | `/host-claude-creds` | ro | Single-file mount. Entrypoint copies to `~/.claude/.credentials.json`, chmod 600. See §"Authentication flow". |
+| `$SESSION/hook-policy/user-settings.json` | `/host-claude-patched-settings.json` | ro | Single-file mount. Host-built copy of `settings.json` with hooks filtered per `--hook-enable` (or `disableAllHooks: true` injected when the enable list is empty). Entrypoint overlays it on the rsync'd `~/.claude/settings.json` before the env-merge jq step. See §"Hook policy". |
+| `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled plugin whose hook entries need filtering. Only present when `--hook-enable` list is non-empty. |
+| `$SESSION/hook-policy/projects/<repo>/settings.json` (and `.local`) | `<original-host-path>/.claude/settings.json` (and `.local`) | ro | Nested single-file overlay on top of the session-clone's `.claude/` dir. One mount per repo `.claude/settings.json[.local]` that declares hooks. Only present when `--hook-enable` list is non-empty. |
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `$XDG_STATE_HOME/claude-airlock/output/` | `/output` | rw | Artifact drop. |
@@ -287,7 +291,8 @@ Runs at container start. Steps:
 5. Patch `/home/claude/.claude.json` via `jq` to ensure:
    - `hasCompletedOnboarding: true`
    - `projects.<cwd>.hasTrustDialogAccepted: true` for each session repo's cwd
-6. Merge overrides into `/home/claude/.claude/settings.json`. `.env` merged with `jq '.env = (.env // {}) + { ... }'` to preserve existing entries; `skipDangerousModePermissionPrompt` set to `true` to suppress the bypass-permissions startup warning inside the sandbox:
+6. If `/host-claude-patched-settings.json` exists, `cp -L` it over `/home/claude/.claude/settings.json` before proceeding. This is the hook-policy overlay: a host-built copy of `settings.json` with hooks filtered per `--hook-enable` (or `disableAllHooks: true` injected when the enable list is empty). The next step's env merge layers on top of the filtered hooks.
+7. Merge overrides into `/home/claude/.claude/settings.json`. `.env` merged with `jq '.env = (.env // {}) + { ... }'` to preserve existing entries; `skipDangerousModePermissionPrompt` set to `true` to suppress the bypass-permissions startup warning inside the sandbox:
    ```json
    {
      "env": {
@@ -298,8 +303,8 @@ Runs at container start. Steps:
      "skipDangerousModePermissionPrompt": true
    }
    ```
-7. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-8. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$AIRLOCK_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$AIRLOCK_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; append `-n "$AIRLOCK_NAME"` when the env var is set (session display label in `/resume` / terminal title); then either `-p "$AIRLOCK_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 
@@ -382,6 +387,37 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 - On container exit, the CLI's exit trap recursively copies each `$SESSION/transcripts/<path-encoded-cwd>/` into host `~/.claude/projects/<same-dir-name>/` using `cp -r` (or `rsync -a`). Merging with any existing host content is safe — session UUIDs in nested dir names are unique.
 - Because container preserves host absolute paths for repo cwds, the encoded dir name matches between container and host — `claude --resume` on the host finds the transcript naturally.
 - Session dir is deleted after successful copy.
+
+## Hook policy
+
+Claude Code hooks run arbitrary host commands in response to tool calls and session events (`PreToolUse`, `PostToolUse`, `SessionStart`, `Notification`, `UserPromptSubmit`, `Stop`, `PermissionRequest`). Host-side hook configs routinely reference binaries (`afplay`, project-local `python3` scripts, user-installed CLIs) that are not present in the sandboxed container; left unfiltered, they fail on every tool call and break the session.
+
+**Default: all hooks disabled.** The CLI injects `disableAllHooks: true` at the top of the container's `~/.claude/settings.json`, which Claude Code honors natively (suppresses every hook regardless of source). No command is executed.
+
+**Opt-in: `--hook-enable <glob>` (repeatable) or `hooks.enable: [<glob>, …]` in config.** Each glob is matched against the raw `command` string of each hook entry. Wildcard is `*` (anchored full match). Hooks whose command matches any glob are kept; everything else is stripped. Glob semantics are deliberately thin — users see the exact `command` strings in their JSON, so a substring-with-`*` match is sufficient to describe intent.
+
+### Mechanism
+
+Claude Code has **no native per-hook disable**; the only global switches are `disableAllHooks: true` (suppresses everything) and `enabledPlugins[<key>] = false` (disables an entire plugin, which also loses its skills/commands/agents — too coarse for per-hook opt-in). To selectively disable hooks the CLI rewrites hook-bearing JSON host-side and overlays the patched copies in the container via nested single-file bind mounts.
+
+- **User settings:** host `~/.claude/settings.json` is read, its `hooks` field is filtered, and `disableAllHooks` is explicitly set (`true` when the enable list is empty, `false` otherwise — overrides any host-level setting). The patched file is written to `$SESSION/hook-policy/user-settings.json` and mounted RO at `/host-claude-patched-settings.json`. The entrypoint `cp`s it over the rsync'd `settings.json` before the env-merge step.
+- **Plugin hooks:** only when the enable list is non-empty. For each `enabledPlugins[<plugin>@<market>] === true` whose cache dir has a `hooks/hooks.json`, the `hooks` field is filtered, the patched file written to `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json`, and mounted RO over `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json`. The outer plugin-cache RO mount is declared first; the inner file mount lands later and overlays the parent.
+- **Project settings:** only when the enable list is non-empty. For each repo (`--repo` + every `--extra-repo`), both `.claude/settings.json` and `.claude/settings.local.json` in the session clone are read, filtered, and overlaid via a single-file bind mount at the repo's container path. The session clone on disk is not modified — the overlay leaves `git status` clean.
+
+Host files are never mutated; all patched copies live under `$SESSION/hook-policy/` and die with the session dir.
+
+### Scope and limitations
+
+- **Identification is by `command` string alone.** No type/matcher/event-based targeting. Users who want to enable "all `python3` hooks but only in PreToolUse" should either encode intent in the command (common) or accept that `python3 *` keeps them all.
+- **No probing.** The CLI does not introspect the container image to decide which commands would work. Enabling a hook whose command is missing still fails at hook invocation; users who extend the Dockerfile are trusted to match their enable list to their image.
+- **Matcher and event structure is preserved.** Only inner hook entries are dropped; matcher groups and event arrays that become empty are then pruned to avoid `hooks: { PreToolUse: [] }` fragments.
+- **MCP hook sources** are not a distinct class in Claude Code's config — hooks live in user settings, project settings, or plugin `hooks.json`. Any MCP that registers hooks does so through one of those surfaces, all of which are covered.
+
+### CLI surface
+
+- Flag: `--hook-enable <glob>` — repeatable.
+- Config file key: `hooks.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
+- Merge: CLI values append to config values (same semantics as `--ro` / `--extra-repo`).
 
 ## Plugins, skills, commands, CLAUDE.md
 

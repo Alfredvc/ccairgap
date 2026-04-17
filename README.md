@@ -52,6 +52,27 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--rebuild` | no | Force image rebuild. |
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
 | `-n, --name <name>` | no | Session name. Branch becomes `sandbox/<name>` instead of `sandbox/<ts>`; forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
+| `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
+
+## Hooks
+
+All Claude Code hooks are **disabled by default** inside the sandbox. Host hook configs usually reference host-only binaries (`afplay`, project-local `python3` scripts, user-installed CLIs) that are not present in the container; left unfiltered, they would fail every tool call.
+
+Opt hooks back in with `--hook-enable <glob>` or `hooks.enable: [glob, ...]` in config. The glob is matched against the raw `command` string of each hook entry (wildcard `*`, anchored full match). Every hook source is filtered the same way: user `~/.claude/settings.json`, each enabled plugin's `hooks.json`, and project `.claude/settings.json[.local]`.
+
+```bash
+# Enable just the python3 auto-deny / auto-approve hooks
+claude-airlock --hook-enable 'python3 *'
+
+# Enable two specific commands
+claude-airlock \
+  --hook-enable 'python3 *' \
+  --hook-enable 'bash ~/.claude/statusline.sh'
+```
+
+If a hook's command references a binary that isn't in your container image, opting it in still fails at invocation — extend the Dockerfile (`--dockerfile`) to include the binary.
+
+See `docs/SPEC.md` §"Hook policy" for the full mechanism.
 
 ## Config file
 
@@ -79,6 +100,10 @@ keep-container: false
 docker-build-arg:
   CLAUDE_CODE_VERSION: "1.2.3"
 # print: "run the test suite"
+hooks:
+  enable:
+    - "python3 *"
+    - "bash ~/.claude/statusline.sh"
 ```
 
 Build-artifact keys (`cp`, `sync`, `mount`) take relative paths resolved against the workspace repo root at launch (not the config file's directory — unlike `repo` / `ro`). Use absolute paths to break out of the workspace.

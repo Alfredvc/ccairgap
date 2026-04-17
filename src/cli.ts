@@ -43,6 +43,7 @@ function mergeRun(cli: {
   rebuild?: boolean;
   print?: string;
   name?: string;
+  hookEnable: string[];
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -58,6 +59,7 @@ function mergeRun(cli: {
     rebuild: cli.rebuild ?? cfg.rebuild ?? false,
     print: cli.print ?? cfg.print,
     name: cli.name ?? cfg.name,
+    hookEnable: [...(cfg.hooks?.enable ?? []), ...cli.hookEnable],
   };
 }
 
@@ -119,6 +121,12 @@ async function main() {
       "-n, --name <name>",
       "session name. Used as branch suffix (`sandbox/<name>`) and forwarded to `claude -n <name>`. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
     )
+    .option(
+      "--hook-enable <glob>",
+      "enable a Claude Code hook whose `command` matches <glob>. All hooks are disabled by default inside the sandbox; each --hook-enable opts a hook back in. Glob wildcard is `*`. Repeatable.",
+      collect,
+      [],
+    )
     .action(async (opts) => {
       // Load config file (if any). Paths inside config resolve relative to config file dir.
       let fileCfg: ConfigFile = {};
@@ -148,6 +156,7 @@ async function main() {
           rebuild: opts.rebuild,
           print: opts.print,
           name: opts.name,
+          hookEnable: opts.hookEnable as string[],
         },
         fileCfg,
       );
@@ -213,6 +222,7 @@ async function main() {
         rebuild: merged.rebuild,
         print: merged.print,
         name: merged.name,
+        hookEnable: merged.hookEnable,
       });
       process.exit(result.exitCode);
     });
