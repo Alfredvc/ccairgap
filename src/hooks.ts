@@ -194,6 +194,110 @@ function listPluginsOnDisk(cacheDir: string, containerCacheDir: string): PluginO
 }
 
 /**
+ * Enumerate every hook entry the container would see at launch, across all three
+ * sources (user settings, enabled plugins, project settings). Read-only mirror of
+ * the sources `applyHookPolicy` walks, used by the `hooks` subcommand to surface
+ * the raw `command` strings users need when choosing `--hook-enable` globs.
+ *
+ * `repos` here are host paths (not session clones) — the subcommand runs before
+ * any session exists, so project `.claude/settings.json[.local]` is read straight
+ * from the host repo.
+ */
+export type HookSource = "user" | "plugin" | "project";
+
+export interface HookRecord {
+  source: HookSource;
+  sourcePath: string;
+  event: string;
+  matcher?: string;
+  command: string;
+  /** Plugin-only. */
+  plugin?: { marketplace: string; plugin: string; version: string };
+  /** Project-only. Repo basename. */
+  repo?: string;
+}
+
+export interface EnumerateHooksInput {
+  hostClaudeDir: string;
+  pluginsCacheDir: string;
+  repos: { basename: string; hostPath: string }[];
+}
+
+function collectHookRecords(
+  hooksField: unknown,
+  base: Omit<HookRecord, "event" | "matcher" | "command">,
+  out: HookRecord[],
+): void {
+  if (!hooksField || typeof hooksField !== "object" || Array.isArray(hooksField)) return;
+  for (const [event, groupsRaw] of Object.entries(hooksField as Record<string, unknown>)) {
+    if (!Array.isArray(groupsRaw)) continue;
+    for (const group of groupsRaw as HookMatcherGroup[]) {
+      if (!group || typeof group !== "object") continue;
+      const matcher = typeof group.matcher === "string" ? group.matcher : undefined;
+      const inner = Array.isArray(group.hooks) ? group.hooks : [];
+      for (const h of inner) {
+        if (typeof h?.command !== "string") continue;
+        out.push({ ...base, event, matcher, command: h.command });
+      }
+    }
+  }
+}
+
+export function enumerateHooks(input: EnumerateHooksInput): HookRecord[] {
+  const { hostClaudeDir, pluginsCacheDir, repos } = input;
+  const out: HookRecord[] = [];
+
+  // User settings.
+  const userSettingsPath = join(hostClaudeDir, "settings.json");
+  const userSettings = readJsonOrNull(userSettingsPath) as Record<string, unknown> | null;
+  if (userSettings) {
+    collectHookRecords(
+      userSettings.hooks,
+      { source: "user", sourcePath: userSettingsPath },
+      out,
+    );
+  }
+
+  // Plugin hooks (only enabled plugins).
+  const enabledPlugins = userSettings?.enabledPlugins;
+  // Container path irrelevant here; pass empty string.
+  const plugins = listPluginsOnDisk(pluginsCacheDir, "");
+  for (const p of plugins) {
+    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
+    const hooksJsonPath = join(p.hostDir, "hooks", "hooks.json");
+    if (!existsSync(hooksJsonPath)) continue;
+    const raw = readJsonOrNull(hooksJsonPath);
+    if (!raw || typeof raw !== "object") continue;
+    collectHookRecords(
+      (raw as { hooks?: unknown }).hooks,
+      {
+        source: "plugin",
+        sourcePath: hooksJsonPath,
+        plugin: { marketplace: p.marketplace, plugin: p.plugin, version: p.version },
+      },
+      out,
+    );
+  }
+
+  // Project settings.
+  for (const r of repos) {
+    for (const fname of ["settings.json", "settings.local.json"]) {
+      const p = join(r.hostPath, ".claude", fname);
+      if (!existsSync(p)) continue;
+      const raw = readJsonOrNull(p);
+      if (!raw || typeof raw !== "object") continue;
+      collectHookRecords(
+        (raw as { hooks?: unknown }).hooks,
+        { source: "project", sourcePath: p, repo: r.basename },
+        out,
+      );
+    }
+  }
+
+  return out;
+}
+
+/**
  * Apply the hook policy. Always writes a patched user settings file; when the
  * enable list is non-empty, also writes filtered hooks.json / settings.json
  * copies under `$SESSION/hook-policy/` and returns single-file bind mounts that

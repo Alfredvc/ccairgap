@@ -78,6 +78,8 @@ ccairgap \
 
 If a hook's command references a binary that isn't in your container image, opting it in still fails at invocation — extend the Dockerfile (`--dockerfile`) to include the binary.
 
+Unsure which hooks exist? `ccairgap hooks` dumps every hook entry the container would see (user settings, enabled plugins, project `.claude/settings.json[.local]`) as JSON — pick globs from the real `command` strings instead of hunting through plugin caches by hand.
+
 See `docs/SPEC.md` §"Hook policy" for the full mechanism.
 
 ## Raw docker run args
@@ -172,6 +174,7 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 | `recover [<ts>]` | Run the handoff (fetch sandbox branch, copy transcripts, rm session dir). Idempotent. |
 | `discard <ts>` | Delete a session dir without running handoff. |
 | `doctor` | Preflight: Docker running, credentials present, image present/stale, state dir writable. |
+| `hooks` | Enumerate hook entries the container would see at launch (user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json`, and `.claude/settings.json[.local]` for `--repo` + every `--extra-repo`). JSON to stdout. Read-only — useful for picking `--hook-enable` globs. |
 
 ## Environment variables
 

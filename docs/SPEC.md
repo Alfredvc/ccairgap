@@ -106,6 +106,7 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `recover [<ts>]` | Run the handoff routine against `$SESSION/<ts>/`. Idempotent. With no `<ts>` argument, equivalent to `list`. |
 | `discard <ts>` | Delete `$SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
 | `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `rsync` + `cp` on PATH for `--cp` / `--sync` / handoff, image present/stale). |
+| `hooks` | Enumerate hook entries ccairgap would see at launch, across every source (user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json`, and `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`). Output is JSON to stdout — one object per hook entry with `source`, `sourcePath`, `event`, `matcher`, and `command`. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
 
 **Examples:**
 
@@ -505,6 +506,7 @@ Host files are never mutated; all patched copies live under `$SESSION/hook-polic
 - Flag: `--hook-enable <glob>` — repeatable.
 - Config file key: `hooks.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
 - Merge: CLI values append to config values (same semantics as `--ro` / `--extra-repo`).
+- Introspection: `ccairgap hooks` prints every hook entry ccairgap would see at launch (all three sources) as JSON, so users can build their enable-globs from the exact `command` strings without walking plugin caches or project settings by hand. Read-only.
 
 ## Plugins, skills, commands, CLAUDE.md
 

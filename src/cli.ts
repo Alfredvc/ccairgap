@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
-import { doctor, discard, listOrphans, recover } from "./subcommands.js";
+import { doctor, discard, hooksCmd, listOrphans, recover } from "./subcommands.js";
 import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
 
 function parseBuildArg(v: string, acc: Record<string, string>): Record<string, string> {
@@ -280,6 +280,43 @@ async function main() {
     .description("preflight checks")
     .action(async () => {
       await doctor();
+    });
+
+  program
+    .command("hooks")
+    .description(
+      "enumerate hook entries the container would see at launch (user settings, enabled plugins, " +
+        "project .claude/settings.json[.local]). JSON to stdout. Read-only.",
+    )
+    .option("--config <path>", "path to yaml config file (same semantics as launch)")
+    .option("--repo <path>", "host repo whose .claude/settings.json[.local] should be included. Defaults to cwd if it's a git repo.")
+    .option("--extra-repo <path>", "additional host repo to include. Repeatable.", collect, [])
+    .action((opts) => {
+      let fileCfg: ConfigFile = {};
+      const loaded = loadConfig(opts.config);
+      if (loaded.path) fileCfg = resolveConfigPaths(loaded.config, loaded.path);
+
+      const repo: string | undefined = (opts.repo as string | undefined) ?? fileCfg.repo;
+      const extraRepos: string[] = [
+        ...(fileCfg.extraRepo ?? []),
+        ...((opts.extraRepo as string[]) ?? []),
+      ];
+
+      let workspaceRepo = repo;
+      if (!workspaceRepo) {
+        const cwd = process.cwd();
+        if (isGitRepo(cwd)) workspaceRepo = cwd;
+      }
+
+      const repos: string[] = workspaceRepo ? [workspaceRepo, ...extraRepos] : [...extraRepos];
+      for (const r of repos) {
+        if (!existsSync(r) || !statSync(r).isDirectory()) {
+          console.error(`ccairgap: repo path not a directory: ${r}`);
+          process.exit(1);
+        }
+      }
+
+      hooksCmd({ repos });
     });
 
   await program.parseAsync(process.argv);

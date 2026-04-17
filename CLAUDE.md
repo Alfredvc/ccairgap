@@ -26,7 +26,7 @@ src/
   cli.ts          commander entry; arg parse, config merge, dispatch
   config.ts       YAML config load + CLI-vs-config merge (CLI > config > defaults)
   launch.ts       main launch pipeline: clone, mounts, docker run, exit trap
-  subcommands.ts  list / recover / discard / doctor
+  subcommands.ts  list / recover / discard / doctor / hooks
   handoff.ts      exit trap + recover logic (git fetch sandbox branch, copy transcripts, rm session)
   manifest.ts     $SESSION/manifest.json read/write; carries "version": 1
   orphans.ts      scan $XDG_STATE_HOME for sessions without live container

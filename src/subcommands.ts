@@ -1,12 +1,19 @@
 import { existsSync, mkdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { execa } from "execa";
-import { sessionDir as sessionDirFn, sessionsDir, stateRoot } from "./paths.js";
+import {
+  hostClaudeDir as hostClaudeDirFn,
+  realpath,
+  sessionDir as sessionDirFn,
+  sessionsDir,
+  stateRoot,
+} from "./paths.js";
 import { handoff } from "./handoff.js";
 import { scanOrphans } from "./orphans.js";
 import { cliVersion } from "./version.js";
 import { defaultDockerfile, computeTag, imageExistsLocally } from "./image.js";
 import { probeCredentials } from "./credentials.js";
+import { enumerateHooks } from "./hooks.js";
 
 export async function listOrphans(): Promise<void> {
   const orphans = await scanOrphans(cliVersion());
@@ -126,6 +133,30 @@ function checkSessions(): DoctorCheck {
   } catch (e) {
     return { name: "sessions dir", ok: false, detail: (e as Error).message };
   }
+}
+
+/**
+ * `ccairgap hooks` — enumerate hook entries the container would see at launch,
+ * across user settings, enabled plugins, and each repo's `.claude/settings.json[.local]`.
+ * Read-only; no session created. JSON to stdout.
+ */
+export function hooksCmd(opts: { repos: string[] }): void {
+  const hcd = realpath(hostClaudeDirFn());
+  const pluginsCache = join(hcd, "plugins", "cache");
+  // realpath only when the path exists — a fresh install with no plugins cache is valid.
+  const pluginsCacheResolved = existsSync(pluginsCache) ? realpath(pluginsCache) : pluginsCache;
+
+  const repos = opts.repos.map((p) => {
+    const resolved = realpath(p);
+    return { basename: basename(resolved), hostPath: resolved };
+  });
+
+  const records = enumerateHooks({
+    hostClaudeDir: hcd,
+    pluginsCacheDir: pluginsCacheResolved,
+    repos,
+  });
+  console.log(JSON.stringify(records, null, 2));
 }
 
 export async function doctor(): Promise<void> {

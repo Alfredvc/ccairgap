@@ -2,7 +2,13 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyHookPolicy, filterHooksField, globToRegex, matchesEnable } from "./hooks.js";
+import {
+  applyHookPolicy,
+  enumerateHooks,
+  filterHooksField,
+  globToRegex,
+  matchesEnable,
+} from "./hooks.js";
 
 describe("globToRegex", () => {
   it("converts * to greedy wildcard and anchors", () => {
@@ -234,5 +240,129 @@ describe("applyHookPolicy", () => {
     expect(patchedProj.hooks.PreToolUse[0].hooks).toEqual([
       { type: "command", command: "python3 project.py" },
     ]);
+  });
+});
+
+describe("enumerateHooks", () => {
+  let root: string;
+  let hostClaude: string;
+  let pluginsCache: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "hooks-enum-"));
+    hostClaude = join(root, "host-claude");
+    pluginsCache = join(hostClaude, "plugins", "cache");
+    mkdirSync(pluginsCache, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeJSON(path: string, data: unknown): void {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify(data));
+  }
+
+  it("returns user, enabled-plugin, and per-repo project hook entries with source attribution", () => {
+    writeJSON(join(hostClaude, "settings.json"), {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [
+              { type: "command", command: "python3 user.py" },
+              { type: "command", command: "afplay ding.wav" },
+            ],
+          },
+        ],
+      },
+      enabledPlugins: { "p@m": true, "off@m": false },
+    });
+
+    // Enabled plugin with hooks.
+    mkdirSync(join(pluginsCache, "m", "p", "1.0.0", "hooks"), { recursive: true });
+    writeJSON(join(pluginsCache, "m", "p", "1.0.0", "hooks", "hooks.json"), {
+      hooks: {
+        PostToolUse: [{ hooks: [{ type: "command", command: "node plugin.js" }] }],
+      },
+    });
+    // Disabled plugin — hooks should NOT appear.
+    mkdirSync(join(pluginsCache, "m", "off", "1.0.0", "hooks"), { recursive: true });
+    writeJSON(join(pluginsCache, "m", "off", "1.0.0", "hooks", "hooks.json"), {
+      hooks: {
+        PostToolUse: [{ hooks: [{ type: "command", command: "should-not-appear" }] }],
+      },
+    });
+
+    const repoDir = join(root, "repos", "myrepo");
+    mkdirSync(join(repoDir, ".claude"), { recursive: true });
+    writeJSON(join(repoDir, ".claude", "settings.json"), {
+      hooks: {
+        PreToolUse: [{ hooks: [{ type: "command", command: "bash shared.sh" }] }],
+      },
+    });
+    writeJSON(join(repoDir, ".claude", "settings.local.json"), {
+      hooks: {
+        Notification: [{ hooks: [{ type: "command", command: "osascript local.scpt" }] }],
+      },
+    });
+
+    const records = enumerateHooks({
+      hostClaudeDir: hostClaude,
+      pluginsCacheDir: pluginsCache,
+      repos: [{ basename: "myrepo", hostPath: repoDir }],
+    });
+
+    const commands = records.map((r) => r.command).sort();
+    expect(commands).toEqual([
+      "afplay ding.wav",
+      "bash shared.sh",
+      "node plugin.js",
+      "osascript local.scpt",
+      "python3 user.py",
+    ]);
+
+    const byCommand = Object.fromEntries(records.map((r) => [r.command, r]));
+    expect(byCommand["python3 user.py"]!.source).toBe("user");
+    expect(byCommand["python3 user.py"]!.event).toBe("PreToolUse");
+    expect(byCommand["python3 user.py"]!.matcher).toBe("Bash");
+
+    expect(byCommand["node plugin.js"]!.source).toBe("plugin");
+    expect(byCommand["node plugin.js"]!.plugin).toEqual({
+      marketplace: "m",
+      plugin: "p",
+      version: "1.0.0",
+    });
+
+    expect(byCommand["bash shared.sh"]!.source).toBe("project");
+    expect(byCommand["bash shared.sh"]!.repo).toBe("myrepo");
+    expect(byCommand["bash shared.sh"]!.sourcePath).toBe(
+      join(repoDir, ".claude", "settings.json"),
+    );
+    expect(byCommand["osascript local.scpt"]!.sourcePath).toBe(
+      join(repoDir, ".claude", "settings.local.json"),
+    );
+  });
+
+  it("returns empty array when no hook sources exist", () => {
+    const records = enumerateHooks({
+      hostClaudeDir: hostClaude,
+      pluginsCacheDir: pluginsCache,
+      repos: [],
+    });
+    expect(records).toEqual([]);
+  });
+
+  it("tolerates missing settings.json, missing plugins cache, and repos without .claude/", () => {
+    const missingCache = join(root, "no-such-cache");
+    const repoDir = join(root, "repo-without-claude-dir");
+    mkdirSync(repoDir, { recursive: true });
+    const records = enumerateHooks({
+      hostClaudeDir: join(root, "no-claude"),
+      pluginsCacheDir: missingCache,
+      repos: [{ basename: "x", hostPath: repoDir }],
+    });
+    expect(records).toEqual([]);
   });
 });
