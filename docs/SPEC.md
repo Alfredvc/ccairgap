@@ -106,8 +106,9 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<ts>`. |
 | `recover [<ts>]` | Run the handoff routine against `$SESSION/<ts>/`. Idempotent. With no `<ts>` argument, equivalent to `list`. |
 | `discard <ts>` | Delete `$SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
-| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `rsync` + `cp` on PATH for `--cp` / `--sync` / handoff, image present/stale). |
+| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `rsync` + `cp` on PATH for `--cp` / `--sync` / handoff, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.claude-airgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
 | `hooks` | Enumerate hook entries ccairgap would see at launch, across every source (user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json`, and `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`). Output is JSON to stdout — one object per hook entry with `source`, `sourcePath`, `event`, `matcher`, and `command`. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
+| `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.claude-airgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
 
 **Examples:**
 
@@ -141,7 +142,7 @@ In order:
    - Otherwise: if `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
-2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, or `doctor`, run that handler per §Recovery / §Doctor and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
+2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, or `init`, run that handler per §Recovery / §Doctor / §"Container image customization" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
 3. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
 4. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
@@ -377,6 +378,17 @@ The hash suffix for custom Dockerfiles is deterministic: the same Dockerfile con
 3. `--dockerfile` was passed and its content hash differs from any existing `custom-*` tag.
 
 Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the image is older than a threshold (default: 14 days) so the user can explicitly `--rebuild`.
+
+## Container image customization
+
+Two supported paths to change what's inside the image:
+
+1. **`--docker-build-arg KEY=VAL`** — the bundled Dockerfile exposes `CLAUDE_CODE_VERSION`. Pin Claude Code without touching the Dockerfile.
+2. **Sidecar Dockerfile via `ccairgap init`** — materialize the bundled `Dockerfile` + `entrypoint.sh` into the config dir (default `<git-root>/.claude-airgap/`, or `dirname(--config)` if `--config` is passed). Edit in place. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo.
+
+`ccairgap init` writes three files: `Dockerfile`, `entrypoint.sh`, `config.yaml`. If any of the three already exist, `init` aborts with an error listing them; `--force` overwrites all three unconditionally (no merge — any prior edits to `config.yaml` are lost).
+
+`ccairgap doctor` hash-compares the sidecar `Dockerfile` / `entrypoint.sh` against the bundled copies shipped with the installed CLI version and warns when they diverge — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force` (destructive; overwrites local edits) or keep custom changes.
 
 ## Entrypoint
 

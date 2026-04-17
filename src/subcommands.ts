@@ -1,6 +1,16 @@
-import { existsSync, mkdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { execa } from "execa";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { execa, execaSync } from "execa";
 import {
   hostClaudeDir as hostClaudeDirFn,
   hostClaudeJson as hostClaudeJsonFn,
@@ -12,7 +22,12 @@ import {
 import { handoff } from "./handoff.js";
 import { scanOrphans } from "./orphans.js";
 import { cliVersion } from "./version.js";
-import { defaultDockerfile, computeTag, imageExistsLocally } from "./image.js";
+import {
+  defaultDockerfile,
+  defaultEntrypoint,
+  computeTag,
+  imageExistsLocally,
+} from "./image.js";
 import { probeCredentials } from "./credentials.js";
 import { enumerateHooks } from "./hooks.js";
 import { enumerateMcpServers } from "./mcp.js";
@@ -65,6 +80,8 @@ interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
+  /** Render as `[WARN]` instead of `[OK]`; still does not fail the run. */
+  warn?: boolean;
 }
 
 async function checkDocker(): Promise<DoctorCheck> {
@@ -190,13 +207,149 @@ export async function doctor(): Promise<void> {
   checks.push(await checkHostBinary("rsync"));
   checks.push(await checkHostBinary("cp"));
   checks.push(await checkImage());
+  const drift = checkSidecarDrift();
+  if (drift) checks.push(drift);
 
   let anyFail = false;
   for (const c of checks) {
-    const mark = c.ok ? "OK" : "FAIL";
+    const mark = !c.ok ? "FAIL" : c.warn ? "WARN" : "OK";
     console.log(`[${mark}] ${c.name}: ${c.detail}`);
     if (!c.ok) anyFail = true;
   }
 
   if (anyFail) process.exitCode = 1;
+}
+
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * Hash-compare sidecar Dockerfile / entrypoint.sh under
+ * <git-root>/.claude-airgap/ against the bundled copies. Returns undefined
+ * when the sidecar dir does not exist (no drift to report). Returns a single
+ * check summarizing per-file drift otherwise.
+ */
+function checkSidecarDrift(): DoctorCheck | undefined {
+  let gitRoot: string | undefined;
+  try {
+    const { stdout, exitCode } = execaSync("git", ["rev-parse", "--show-toplevel"], {
+      reject: false,
+    });
+    if (exitCode === 0 && stdout.trim()) gitRoot = stdout.trim();
+  } catch {
+    // not in a git repo
+  }
+  if (!gitRoot) return undefined;
+  const sidecarDir = join(gitRoot, ".claude-airgap");
+  if (!existsSync(sidecarDir)) return undefined;
+
+  const entries: Array<{ name: string; bundled: string }> = [
+    { name: "Dockerfile", bundled: defaultDockerfile() },
+    { name: "entrypoint.sh", bundled: defaultEntrypoint() },
+  ];
+  const diverged: string[] = [];
+  let anyPresent = false;
+  for (const { name, bundled } of entries) {
+    const sidecar = join(sidecarDir, name);
+    if (!existsSync(sidecar)) continue;
+    anyPresent = true;
+    if (sha256File(sidecar) !== sha256File(bundled)) diverged.push(name);
+  }
+  if (!anyPresent) return undefined;
+  if (diverged.length === 0) {
+    return {
+      name: "sidecar docker assets",
+      ok: true,
+      detail: `${sidecarDir} matches bundled copies`,
+    };
+  }
+  return {
+    name: "sidecar docker assets",
+    ok: true,
+    warn: true,
+    detail:
+      `${diverged.join(", ")} under ${sidecarDir} diverge from bundled ` +
+      `(CLI v${cliVersion()}). Re-run \`ccairgap init --force\` to reset, or ` +
+      `keep local edits.`,
+  };
+}
+
+/** Default config.yaml content written by `ccairgap init`. */
+function defaultInitConfigYaml(): string {
+  return [
+    "# ccairgap config — see README.md §\"Config file\" for all keys.",
+    "# Sidecar Dockerfile lives next to this file; the entry below makes",
+    "# ccairgap build from it (image tag becomes ccairgap:custom-<hash>).",
+    "dockerfile: Dockerfile",
+    "",
+  ].join("\n");
+}
+
+export interface InitOptions {
+  /** Explicit --config path, if any. Used to pick the target dir. */
+  configPath?: string;
+  /** Overwrite existing files. */
+  force: boolean;
+  /** Override cwd for testing. */
+  cwd?: string;
+}
+
+/** Resolve the target directory for `ccairgap init`. */
+export function resolveInitTarget(opts: InitOptions): string {
+  const cwd = opts.cwd ?? process.cwd();
+  if (opts.configPath) {
+    const abs = isAbsolute(opts.configPath)
+      ? opts.configPath
+      : resolve(cwd, opts.configPath);
+    return dirname(abs);
+  }
+  try {
+    const { stdout, exitCode } = execaSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      reject: false,
+    });
+    if (exitCode === 0 && stdout.trim()) {
+      return join(stdout.trim(), ".claude-airgap");
+    }
+  } catch {
+    // fall through to error
+  }
+  throw new Error(
+    "not in a git repo and no --config passed. " +
+      "Pass --config <path> to pick where to materialize the Dockerfile.",
+  );
+}
+
+/** Write bundled Dockerfile + entrypoint.sh + a minimal config.yaml. */
+export function initCmd(opts: InitOptions): void {
+  const targetDir = resolveInitTarget(opts);
+  const targets = {
+    dockerfile: join(targetDir, "Dockerfile"),
+    entrypoint: join(targetDir, "entrypoint.sh"),
+    config: join(targetDir, "config.yaml"),
+  };
+
+  if (!opts.force) {
+    const existing = Object.values(targets).filter((p) => existsSync(p));
+    if (existing.length > 0) {
+      throw new Error(
+        `refusing to overwrite existing files:\n  ${existing.join("\n  ")}\n` +
+          `Re-run with --force to overwrite all three (destructive; no merge).`,
+      );
+    }
+  }
+
+  mkdirSync(targetDir, { recursive: true });
+  copyFileSync(defaultDockerfile(), targets.dockerfile);
+  copyFileSync(defaultEntrypoint(), targets.entrypoint);
+  writeFileSync(targets.config, defaultInitConfigYaml());
+
+  console.log(`wrote ${targets.dockerfile}`);
+  console.log(`wrote ${targets.entrypoint}`);
+  console.log(`wrote ${targets.config}`);
+  console.log(
+    `\nedit ${basename(targets.dockerfile)} to customize; next \`ccairgap\` ` +
+      `launch rebuilds as \`ccairgap:custom-<hash>\`.`,
+  );
 }

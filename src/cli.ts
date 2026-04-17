@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
-import { doctor, discard, inspectCmd, listOrphans, recover } from "./subcommands.js";
+import { doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
 import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
 
 function parseBuildArg(v: string, acc: Record<string, string>): Record<string, string> {
@@ -343,6 +343,34 @@ async function main() {
       }
 
       inspectCmd({ repos, pretty: Boolean(opts.pretty) });
+    });
+
+  program
+    .command("init")
+    .description(
+      "materialize the bundled Dockerfile, entrypoint.sh, and a minimal " +
+        "config.yaml into <git-root>/.claude-airgap/ (or dirname(--config) if " +
+        "--config is passed). Lets you customize the container image without " +
+        "forking the repo.",
+    )
+    .option(
+      "--config <path>",
+      "target a specific config file location instead of <git-root>/.claude-airgap/config.yaml",
+    )
+    .option(
+      "--force",
+      "overwrite existing Dockerfile / entrypoint.sh / config.yaml (destructive; no merge)",
+    )
+    .action((opts) => {
+      try {
+        initCmd({
+          configPath: opts.config,
+          force: Boolean(opts.force),
+        });
+      } catch (e) {
+        console.error(`ccairgap: ${(e as Error).message}`);
+        process.exit(1);
+      }
     });
 
   await program.parseAsync(process.argv);

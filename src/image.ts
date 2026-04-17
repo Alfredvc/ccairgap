@@ -27,9 +27,18 @@ export interface ResolvedImage {
  * From dist/cli.js, package root is one up; docker/ lives alongside.
  */
 export function defaultDockerfile(): string {
+  return resolveBundledDockerAsset("Dockerfile");
+}
+
+/** Resolve the bundled entrypoint.sh shipped with the package. */
+export function defaultEntrypoint(): string {
+  return resolveBundledDockerAsset("entrypoint.sh");
+}
+
+function resolveBundledDockerAsset(name: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
   for (const pkgRoot of [resolve(here, ".."), resolve(here)]) {
-    const candidate = join(pkgRoot, "docker", "Dockerfile");
+    const candidate = join(pkgRoot, "docker", name);
     try {
       readFileSync(candidate);
       return candidate;
@@ -37,7 +46,7 @@ export function defaultDockerfile(): string {
       // try next
     }
   }
-  throw new Error("bundled docker/Dockerfile not found alongside CLI");
+  throw new Error(`bundled docker/${name} not found alongside CLI`);
 }
 
 /** Compute the image tag for a given Dockerfile path. */
