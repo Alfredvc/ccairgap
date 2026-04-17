@@ -49,7 +49,7 @@ export interface LaunchOptions {
   rebuild: boolean;
   /** If set, container runs `claude -p "<prompt>"` instead of interactive REPL. */
   print?: string;
-  /** If set, sandbox branch becomes `sandbox/<name>` (instead of `sandbox/<ts>`) and is forwarded to `claude -n <name>`. */
+  /** If set, sandbox branch becomes `ccairgap/<name>` (instead of `ccairgap/<ts>`) and is forwarded to `claude -n <name>`. */
   name?: string;
   /**
    * Globs matched against each hook's raw `command` string to opt it back in.
@@ -138,10 +138,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const ts = compactTimestamp();
   const sessionPath = sessionDirFn(ts, env);
 
-  // Branch name: `sandbox/<name ?? ts>`. `<ts>` is always well-formed; a user-
+  // Branch name: `ccairgap/<name ?? ts>`. `<ts>` is always well-formed; a user-
   // supplied `<name>` is validated via `git check-ref-format` on the full ref.
   const branchSuffix = opts.name ?? ts;
-  const branch = `sandbox/${branchSuffix}`;
+  const branch = `ccairgap/${branchSuffix}`;
   if (opts.name !== undefined) {
     if (!(await checkRefFormat(`refs/heads/${branch}`))) {
       die(`--name "${opts.name}" is not a valid git ref component (branch would be ${branch})`);
@@ -181,7 +181,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     if (!existsSync(r)) die(`--ro path does not exist: ${r}`);
   }
 
-  // Branch-collision check (only meaningful when --name is passed; `sandbox/<ts>`
+  // Branch-collision check (only meaningful when --name is passed; `ccairgap/<ts>`
   // is always unique). Check only the workspace repo (repoPlans[0]); extra repos
   // ride along and are left to surface their own collision at fetch time if any.
   if (opts.name !== undefined && repoPlans.length > 0) {

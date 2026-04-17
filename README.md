@@ -34,7 +34,7 @@ tmux new -s work 'ccairgap --repo ~/src/bar'
 ccairgap -p "summarize README"
 ```
 
-On exit the CLI pushes Claude's work back as a `sandbox/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo). If the session made no commits, no branch is created. If Claude committed to a side branch but left `sandbox/<ts>` empty, the session dir is preserved with a warning so no work is lost — inspect it, recover what you need, then `ccairgap discard <ts>`.
+On exit the CLI pushes Claude's work back as a `ccairgap/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo). If the session made no commits, no branch is created. If Claude committed to a side branch but left `ccairgap/<ts>` empty, the session dir is preserved with a warning so no work is lost — inspect it, recover what you need, then `ccairgap discard <ts>`.
 
 Git identity (`user.name` / `user.email`) is read from the host at launch (`git config --get`, local-to-`--repo` overrides global) and passed to the container so `git commit` works. If the host has no identity configured, a placeholder (`ccairgap <noreply@ccairgap.local>`) is used and a warning is printed — rewrite authors on the sandbox branch post-hoc if it matters. GPG/SSH signing is not supported inside the container.
 
@@ -43,19 +43,19 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
 | `--config <path>` | no | YAML config file. Default: `<git-root>/.ccairgap/config.yaml`. |
-| `--repo <path>` | no | Host repo to expose as the workspace (container cwd). Cloned `--shared`, branch `sandbox/<ts>` created. Defaults to cwd if it's a git repo. |
+| `--repo <path>` | no | Host repo to expose as the workspace (container cwd). Cloned `--shared`, branch `ccairgap/<ts>` created. Defaults to cwd if it's a git repo. |
 | `--extra-repo <path>` | yes | Additional host repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | yes | Extra read-only bind mount. |
 | `--cp <path>` | yes | Copy a host path into the session at launch. Container sees it RW at the same abs path; changes are discarded on exit (never touch host). Relative paths resolve against the workspace repo. |
 | `--sync <path>` | yes | Same copy-in as `--cp`, plus: on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Original host path is never written. |
 | `--mount <path>` | yes | Plain RW bind-mount host → container at the same abs path. Live host writes, no copy. Opt-in weakening of the host-write invariant for that one path. |
-| `--base <ref>` | no | Base ref for `sandbox/<ts>`. Default: HEAD of each `--repo`. |
+| `--base <ref>` | no | Base ref for `ccairgap/<ts>`. Default: HEAD of each `--repo`. |
 | `--keep-container` | no | Omit `docker run --rm` so the container persists for postmortem. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile. |
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. |
 | `--rebuild` | no | Force image rebuild. |
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
-| `-n, --name <name>` | no | Session name. Branch becomes `sandbox/<name>` instead of `sandbox/<ts>`; forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
+| `-n, --name <name>` | no | Session name. Branch becomes `ccairgap/<name>` instead of `ccairgap/<ts>`; forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
 | `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted, e.g. `--docker-run-arg "-p 8080:8080"` → two tokens. Appended after built-ins so docker's last-wins lets user args override defaults. Escape hatch — can weaken isolation. |
 | `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). |

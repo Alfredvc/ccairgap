@@ -39,6 +39,9 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
     try {
       const m = readManifest(sd, cliVer);
       repos = m.repos.map((r) => r.host_path);
+      // Pre-existing sessions from old CLI builds that wrote branches as
+      // `sandbox/<ts>` and omitted `branch` from the manifest — fall back so
+      // commit counts still render for them.
       const branch = m.branch ?? `sandbox/${ts}`;
       for (const r of m.repos) {
         const sessionClone = join(sd, "repos", r.basename);

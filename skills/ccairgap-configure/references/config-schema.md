@@ -14,13 +14,13 @@ Unknown keys or wrong types abort launch with a clear error. The CLI validator i
 | `cp` | `[string]` | `--cp` (repeat) | Copy-in-discard. Relative → resolved against **workspace repo root**. |
 | `sync` | `[string]` | `--sync` (repeat) | Copy-in, copy-out-on-exit to `$CCAIRGAP_HOME/output/<ts>/`. Same anchor as `cp`. |
 | `mount` | `[string]` | `--mount` (repeat) | Live RW bind mount. **Writes host.** Same anchor as `cp`. |
-| `base` | string | `--base` | Base ref for the `sandbox/<ts>` branch. Default: HEAD. |
+| `base` | string | `--base` | Base ref for the `ccairgap/<ts>` branch. Default: HEAD. |
 | `keep-container` | bool | `--keep-container` | Omit `docker run --rm`. |
 | `dockerfile` | string | `--dockerfile` | Custom Dockerfile path. Relative → resolved against the **config file's directory** (sidecar convention). |
 | `docker-build-arg` | `{KEY: "VAL"}` | `--docker-build-arg` (repeat) | Map. Most common key: `CLAUDE_CODE_VERSION`. |
 | `rebuild` | bool | `--rebuild` | Force image rebuild. |
 | `print` | string | `-p` / `--print` | Non-interactive prompt. |
-| `name` | string | `-n` / `--name` | Session name; branch becomes `sandbox/<name>`. |
+| `name` | string | `-n` / `--name` | Session name; branch becomes `ccairgap/<name>`. |
 | `hooks.enable` | `[string]` | `--hook-enable` (repeat) | Glob against hook `command` string. |
 | `docker-run-arg` | `[string]` | `--docker-run-arg` (repeat) | Raw docker tokens, shell-split. |
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |

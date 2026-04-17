@@ -71,10 +71,10 @@
 # Sandbox branch
 # ---------------------------------------------------------------------------
 
-# Base ref for the sandbox/<ts> branch. Default: current HEAD of each repo.
+# Base ref for the ccairgap/<ts> branch. Default: current HEAD of each repo.
 # base: main
 
-# Session name. Branch becomes sandbox/<name>; also shown in `claude --resume`.
+# Session name. Branch becomes ccairgap/<name>; also shown in `claude --resume`.
 # name: feature-foo
 
 # ---------------------------------------------------------------------------

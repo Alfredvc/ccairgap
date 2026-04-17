@@ -14,10 +14,11 @@ export interface ManifestV1 {
     base_ref?: string;
   }>;
   /**
-   * Sandbox branch name used in the session clones (e.g. `sandbox/<ts>` by
-   * default, or `sandbox/<--name>` when the user passed `--name`). Optional for
-   * v1 back-compat: pre-existing sessions without it fall back to `sandbox/<ts>`
-   * in handoff/orphan scanning.
+   * Sandbox branch name used in the session clones (e.g. `ccairgap/<ts>` by
+   * default, or `ccairgap/<--name>` when the user passed `--name`). Optional for
+   * v1 back-compat: pre-existing sessions written by an older CLI (which used
+   * the `sandbox/` prefix) without this field fall back to `sandbox/<ts>` in
+   * handoff/orphan scanning so their work is not lost.
    */
   branch?: string;
   /**

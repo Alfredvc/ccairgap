@@ -113,7 +113,7 @@ async function main() {
       collect,
       [],
     )
-    .option("--base <ref>", "base ref for sandbox/<ts> branch (default: HEAD)")
+    .option("--base <ref>", "base ref for ccairgap/<ts> branch (default: HEAD)")
     .option("--keep-container", "do not pass --rm to docker run")
     .option("--dockerfile <path>", "use a custom Dockerfile")
     .option(
@@ -129,7 +129,7 @@ async function main() {
     )
     .option(
       "-n, --name <name>",
-      "session name. Used as branch suffix (`sandbox/<name>`) and forwarded to `claude -n <name>`. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
+      "session name. Used as branch suffix (`ccairgap/<name>`) and forwarded to `claude -n <name>`. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
     )
     .option(
       "--hook-enable <glob>",

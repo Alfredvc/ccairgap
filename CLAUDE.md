@@ -46,7 +46,7 @@ docs/SPEC.md      authoritative design
 
 ## Non-obvious invariants
 
-- **Host writable paths are closed set** (SPEC §"Host writable paths"): session scratch, `output/`, `~/.claude/projects/<encoded>`, and `sandbox/<ts>` ref via `git fetch` on exit. Adding any other write path requires SPEC update.
+- **Host writable paths are closed set** (SPEC §"Host writable paths"): session scratch, `output/`, `~/.claude/projects/<encoded>`, and `ccairgap/<ts>` ref via `git fetch` on exit. Adding any other write path requires SPEC update.
 - **Container never writes host repo directly.** Exit handoff runs `git fetch` on the host against `$SESSION/repos/<name>`. Don't add a flow where the container has RW on real repos.
 - **Alternates rewrite is required.** `git clone --shared` writes the host absolute path; that path is meaningless in-container. Mounting host `objects/` over `<hostPath>/.git/objects/` would shadow the session clone's RW objects. Mount at neutral `/host-git-alternates/<name>/objects/` and rewrite `alternates` file host-side.
 - **Absolute paths are preserved host↔container** so `settings.json`, marketplace refs, and transcript encoded dirs resolve identically.
