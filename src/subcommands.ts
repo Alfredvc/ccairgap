@@ -17,6 +17,7 @@ import { probeCredentials } from "./credentials.js";
 import { enumerateHooks } from "./hooks.js";
 import { enumerateMcpServers } from "./mcp.js";
 import { enumerateEnv, enumerateMarketplaces } from "./settings.js";
+import { formatInspectPretty } from "./inspectFormat.js";
 
 export async function listOrphans(): Promise<void> {
   const orphans = await scanOrphans(cliVersion());
@@ -148,7 +149,7 @@ function checkSessions(): DoctorCheck {
  * tiers (OS-level policy files, MDM, server-delivered) are intentionally
  * omitted — they aren't mounted into the container.
  */
-export function inspectCmd(opts: { repos: string[] }): void {
+export function inspectCmd(opts: { repos: string[]; pretty?: boolean }): void {
   const hcd = realpath(hostClaudeDirFn());
   const claudeJsonPath = hostClaudeJsonFn();
   const pluginsCache = join(hcd, "plugins", "cache");
@@ -173,7 +174,11 @@ export function inspectCmd(opts: { repos: string[] }): void {
   });
   const env = enumerateEnv({ hostClaudeDir: hcd, repos });
   const marketplaces = enumerateMarketplaces({ hostClaudeDir: hcd, repos });
-  console.log(JSON.stringify({ hooks, mcpServers, env, marketplaces }, null, 2));
+  if (opts.pretty) {
+    console.log(formatInspectPretty({ hooks, mcpServers, env, marketplaces }));
+  } else {
+    console.log(JSON.stringify({ hooks, mcpServers, env, marketplaces }, null, 2));
+  }
 }
 
 export async function doctor(): Promise<void> {

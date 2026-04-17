@@ -508,7 +508,7 @@ Host files are never mutated; all patched copies live under `$SESSION/hook-polic
 - Flag: `--hook-enable <glob>` — repeatable.
 - Config file key: `hooks.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
 - Merge: CLI values append to config values (same semantics as `--ro` / `--extra-repo`).
-- Introspection: `ccairgap inspect` prints the full config surface ccairgap would see at launch as JSON `{hooks, mcpServers, env, marketplaces}`:
+- Introspection: `ccairgap inspect` prints the full config surface ccairgap would see at launch as JSON `{hooks, mcpServers, env, marketplaces}` (or human-readable tables with `--pretty`):
   - `hooks` — every hook entry across all sources (user settings, enabled plugins, project settings).
   - `mcpServers` — every MCP server definition (user, user-project, project, plugin; with approval state for project-scope).
   - `env` — every `env` var set in user / project / project-local `settings.json`.

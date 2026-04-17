@@ -293,6 +293,7 @@ async function main() {
     .option("--config <path>", "path to yaml config file (same semantics as launch)")
     .option("--repo <path>", "host repo whose .claude/settings.json[.local] and .mcp.json should be included. Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo to include. Repeatable.", collect, [])
+    .option("--pretty", "render human-readable tables instead of JSON")
     .action((opts) => {
       let fileCfg: ConfigFile = {};
       const loaded = loadConfig(opts.config);
@@ -318,7 +319,7 @@ async function main() {
         }
       }
 
-      inspectCmd({ repos });
+      inspectCmd({ repos, pretty: Boolean(opts.pretty) });
     });
 
   await program.parseAsync(process.argv);
