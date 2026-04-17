@@ -197,8 +197,10 @@ Or environment variable on the host: `CLAUDE_AIRGAP_CC_VERSION=1.2.3`. Or CLI: `
 
 ## When NOT to write a custom Dockerfile
 
-- User only needs extra env vars → `--docker-run-arg "-e NAME=val"`, not a Dockerfile `ENV`.
-- User only needs a port → `--docker-run-arg "-p 8080:8080"`.
-- User only needs to cache `node_modules` → `--mount node_modules`.
+A Dockerfile is for binaries and libraries that must be present inside the container. Don't reach for it when the user's actual need is:
 
-A Dockerfile is for binaries and libs. Runtime knobs go through `docker-run-arg`.
+- **Extra env vars** (and the user has asked for them) → `--docker-run-arg "-e NAME"`, not a Dockerfile `ENV`. Read `references/secrets-and-sensitive-data.md` first if any look like a credential.
+- **A port exposed** (and the user has asked) → `--docker-run-arg "-p 8080:8080"`.
+- **`node_modules` or a language cache preserved** (and the user has asked) → `--mount <dir>`.
+
+Runtime knobs (ports, networks, env vars) are `docker-run-arg` territory *when the user has asked for them*. See `references/docker-run-args.md` — the default is to configure none.

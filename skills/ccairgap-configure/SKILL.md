@@ -1,17 +1,23 @@
 ---
 name: ccairgap-configure
-description: Configure `ccairgap` (claude-airgap) for a specific project or workflow — produces `.claude-airgap/config.yaml`, a custom `Dockerfile`, and/or `--docker-run-arg` snippets. Use this whenever the user wants to set up ccairgap, add something to their sandboxed container (MCP server, extra binary, cache dir, port, network, env var), enable a hook inside the sandbox, extend or customize the base image, figure out whether a build artifact should be `--cp` / `--sync` / `--mount`, or otherwise asks "how do I make ccairgap do X". Also trigger when the user mentions claude-airgap, `ccairgap`, or "the airgap container" and is trying to shape its behavior. Don't skip this skill just because the user hasn't used the word "configure" — most setup questions land here.
+description: Configure `ccairgap` (claude-airgap) for a specific project or workflow — produces `.claude-airgap/config.yaml` and/or a custom `Dockerfile`. Use this whenever the user wants to set up ccairgap, add a binary/MCP/toolchain their workflow shells out to, enable a hook inside the sandbox, expose a sibling repo or reference dir to Claude, or otherwise asks "how do I make ccairgap do X". Also trigger when the user mentions claude-airgap, `ccairgap`, or "the airgap container" and is trying to shape its behavior. Don't skip this skill just because the user hasn't used the word "configure" — most setup questions land here.
 ---
 
 # ccairgap-configure
 
-`ccairgap` runs Claude Code with `--dangerously-skip-permissions` inside a Docker container. Three configuration surfaces:
+`ccairgap` runs Claude Code with `--dangerously-skip-permissions` inside a Docker container. Two configuration surfaces handle almost every real request:
 
 1. **`.claude-airgap/config.yaml`** — same keys as CLI flags. Default path `<git-root>/.claude-airgap/config.yaml`.
-2. **Custom `Dockerfile`** — extend the bundled `node:20-slim` base when a workflow needs binaries not shipped by default (Python, Playwright, language-specific toolchains, MCP servers). Passed via `--dockerfile <path>`.
-3. **`--docker-run-arg <tokens>`** — raw `docker run` args appended after built-ins. Used for ports, networks, extra env vars, and any other `docker run` knob the CLI does not surface as a structured flag.
+2. **Custom `Dockerfile`** — extend the bundled `node:20-slim` base when a workflow needs binaries not shipped by default (Python, Playwright, language toolchains, MCP server binaries). Referenced via `dockerfile:` in config.
 
-Your job: pick the **minimum** of those three that actually delivers what the user wants, then emit the artifacts with enough comments that the user understands each choice.
+There is a third surface — `--docker-run-arg` — but it is an escape hatch, not a recommendation you should reach for. See "When `docker-run-arg` is *not* the answer" below. **Do not propose it unless the user has explicitly described a need it addresses.**
+
+Your core job is narrow:
+
+1. **Find binary dependencies** the workflow needs inside the container → add to a custom Dockerfile.
+2. **Find the directories** Claude needs to see → default them to `--ro` mounts, escalate to read-write only when the user asks for it or the workflow literally cannot work otherwise.
+
+Everything else is opt-in.
 
 ## Core flow
 
@@ -19,67 +25,87 @@ Work through these phases in order. Don't skip ahead.
 
 ### Phase 1 — Gather
 
-Before proposing anything, probe the host so your recommendation is grounded. Read `references/gathering-context.md` for the full probe checklist; at minimum, find out:
+Probe the host so your recommendation is grounded. Read `references/gathering-context.md` for the full probe checklist; at minimum:
 
-- **Project shape.** Git repo root, sibling repos the user might want mounted, dominant language / runtime (look for `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, etc.), build-artifact dirs (`node_modules`, `.venv`, `target/`, `dist/`, `.cache/`).
-- **Claude setup.** User's `~/.claude/settings.json` (hooks, `extraKnownMarketplaces`, env), `~/.claude.json` (`mcpServers`), project `.claude/settings.json[.local]` (project-scoped hooks).
-- **Binary dependencies.** What does the user's workflow shell out to? Look at hook `command` strings, MCP `command` fields, `package.json` scripts, CI config. Anything not in the base image (`git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`, `node`, `npm`) is a candidate for Dockerfile extension.
-- **Ports / networks / env.** Does the workflow run a dev server the user wants to hit from the host? Attach to a named docker network? Need an API key env var? These are `--docker-run-arg` territory.
-- **Trust boundary on artifact dirs.** For each build-artifact dir (`node_modules`, etc.), is the user OK with the container writing directly to the host (fast, `--mount`), wants a copy they can discard (`--cp`), or wants results staged to `output/<ts>/` for manual review (`--sync`)?
+- **Project shape.** Git repo root, dominant language / runtime (look for `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, etc.), sibling repos or docs dirs the user might be reading from.
+- **Claude setup.** User's `~/.claude/settings.json` (hooks, `extraKnownMarketplaces`, env), `~/.claude.json` (`mcpServers`), project `.claude/settings.json[.local]`. Prefer `ccairgap hooks` over hand-walking — it enumerates every entry across user, plugin, and project sources.
+- **Binary dependencies.** What does the user's workflow shell out to? Hook `command` strings, MCP `command` fields, `package.json` scripts, CI config, `.tool-versions`/`.nvmrc`/`.python-version`. Anything not in the base image (`node`, `npm`, `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`, `@anthropic-ai/claude-code`) is a Dockerfile candidate.
+- **Reference directories.** Sibling repos, shared type packages, docs trees, reference datasets — these become `--ro` mounts or `--extra-repo` entries. Be specific: identify what exists on the host and would actually be read during the session.
 
 Do the probing with real tool calls — `git rev-parse --show-toplevel`, reading files — not by guessing.
 
+**What you do *not* probe for by default:** `.env` files, `~/.ssh`, `~/.aws`, `~/.gcloud`, password managers, keychains, API keys in shell rc files. These are off-limits unless the user has explicitly asked you to wire one in. See `references/secrets-and-sensitive-data.md`.
+
 ### Phase 2 — Align
 
-State back what you found and what you propose, **before writing any artifact**. Example shape:
+State back what you found and what you propose, **before writing any artifact**. Keep the proposal minimal. Example shape:
 
-> I see a Node/TypeScript project with `node_modules` (~800 MB) and a local `.cache/` dir. Your `~/.claude/settings.json` has a `python3 ~/scripts/auto-approve.py` PreToolUse hook. You mentioned wanting Playwright to work inside the container and to hit a dev server on port 5173.
+> I see a Node/TypeScript project with `node_modules` and a `dist/` build output. Your `~/.claude/settings.json` has a `python3 ~/scripts/auto-approve.py` PreToolUse hook. Your `~/.claude.json` has a Playwright MCP server.
 >
 > Proposed config:
-> - `config.yaml`: mount sibling repo `../shared-types` read-only, `--mount node_modules` (live cache, fastest iteration), `--sync dist` (keep build output in `output/<ts>/`), enable the `python3 *` hook.
-> - Custom `Dockerfile`: base + Python 3 + Playwright browsers (Chromium).
-> - Docker run args: `-p 5173:5173` to expose the dev server.
+> - `config.yaml`: mount sibling repo `../shared-types` read-only; enable the `python3 *` hook.
+> - Custom `Dockerfile`: base + Python 3 (for the auto-approve hook) + Playwright system libs (for the MCP).
+>
+> I did *not* add: live mount for `node_modules` (the container will reinstall from the lockfile on first use — let me know if that's too slow and you want to cache it), sync-out for `dist/`, any port publish, any env var passthrough. Those are opt-in — tell me if any of them matter.
 >
 > Confirm or tell me what to change.
 
-Wait for the user to confirm or redirect before producing files. Users routinely want to adjust the trust decisions (e.g. "actually use `--sync` for `node_modules`, I don't trust this task") — surface those choices rather than silently committing to one.
+Be explicit about what you chose *not* to add. That way the user can redirect before artifacts land.
+
+Wait for confirmation before producing files.
 
 ### Phase 3 — Produce
 
-Emit the minimum artifact set needed. **Only produce what's actually required** — if the user only needs a `config.yaml`, don't invent a Dockerfile. If all they need is one `--docker-run-arg`, a one-liner they can copy/paste is better than a YAML file.
+Emit the minimum artifact set needed. If the user only needs a `config.yaml`, don't invent a Dockerfile. If all they need is a one-line `--hook-enable`, a CLI snippet is better than a YAML file.
 
 Default locations (adjust if the user prefers elsewhere):
 
-- Config: `<git-root>/.claude-airgap/config.yaml` — this is the path ccairgap reads by default, so no `--config` flag is needed.
-- Dockerfile: `<git-root>/.claude-airgap/Dockerfile` — keep it alongside the config, then set `dockerfile: Dockerfile` in `config.yaml` (the `dockerfile` key anchors on the config file's own directory, so a bare filename resolves to the sidecar).
-- Raw docker run args: put them in the config file under `docker-run-arg:` unless the user wants them ad-hoc at the CLI.
+- Config: `<git-root>/.claude-airgap/config.yaml` — ccairgap's default path, no `--config` needed.
+- Dockerfile: `<git-root>/.claude-airgap/Dockerfile` — set `dockerfile: Dockerfile` in config (sidecar convention).
 
-Every artifact should be **commented**. Treat the YAML and the Dockerfile as teaching artifacts — the user has to live with them. Explain why each non-default key is there in a short inline comment.
+Every artifact should be **commented**. Treat the YAML and the Dockerfile as teaching artifacts the user has to live with. Explain why each non-default key is there in a short inline comment. **Delete keys the user doesn't use — do not ship the full template with commented-out examples.**
 
-## Artifact decision — which surface?
+## Directory escalation ladder
 
-This is the most common source of confusion. Use this decision tree; full matrix in `references/artifact-decision.md`.
+This is the decision you'll make most often. Default to the *least* permissive option, escalate only when pushed.
 
-**Is this a launch flag that already exists?** → put it in `config.yaml`. The repeatable array flags (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-build-arg`, `docker-run-arg`, `hook-enable`) are all config-file keys. See `references/config-schema.md`.
+| Level | Surface | Host written? | Use when |
+|-------|---------|---------------|----------|
+| 0 — nothing | (no config entry) | no | The workspace repo itself; built-in mount already covers it. Container regenerates artifacts from scratch. |
+| 1 — read-only | `ro: [<path>]` | no | Reference material Claude needs to read: sibling types package, docs tree, reference data, shared config. **This is the default for any host dir you want Claude to see.** |
+| 2 — sibling repo, sandboxed | `extra-repo: [<path>]` | no (gets own sandbox branch) | A second git repo the user is actively editing alongside the workspace. Same safety as `--repo` — clone + sandbox branch + fetch-on-exit. |
+| 3 — copy in, discard | `cp: [<path>]` | no | Session wants a mutable starting state from host, but nothing should be preserved. Rare. |
+| 4 — copy in, copy out | `sync: [<path>]` | no | Build output the user wants after the session without touching the host original. Opt in when the user says "I want to keep the build". |
+| 5 — live bind, host writes | `mount: [<path>]` | **yes** | Cache/artifact dir where regeneration is expensive *and* the user has said so. Weakens the host-write invariant for that one path. Never default. |
 
-**Is this a binary or package the workflow shells out to but isn't in the base image?** → custom `Dockerfile` that `FROM`s the base and adds the binary. See `references/dockerfile-patterns.md`.
+**Never escalate past level 1 without one of:**
+- The user explicitly asked for persistence / preservation.
+- The workflow literally cannot function otherwise (rare — most "slow" cases are acceptable on first run).
 
-**Is this a `docker run` capability the CLI doesn't have a dedicated flag for** (port publish, custom network, extra env var, extra `-v` mount with exotic options, etc.)? → `--docker-run-arg` (structured) or `docker-run-arg:` in config. See `references/docker-run-args.md`.
-
-**Is this a build-artifact directory** (`node_modules`, `.venv`, `target/`, build caches)? → `--cp` / `--sync` / `--mount` depending on the trust + performance tradeoff the user picked. See `references/artifact-decision.md`.
-
-**Is this a Claude Code hook** the user wants to keep active inside the sandbox? → `--hook-enable '<glob>'` matched against the hook's `command` string. All hooks are disabled by default. See `references/hook-patterns.md`.
+Full decision matrix with worked examples: `references/artifact-decision.md`.
 
 ## Host-write invariant (read this before adding any mount)
 
-The whole point of ccairgap is that the host filesystem cannot be mutated outside a small, explicit set of paths (see SPEC §"Host writable paths"). Every recommendation you make must respect this:
+The whole point of ccairgap is that the host filesystem cannot be mutated outside a small, explicit set of paths (see SPEC §"Host writable paths"). Every recommendation must respect this:
 
-- `--cp` and `--sync` never write the original host path. Safe by default.
-- `--mount` **does** write the host path live. This is an explicit opt-in weakening of the host-write invariant for one path. Use when the user explicitly wants it (typically `node_modules` or a language cache) and understands the tradeoff.
-- `--docker-run-arg "-v <host>:<ctr>:rw"` also writes host. If the only goal is a single RW path, prefer `--mount <path>` — it's narrower in intent.
-- Raw docker args like `--privileged`, `--cap-add SYS_ADMIN`, `--network=host`, `--pid=host`, or mounting `/var/run/docker.sock` **eliminate the isolation this tool provides**. Don't recommend these unless the user is knowingly disabling the sandbox and has a concrete reason. The CLI prints a warning per hit; your recommendation should too.
+- `ro` never writes host. Safe default.
+- `cp` and `sync` never write the original host path. Safe.
+- `mount` **does** write the host path live. Explicit opt-in weakening for one path. Only when the user has said yes and understands the tradeoff.
+- Raw `--docker-run-arg "-v <host>:<ctr>:rw"` also writes host. Never recommend this as a way to get a writable path — `--mount <path>` is narrower and structured.
+- `--privileged`, `--cap-add SYS_ADMIN`, `--network=host`, `--pid=host`, `--device`, and anything with `docker.sock` **eliminate the isolation this tool provides**. Do not recommend these. If a user asks for one, say so plainly: "that disables the sandbox — is that what you want?" and wait.
 
-When in doubt, pick the less permissive option and tell the user how to upgrade.
+When in doubt, pick the less permissive option and tell the user how to upgrade later.
+
+## Secrets and sensitive data
+
+**Default posture: do not touch them.** Don't propose mounting `.env`, `~/.ssh`, `~/.aws`, `~/.gcloud`, browser profiles, password-manager data, keychains, or any file that smells like credentials. Don't propose `-e <API_KEY>` pass-through as part of a "complete" config.
+
+Only configure a secret flow when one of these is true:
+
+- The user explicitly named the secret and asked for it.
+- A hook or MCP the user asked to enable genuinely requires a credential to function, and you've told the user which one and how you plan to pass it.
+
+When you do need to wire one in, read `references/secrets-and-sensitive-data.md` first. Never commit a secret to `config.yaml`; use `-e NAME` pass-through (value stays on the host) and tell the user.
 
 ## Dockerfile extension rules
 
@@ -88,20 +114,9 @@ Custom Dockerfiles are expected to `FROM` something compatible with the bundled 
 - Base should provide `node` (for Claude Code) or install it. Default is `node:20-slim`.
 - Keep `ARG HOST_UID`, `ARG HOST_GID`, `ARG CLAUDE_CODE_VERSION` passthroughs — the CLI always passes these at build time.
 - Keep the non-root `claude` user at `HOST_UID:HOST_GID` and the entrypoint at `/usr/local/bin/claude-airgap-entrypoint`.
-- The safest pattern is `FROM` a stock image that already has Node, add your extras (apt packages, pip packages, Playwright browsers, etc.), then replicate the user/entrypoint boilerplate. An even safer pattern when supported: `FROM claude-airgap:<cli-version>` and `RUN` only the additions — but this requires the base tag to exist locally, which is not guaranteed on first run.
+- The safest pattern is `FROM` a stock image that already has Node, add your extras (apt packages, pip packages, Playwright browsers, etc.), then replicate the user/entrypoint boilerplate. Shorter alternative: `FROM claude-airgap:<cli-version>` and `RUN` only additions — but the base tag must exist locally, so it's not portable across first runs.
 
-Image tag for custom Dockerfiles is `claude-airgap:custom-<sha256(dockerfile)[:12]>` — content-addressed, so rebuilds skip automatically when the file doesn't change. Forcing a rebuild: `--rebuild`.
-
-## docker-run-arg rules
-
-Raw args are appended **after** the CLI's built-ins, so Docker's last-wins resolution lets user args override defaults (`--network`, a narrower `--cap-drop`, etc.). Each `--docker-run-arg <value>` is shell-split with `shell-quote`, so quoting works like a shell. Full cookbook in `references/docker-run-args.md`.
-
-Rules of thumb:
-
-- Publishing a dev server port: `--docker-run-arg "-p 5173:5173"`.
-- Attaching to an existing network the user created: `--docker-run-arg "--network my-net"`.
-- Extra env var: `--docker-run-arg "-e API_KEY=$API_KEY"` — be careful about shell expansion; this happens on the host at launch, so the var needs to exist on the host.
-- Additional RW mount: prefer `--mount <path>` unless you need mount options the CLI doesn't pass. If you do use raw, it's `--docker-run-arg "-v /host/path:/ctr/path:rw"`.
+Image tag for custom Dockerfiles is `claude-airgap:custom-<sha256(dockerfile)[:12]>` — content-addressed, rebuilds skip automatically when content doesn't change. Force rebuild: `--rebuild`.
 
 ## Hook policy cheat sheet
 
@@ -119,31 +134,61 @@ hooks:
 
 Important caveat: enabling a hook doesn't guarantee it works — the command's binary must exist inside the container. If the hook shells out to a host-only binary, either install it via the custom Dockerfile or leave the hook disabled.
 
+## When `docker-run-arg` is *not* the answer
+
+`docker-run-arg` exists for edge cases the CLI doesn't surface as structured flags. The skill's default stance is: **do not propose it**. Most users never need one. Propose a `docker-run-arg` entry *only* when the user has clearly described a need that maps to one, in their own words — not because you inferred it.
+
+Concrete triggers the user must actually say:
+
+- "I need to hit the dev server from my browser" / "expose port X" → then `-p X:X`.
+- "It needs to talk to my local Postgres" / "attach to my docker network `foo`" → then `--network foo` or `--add-host`.
+- "The MCP needs `$OPENAI_API_KEY`" / names the env var → then `-e OPENAI_API_KEY` pass-through (and see secrets rules).
+- "I need more memory for this build" → then `--memory=8g`.
+
+If you catch yourself writing a `docker-run-arg` line because a port *might* be useful, or because you're building a "complete" config, delete it. Full cookbook (for when the user does ask): `references/docker-run-args.md`.
+
+## Artifact decision — which surface?
+
+Use this decision tree; full matrix in `references/artifact-decision.md`.
+
+**Is this a launch flag that already exists?** → put it in `config.yaml`. See `references/config-schema.md`.
+
+**Is this a binary or package the workflow shells out to but isn't in the base image?** → custom `Dockerfile` that `FROM`s the base and adds the binary. See `references/dockerfile-patterns.md`.
+
+**Is this a directory on the host Claude needs to read?** → `ro:`. Escalate per the ladder above only when the user asks.
+
+**Is this a Claude Code hook the user wants active inside the sandbox?** → `--hook-enable '<glob>'` matched against the hook's `command` string. All hooks disabled by default. See `references/hook-patterns.md`.
+
+**Is it anything else (ports, networks, env vars, exotic mount options)?** → probably don't propose it. If the user has explicitly asked, see `references/docker-run-args.md`.
+
 ## Assets
 
-Use these as starting points, don't copy them verbatim — strip keys the user doesn't need, keep comments that justify what's left.
+Use these as starting points, don't copy them verbatim. Strip every key the user doesn't need; keep comments that justify what's left.
 
-- `assets/config.yaml.template` — annotated skeleton covering every supported key. Delete what isn't used.
-- `assets/Dockerfile.template` — extend-base skeleton with placeholder for extra apt/pip/npm installs.
+- `assets/config.yaml.template` — annotated skeleton. Everything beyond `repo` is commented out; uncomment only the keys you're actually using.
+- `assets/Dockerfile.template` — extend-base skeleton with a placeholder for extra apt/pip/npm installs.
 
 ## Reference files
 
-Read the reference you need, not all of them.
+Read only what you need.
 
 | File | Read when |
 |------|-----------|
 | `references/gathering-context.md` | Always, during Phase 1 — the probe checklist. |
 | `references/config-schema.md` | User asks about any config key, precedence, or where relative paths resolve. |
-| `references/dockerfile-patterns.md` | User needs Python / Playwright / Rust / a specific MCP / any non-default binary. |
-| `references/docker-run-args.md` | Ports, networks, env vars, exotic mounts, or any raw docker args. |
-| `references/artifact-decision.md` | Choosing between `--cp` / `--sync` / `--mount` for a directory. |
+| `references/dockerfile-patterns.md` | User needs Python / Playwright / Rust / any non-default binary. |
+| `references/artifact-decision.md` | User has asked to cache or preserve a directory (`node_modules`, `target`, `dist`, etc.). |
 | `references/hook-patterns.md` | Enabling hooks, understanding which get disabled. |
+| `references/secrets-and-sensitive-data.md` | User has explicitly asked to wire in a credential or env var. |
+| `references/docker-run-args.md` | User has explicitly asked for something that requires raw docker args (port, network, env, resource limits). |
 
 ## Common traps
 
-- **Don't put host-absolute paths in committed `config.yaml`.** Use relative paths. Three anchors: `repo`/`extra-repo`/`ro` resolve against the **git root** (the parent of `.claude-airgap/`) — write them as if you're standing in the repo root. `dockerfile` resolves against the **config file's directory** (sidecar, so `dockerfile: Dockerfile` finds `.claude-airgap/Dockerfile`). `cp`/`sync`/`mount` resolve against the **workspace repo root** at launch. Absolute paths work but don't transfer between teammates.
-- **Don't recommend `--privileged` or `docker.sock` mounts to "make it work".** If something doesn't work, diagnose first. These obliterate the sandbox.
-- **Don't forget UID/GID.** The base Dockerfile's `ARG HOST_UID` / `ARG HOST_GID` pattern is load-bearing for bind-mount file ownership. Custom Dockerfiles that skip this will write root-owned files to the host on bind mounts.
-- **Don't mount `~/.claude/` RW.** It's RO by design — session mutations (permission cache, prompt history) die with the container. Users asking to persist these are usually asking the wrong question; talk them through it.
+- **Don't put host-absolute paths in committed `config.yaml`.** Use relative paths. Three anchors: `repo`/`extra-repo`/`ro` resolve against the **git root** (parent of `.claude-airgap/`). `dockerfile` resolves against the **config file's directory** (sidecar, so `dockerfile: Dockerfile` finds `.claude-airgap/Dockerfile`). `cp`/`sync`/`mount` resolve against the **workspace repo root** at launch. Absolute paths work but don't transfer between teammates.
+- **Don't recommend `--privileged`, `--cap-add`, `--pid=host`, `--network=host`, or `docker.sock` mounts to "make it work".** Those defeat the sandbox. Diagnose the root cause; if the honest answer is "this workflow can't run sandboxed", say so.
+- **Don't default to RW mounts for artifact dirs.** `node_modules`, `.venv`, `target/` get no config entry unless the user asks to cache them. First-run cost is not an escalation trigger.
+- **Don't forget UID/GID.** The base Dockerfile's `ARG HOST_UID` / `ARG HOST_GID` pattern is load-bearing for bind-mount file ownership. Custom Dockerfiles that skip this will write root-owned files to the host on any bind mount.
+- **Don't mount `~/.claude/` RW.** It's RO by design — session mutations die with the container. Users asking to persist these are usually asking the wrong question; talk them through it.
 - **Don't confuse `--cp` with Docker's `COPY`.** `--cp` is a pre-launch rsync from host to session scratch; container sees it RW at the same absolute path; changes discarded on exit.
-- **Don't add config keys that don't exist in SPEC.** If the user asks for a new behavior not in `docs/SPEC.md`, tell them — adding flags is a SPEC change, not a config-file workaround.
+- **Don't add config keys that don't exist in SPEC.** The validator rejects unknown keys. If the user asks for a new behavior not in `docs/SPEC.md`, tell them — adding flags is a SPEC change, not a config-file workaround.
+- **Don't ship a "full" config or Dockerfile as a default.** The artifacts you emit should contain only the keys and `RUN` lines the user's workflow actually needs. Extra lines confuse; extra mounts leak.

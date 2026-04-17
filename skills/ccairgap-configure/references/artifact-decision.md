@@ -1,74 +1,95 @@
-# Build-artifact dirs: `--cp` vs `--sync` vs `--mount`
+# Directories: `--ro` vs `--cp` vs `--sync` vs `--mount`
 
-Build artifacts are dirs not tracked in git that matter at runtime (`node_modules`, `.venv`, `target/`, `dist/`, `.next/`, `.cache/`). Three CLI options cover the common shapes; they differ in two axes: **is the original host path written** and **is the result available after the session**.
+This skill's default stance on host directories is **conservative**: add the least permissive surface that works, and escalate only when the user asks. The full ladder:
 
-## The three options at a glance
+| Level | Surface | Host written? | Result preserved? | Default? |
+|-------|---------|---------------|-------------------|----------|
+| 0 | nothing | no | n/a | yes, for artifact dirs inside the workspace repo |
+| 1 | `ro` | no | n/a | yes, for reference material outside the workspace repo |
+| 2 | `extra-repo` | no (sandbox branch) | yes, via fetch | when the user is editing a sibling repo alongside |
+| 3 | `cp` | no | no (discarded) | opt-in |
+| 4 | `sync` | no | yes, in `output/<ts>/` | opt-in |
+| 5 | `mount` | **yes, live** | yes (in place) | opt-in, with explicit user consent |
 
-| Option | Pre-launch | Container sees | On exit | Host original written? | Result preserved? |
-|--------|-----------|----------------|---------|------------------------|-------------------|
-| `--cp <path>` | `rsync -a --delete` host → session | RW at original abs path | session dir `rm -rf`'d | no | no (thrown away) |
-| `--sync <path>` | same as `--cp` | RW at original abs path | rsync session → `output/<ts>/<abs-src>/` | no | yes, in `output/<ts>/` |
-| `--mount <path>` | nothing | RW at original abs path (live bind) | nothing | **yes, live** | yes, in host original |
+The key mental model: the workspace repo is already cloned into a session scratch dir at launch — artifacts inside it (`node_modules`, `dist`, `target`) will be regenerated from scratch on first use. That's fine by default. Escalation only happens when the user tells you regeneration is unacceptable, or the workflow literally cannot produce what they need without preservation.
 
-All three resolve relative paths against the **workspace repo root** (not the config file dir). All three fail if the host path doesn't exist at launch. A given host path can only appear in one of `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`.
+## Starting point by directory type
 
-## Decision tree
+| Dir | Default | Promote when user says… |
+|-----|---------|-------------------------|
+| The workspace repo itself | built-in `--repo` mount (nothing to configure) | — |
+| Another git repo they're editing alongside | — | "I need to also edit `../sibling-repo`" → `extra-repo` |
+| Docs tree, shared types package, reference dataset | — | "Claude needs to read `../shared-types`" → `ro` |
+| `node_modules`, `.venv`, `.gradle`, `.m2` | nothing (container regenerates) | "reinstalling `node_modules` every session is too slow" → `mount` (user consents) or `cp` (no preservation) |
+| `target/` (Rust), build caches | nothing | "compile cache matters, rebuilds are minutes" → `mount` (user consents) |
+| `dist/`, `build/`, `.next/` | nothing | "I want the build output after the session" → `sync` |
+| Generated reports (Playwright, coverage) | nothing | "I want to look at the report afterwards" → `sync` |
+| Scratch dirs the agent might write | nothing | rarely worth configuring |
+| Host config dirs (`~/.config/*`, `~/.ssh`, `~/.aws`) | **never auto-mount** | see `secrets-and-sensitive-data.md` |
 
-Ask, in order:
+"The directory is big" is not an escalation trigger. "The user has told me regenerating it hurts their workflow" is.
 
-1. **Does the user want the container's modifications to land back on the host original path?**
-   - Yes → `--mount`. Fastest. Writes host live. Weakens the "host FS can't be mutated" invariant for this path, explicitly.
+## Decision tree for escalation requests
+
+When a user does ask to preserve a directory, walk this:
+
+1. **Do they want container changes reflected on the host original path?**
+   - Yes → `mount`. Fastest. Writes host live. Weakens the "host FS is immutable" invariant for that one path — name the tradeoff in your response.
    - No → keep going.
-2. **Does the user want to keep the result anywhere?**
-   - No → `--cp`. Results evaporate.
-   - Yes → `--sync`. Result lands in `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Original host path untouched. User cherry-picks from there.
+2. **Do they want to keep the result anywhere?**
+   - No → `cp`. Session gets a copy at launch; discarded on exit. Host original untouched regardless.
+   - Yes → `sync`. Result lands in `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-src>/`. Host original untouched.
 
-## Practical recommendations by dir
-
-| Dir | Typical answer | Why |
-|-----|----------------|-----|
-| `node_modules` | `--mount` | Installing is slow, low-risk rewrite, live cache hits matter. |
-| `.venv` / `venv` | `--mount` | Same. |
-| `__pycache__`, `.mypy_cache`, `.ruff_cache` | `--mount` or omit | Cheap to recreate; often not worth configuring. |
-| `target/` (Rust) | `--mount` | Compilation is expensive; cache is worth a lot. |
-| `.gradle/`, `.m2/` | `--mount` | Same. |
-| `dist/`, `build/`, `.next/`, `.nuxt/` | `--sync` | Build outputs the user wants after the session, but shouldn't clobber pre-existing. |
-| Generated reports (Playwright, jest coverage) | `--sync` | User wants to look at them after. |
-| Scratch `/tmp`-like dirs the agent might write | `--cp` or nothing | Discardable. |
-| Random host config dirs (`~/.config/*`, `~/.ssh`, etc.) | **none of the above** | Don't mount secrets. Pass via env if needed. |
+All three of `cp` / `sync` / `mount` resolve relative paths against the **workspace repo root** (not the config file dir). All three fail if the host path doesn't exist at launch. A given host path can appear in only one of `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`.
 
 ## Worked examples
 
-### "Node project, I want `node_modules` to persist, and I want the build output after"
+### "Claude needs to read our shared types repo"
+
+```yaml
+ro:
+  - ../shared-types
+```
+
+Read-only sibling. No escalation needed.
+
+### "Claude needs to edit the shared types repo alongside my workspace"
+
+```yaml
+extra-repo:
+  - ../shared-types
+```
+
+Gets its own sandbox branch; fetch-on-exit mirrors the workspace flow. Host original repo untouched; you recover changes the same way as `--repo`.
+
+### "Reinstalling node_modules every time is too slow" (user asked)
 
 ```yaml
 mount:
   - node_modules
-sync:
-  - dist
 ```
 
-Container gets live `node_modules` at the original path; on exit, `dist/` copy is dropped at `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-repo>/dist/`. Original `dist/` on host is untouched.
+Live bind. Regeneration cost paid once. Explicit opt-in to host writes for this one path.
 
-### "I want to try a build from a clean-but-seeded `node_modules`, throw away result"
+### "I want to try a build from a fresh node_modules, throw away result" (user asked)
 
 ```yaml
 cp:
   - node_modules
 ```
 
-Session clone gets a fresh copy at launch; container modifies freely; session dir is deleted on exit. Host `node_modules` unchanged regardless.
+Session clone gets a fresh copy at launch; container modifies freely; session dir deleted on exit. Host `node_modules` unchanged.
 
-### "Shared Rust workspace, compile cache is 20 GB"
+### "I want the build output after the session" (user asked)
 
 ```yaml
-mount:
-  - target
+sync:
+  - dist
 ```
 
-Container builds into host `target/` directly. Fast. User explicitly opts into live host writes for this path.
+On exit, `dist/` copy lands at `$CLAUDE_AIRGAP_HOME/output/<ts>/<abs-repo>/dist/`. Host original untouched.
 
-### "Python project, Playwright generates a report I want to keep"
+### "Python project with Playwright, I want the report" (user asked for .venv cache + report)
 
 ```yaml
 mount:
@@ -78,7 +99,7 @@ sync:
   - test-results
 ```
 
-`.venv` persists across sessions; reports land in `output/<ts>/`.
+`.venv` persists across sessions (user consented to the live write). Reports land in `output/<ts>/`.
 
 ## Absolute vs relative paths
 
@@ -95,11 +116,10 @@ cp:
 
 ## Things that are NOT artifact decisions
 
-- **`~/.claude/`** — always RO, via the built-in mount. Don't try to use `--mount` to persist its state.
-- **The repo itself** — that's `--repo` / `--extra-repo` (they do their own clone-+-sandbox-branch thing).
-- **Read-only reference material** — that's `--ro`.
-- **Secrets / API keys** — don't mount files; use env (`docker-run-arg: ["-e NAME"]`).
+- **`~/.claude/`** — always RO, via the built-in mount. Don't try to use `mount` to persist its state.
+- **The repo itself** — that's `repo` / `extra-repo` (they do their own clone-+-sandbox-branch thing).
+- **Secrets / API keys** — don't mount credential files. See `references/secrets-and-sensitive-data.md`.
 
 ## Recovery implication
 
-`--sync` paths are recorded in the session manifest. If the session is orphaned and recovered via `ccairgap recover <ts>`, the sync copy-out runs again — safe and idempotent. `--cp` is session-local; discarded if the session is discarded. `--mount` has no recovery semantics since writes already landed during the session.
+`sync` paths are recorded in the session manifest. If the session is orphaned and recovered via `ccairgap recover <ts>`, the sync copy-out runs again — safe and idempotent. `cp` is session-local; discarded if the session is discarded. `mount` has no recovery semantics since writes already landed during the session.

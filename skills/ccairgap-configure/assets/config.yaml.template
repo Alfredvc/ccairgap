@@ -12,49 +12,53 @@
 #   - `dockerfile` → this config file's own directory (sidecar convention).
 #   - `cp`, `sync`, `mount` → workspace repo root, resolved at launch.
 #
-# Delete every key you don't use. Every key below is optional.
+# This template shows every supported key, but all are COMMENTED OUT by default.
+# Uncomment only what your workflow needs. A minimal ccairgap setup is an empty
+# file; adding keys is opt-in.
 
 # ---------------------------------------------------------------------------
 # Repos (workspace anchor — resolve as if from the git root)
 # ---------------------------------------------------------------------------
 
 # Workspace repo (container cwd). Optional — defaults to the git root that
-# contains this config file (or cwd if no config is loaded). Shown here for
-# clarity; in most setups you can drop this key entirely.
-#   `.`    = the git root (this config's parent dir's parent)
-#   `..`   = the parent of the git root
-repo: .
+# contains this config file. Most setups can drop this key.
+# repo: .
 
-# Additional repos mounted and given sandbox branches. Read-write sessions.
-# `../sibling-repo` = sibling of the git root (typical case).
-extra-repo:
-  - ../sibling-repo
+# Additional repos the user is actively editing alongside the workspace.
+# Each one gets its own sandbox branch; fetch-on-exit mirrors the workspace flow.
+# extra-repo:
+#   - ../sibling-repo
 
-# Read-only mounts. Any dir — a repo, a docs tree, reference material.
-# Same anchor as `repo`/`extra-repo`: write relative to the git root.
-ro:
-  - ../docs
-  # - /opt/reference-data          # absolute path always works
+# Read-only mounts. Use for reference material Claude needs to read
+# (docs, shared-type packages, datasets). Safe default for "give Claude
+# access to this dir".
+# ro:
+#   - ../docs
+#   # - /opt/reference-data          # absolute path always works
 
 # ---------------------------------------------------------------------------
-# Build artifacts (see references/artifact-decision.md)
+# Build artifacts — opt-in only.
+# Default is to configure NOTHING here; the container regenerates
+# node_modules / .venv / target / dist from scratch. See
+# references/artifact-decision.md for when to escalate.
 # ---------------------------------------------------------------------------
 
-# Copy-in at launch, discard on exit. Host original never written.
-# Use when you want to seed the session with current state but not keep results.
+# Copy-in at launch, discard on exit. Host original never written. Use when the
+# session wants a mutable starting state but nothing should be preserved.
 # cp:
 #   - node_modules
 
 # Copy-in at launch, copy-out on exit to $CLAUDE_AIRGAP_HOME/output/<ts>/.
-# Host original never written. Use for build outputs you want to inspect after.
-sync:
-  - dist
+# Host original never written. Use for build outputs you want after the session.
+# sync:
+#   - dist
 
 # Live RW bind mount — container writes land on host immediately.
-# Use for caches where regeneration is expensive and you trust this session.
-# WARNING: breaks the "host FS is immutable" invariant for the declared path.
-mount:
-  - node_modules
+# WARNING: weakens the "host FS is immutable" invariant for this path.
+# Only uncomment when you've explicitly decided to trust the session with a
+# particular cache dir.
+# mount:
+#   - node_modules
 
 # ---------------------------------------------------------------------------
 # Sandbox branch
@@ -71,12 +75,13 @@ mount:
 # ---------------------------------------------------------------------------
 
 # Custom Dockerfile (extends base image). Sidecar anchor — resolved against
-# this config file's own directory. `dockerfile: Dockerfile` = <git-root>/.claude-airgap/Dockerfile.
+# this config file's own directory. `dockerfile: Dockerfile` =
+# <git-root>/.claude-airgap/Dockerfile.
 # dockerfile: Dockerfile
 
 # Build args forwarded to `docker build --build-arg`.
-docker-build-arg:
-  CLAUDE_CODE_VERSION: "latest"  # pin to specific version for reproducibility
+# docker-build-arg:
+#   CLAUDE_CODE_VERSION: "latest"   # pin to a specific version for reproducibility
 
 # Force rebuild even if the tag exists locally.
 # rebuild: false
@@ -86,23 +91,26 @@ docker-build-arg:
 # See references/hook-patterns.md for how globs match.
 # ---------------------------------------------------------------------------
 
-hooks:
-  enable:
-    # Examples — delete if you want no hooks active.
-    # - "python3 *"                        # all python3 hooks
-    # - "bash ~/.claude/statusline.sh"     # the statusline script
-    # - "*/auto-approve.py *"              # any auto-approve.py hook
+# hooks:
+#   enable:
+#     - "python3 *"                        # all python3 hooks
+#     - "bash ~/.claude/statusline.sh"     # the statusline script
+#     - "*/auto-approve.py *"              # any auto-approve.py hook
 
 # ---------------------------------------------------------------------------
-# Raw docker run args (escape hatch; see references/docker-run-args.md)
-# Appended after all built-ins; docker's last-wins lets you override defaults.
+# Raw docker run args — escape hatch.
+#
+# Do NOT add entries here speculatively. Most configs never need this section.
+# Add a line only when the user has explicitly asked for the specific behavior
+# (expose a port, attach to a docker network, pass a named env var, bump
+# memory/CPU). See references/docker-run-args.md for the cookbook and
+# references/secrets-and-sensitive-data.md before passing any credential.
 # ---------------------------------------------------------------------------
 
-docker-run-arg:
-  # - "-p 5173:5173"                       # publish a dev server port
-  # - "--network my-net"                   # attach to a user-created network
-  # - "-e OPENAI_API_KEY"                  # pass-through env var
-  # - "--add-host=host.docker.internal:host-gateway"  # reach host services (linux)
+# docker-run-arg:
+#   - "-p 5173:5173"                       # publish a dev server port (only if user asked)
+#   - "--network my-net"                   # attach to a user-created network (only if user asked)
+#   - "-e OPENAI_API_KEY"                  # pass-through env var (only if user asked)
 
 # Default true — warns on dangerous tokens (--privileged, docker.sock, etc.).
 # Set false to silence the warning without making those flags safe.
