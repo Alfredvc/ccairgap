@@ -33,6 +33,9 @@ function mergeRun(cli: {
   repo?: string;
   extraRepo: string[];
   ro: string[];
+  cp: string[];
+  sync: string[];
+  mount: string[];
   base?: string;
   keepContainer?: boolean;
   dockerfile?: string;
@@ -44,6 +47,9 @@ function mergeRun(cli: {
     repo: cli.repo ?? cfg.repo,
     extraRepos: [...(cfg.extraRepo ?? []), ...cli.extraRepo],
     ros: [...(cfg.ro ?? []), ...cli.ro],
+    cp: [...(cfg.cp ?? []), ...cli.cp],
+    sync: [...(cfg.sync ?? []), ...cli.sync],
+    mount: [...(cfg.mount ?? []), ...cli.mount],
     base: cli.base ?? cfg.base,
     keepContainer: cli.keepContainer ?? cfg.keepContainer ?? false,
     dockerfile: cli.dockerfile ?? cfg.dockerfile,
@@ -66,6 +72,24 @@ async function main() {
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo exposed alongside --repo (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])
+    .option(
+      "--cp <path>",
+      "copy host path into session at launch (rw in container, discarded on exit). Relative paths resolve against the workspace repo root. Repeatable.",
+      collect,
+      [],
+    )
+    .option(
+      "--sync <path>",
+      "like --cp, but on exit the container-written copy is mirrored to $CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-src>/. Repeatable.",
+      collect,
+      [],
+    )
+    .option(
+      "--mount <path>",
+      "rw bind-mount host path into container at the same absolute path. Live host writes. Relative paths resolve against the workspace repo root. Repeatable.",
+      collect,
+      [],
+    )
     .option("--base <ref>", "base ref for sandbox/<ts> branch (default: HEAD)")
     .option("--keep-container", "do not pass --rm to docker run")
     .option("--dockerfile <path>", "use a custom Dockerfile")
@@ -99,6 +123,9 @@ async function main() {
           repo: opts.repo as string | undefined,
           extraRepo: opts.extraRepo as string[],
           ro: opts.ro as string[],
+          cp: opts.cp as string[],
+          sync: opts.sync as string[],
+          mount: opts.mount as string[],
           base: opts.base,
           keepContainer: opts.keepContainer,
           dockerfile: opts.dockerfile,
@@ -160,6 +187,9 @@ async function main() {
       const result = await launch({
         repos,
         ros,
+        cp: merged.cp,
+        sync: merged.sync,
+        mount: merged.mount,
         base: merged.base,
         keepContainer: merged.keepContainer,
         dockerfile: merged.dockerfile,

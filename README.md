@@ -42,6 +42,9 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--repo <path>` | no | Host repo to expose as the workspace (container cwd). Cloned `--shared`, branch `sandbox/<ts>` created. Defaults to cwd if it's a git repo. |
 | `--extra-repo <path>` | yes | Additional host repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | yes | Extra read-only bind mount. |
+| `--cp <path>` | yes | Copy a host path into the session at launch. Container sees it RW at the same abs path; changes are discarded on exit (never touch host). Relative paths resolve against the workspace repo. |
+| `--sync <path>` | yes | Same copy-in as `--cp`, plus: on exit the container-written copy is rsynced to `$CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-src>/`. Original host path is never written. |
+| `--mount <path>` | yes | Plain RW bind-mount host → container at the same abs path. Live host writes, no copy. Opt-in weakening of the host-write invariant for that one path. |
 | `--base <ref>` | no | Base ref for `sandbox/<ts>`. Default: HEAD of each `--repo`. |
 | `--keep-container` | no | Omit `docker run --rm` so the container persists for postmortem. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile. |
@@ -63,6 +66,12 @@ extra-repo:
   - ../sibling
 ro:
   - ../docs
+cp:
+  - node_modules
+sync:
+  - dist
+mount:
+  - .cache
 base: main
 rebuild: false
 keep-container: false
@@ -70,6 +79,8 @@ docker-build-arg:
   CLAUDE_CODE_VERSION: "1.2.3"
 # print: "run the test suite"
 ```
+
+Build-artifact keys (`cp`, `sync`, `mount`) take relative paths resolved against the workspace repo root at launch (not the config file's directory — unlike `repo` / `ro`). Use absolute paths to break out of the workspace.
 
 Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are accepted. Unknown keys and wrong types are rejected with a clear error.
 

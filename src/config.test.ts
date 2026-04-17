@@ -48,6 +48,37 @@ dockerBuildArg:
     });
   });
 
+  it("parses cp / sync / mount as string arrays", () => {
+    const yaml = `
+cp:
+  - node_modules
+  - /abs/venv
+sync:
+  - dist
+mount:
+  - .cache
+`;
+    expect(parseConfig(yaml, SRC)).toEqual({
+      cp: ["node_modules", "/abs/venv"],
+      sync: ["dist"],
+      mount: [".cache"],
+    });
+  });
+
+  it("rejects cp not an array of strings", () => {
+    expect(() => parseConfig("cp: node_modules\n", SRC)).toThrow(
+      /config\.cp: expected array of strings/,
+    );
+    expect(() => parseConfig("cp: [1, 2]\n", SRC)).toThrow(/config\.cp: expected string/);
+  });
+
+  it("rejects sync / mount wrong types", () => {
+    expect(() => parseConfig("sync: dist\n", SRC)).toThrow(
+      /config\.sync: expected array of strings/,
+    );
+    expect(() => parseConfig("mount:\n  - 1\n", SRC)).toThrow(/config\.mount: expected string/);
+  });
+
   it("returns {} for empty / null doc", () => {
     expect(parseConfig("", SRC)).toEqual({});
     expect(parseConfig("# comment only\n", SRC)).toEqual({});
@@ -127,6 +158,15 @@ describe("resolveConfigPaths", () => {
 
   it("leaves scalars and absent fields untouched", () => {
     const cfg = { base: "main", rebuild: true };
+    expect(resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml")).toEqual(cfg);
+  });
+
+  it("does not touch cp / sync / mount (they resolve against repo root later)", () => {
+    const cfg = {
+      cp: ["node_modules", "./rel", "/abs/x"],
+      sync: ["dist"],
+      mount: [".cache"],
+    };
     expect(resolveConfigPaths(cfg, "/repo/.claude-airgap/config.yaml")).toEqual(cfg);
   });
 });

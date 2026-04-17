@@ -27,6 +27,8 @@ export interface BuildMountsInput {
   roPaths: string[];
   pluginMarketplaces: string[];
   homeInContainer: string;
+  /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
+  extraMounts?: Mount[];
 }
 
 /**
@@ -88,6 +90,10 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
 
   for (const p of i.pluginMarketplaces) {
     mounts.push({ src: p, dst: p, mode: "ro" });
+  }
+
+  if (i.extraMounts) {
+    for (const m of i.extraMounts) mounts.push(m);
   }
 
   return mounts;

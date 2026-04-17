@@ -14,6 +14,9 @@ export interface ConfigFile {
   repo?: string;
   extraRepo?: string[];
   ro?: string[];
+  cp?: string[];
+  sync?: string[];
+  mount?: string[];
   base?: string;
   keepContainer?: boolean;
   dockerfile?: string;
@@ -28,6 +31,9 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "extra-repo": "extraRepo",
   "extraRepo": "extraRepo",
   "ro": "ro",
+  "cp": "cp",
+  "sync": "sync",
+  "mount": "mount",
   "base": "base",
   "keep-container": "keepContainer",
   "keepContainer": "keepContainer",
@@ -144,6 +150,15 @@ export function parseConfig(text: string, source: string): ConfigFile {
       case "ro":
         cfg.ro = assertStringArray(val, "ro");
         break;
+      case "cp":
+        cfg.cp = assertStringArray(val, "cp");
+        break;
+      case "sync":
+        cfg.sync = assertStringArray(val, "sync");
+        break;
+      case "mount":
+        cfg.mount = assertStringArray(val, "mount");
+        break;
       case "base":
         cfg.base = assertString(val, "base");
         break;
@@ -189,6 +204,8 @@ export function resolveConfigPaths(cfg: ConfigFile, configPath: string): ConfigF
   if (cfg.repo) out.repo = fixPath(cfg.repo);
   if (cfg.extraRepo) out.extraRepo = cfg.extraRepo.map(fixPath);
   if (cfg.ro) out.ro = cfg.ro.map(fixPath);
+  // cp/sync/mount: relative paths are resolved against repo root later,
+  // not config dir. Leave as-is; artifacts.ts handles resolution.
   if (cfg.dockerfile) out.dockerfile = fixPath(cfg.dockerfile);
   return out;
 }

@@ -59,9 +59,10 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/claude-airlock/
 A session may cause writes to:
 
 1. `$XDG_STATE_HOME/claude-airlock/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow").
-2. `$XDG_STATE_HOME/claude-airlock/output/` — `/output` mount inside container.
+2. `$XDG_STATE_HOME/claude-airlock/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
+5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This is the only class of write that can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
 
 No other host path is writable by the container. `~/.claude/`, `~/.claude.json`, plugin marketplace repos, `--ro` reference paths are all RO-mounted.
 
@@ -80,6 +81,9 @@ Default (no subcommand): start a new session.
 | `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `sandbox/<ts>` created. If omitted, defaults to the current working directory (must be a git repo). |
 | `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `sandbox/<ts>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
+| `--cp <path>` | yes | Copy host path into the session at launch; container sees it RW at the same absolute path. Changes are discarded on exit (never reach host). Relative paths resolve against the workspace repo root. See §"Build artifact paths". |
+| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
+| `--mount <path>` | yes | RW bind-mount host path directly into the container at the same absolute path. Live host writes; no copy. Relative paths resolve against the workspace repo root. Breaks the "container never writes host repo directly" invariant for the declared path only — opt-in. See §"Build artifact paths". |
 | `--base <ref>` | no | Base ref for `sandbox/<ts>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
 | `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm claude-airlock-<ts>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
@@ -167,8 +171,48 @@ In order:
 | `<resolved-git-dir>/lfs/objects/` | `/host-git-alternates/<basename>/lfs/objects/` | ro | LFS content. Session clone's `.git/lfs/objects/` is replaced with a symlink to this path. Mount is optional — skipped if source dir doesn't exist. |
 | `<--ro path>` | `<original-host-path>` | ro | Reference material. |
 | `<plugin-marketplace-path>` | `<original-host-path>` | ro | Auto-discovered from settings.json. |
+| `$SESSION/artifacts/<abs-src>/` (pre-copied from host) | `<original-host-path>` | rw | `--cp` / `--sync` with an absolute source **outside** any repo. Source outside any repo has no covering mount, so the pre-launch copy needs its own bind. For `--cp`/`--sync` sources **inside** a repo, the copy lands inside the session clone and rides on the existing `$SESSION/repos/<repo>/` mount — no extra entry here. Appended after repo mounts. |
+| `<--mount path>` | `<original-host-path>` | rw | User-declared RW bind. Appended after repo mounts so it overrides any session-clone or `--cp`/`--sync` copy at the same path. |
 
 Absolute paths are preserved between host and container so `settings.json` references resolve identically.
+
+## Build artifact paths
+
+`--cp`, `--sync`, and `--mount` cover the three common shapes for build artifacts (`node_modules`, `.venv`, `target/`, etc.) that are not tracked in git but matter at runtime.
+
+**Resolution rules (shared):**
+
+- Relative paths resolve against the **workspace** repo root (i.e. the first entry of `--repo` + `--extra-repo`). `--cp node_modules` with `--repo ~/src/foo` → source `~/src/foo/node_modules`.
+- Absolute paths are allowed but warn on stderr if they fall outside every declared repo tree.
+- The path must exist on host at launch. Missing path → launch aborts.
+- Paths are repeatable across flags but not across sources: any given host path may appear in **at most one** of `--repo`, `--extra-repo`, `--ro`, `--cp`, `--sync`, `--mount`. Overlap is a hard error at launch.
+
+**`--cp` (copy-in-discard):**
+
+- Pre-launch: `rsync -a --delete <host-src>/ <session-target>/`.
+- Target location: if the source is inside a cloned repo, `$SESSION/repos/<basename>/<rel>` — the copy rides on the repo's existing RW mount. Otherwise `$SESSION/artifacts/<abs-src>/` with its own RW bind-mount at `<abs-src>`.
+- Container writes stay in the session dir. On exit, the session dir is `rm -rf`'d — nothing leaks back to the host.
+- Host source is read once at launch and never written.
+
+**`--sync` (copy-in, copy-out-on-exit):**
+
+- Identical setup to `--cp`.
+- On container exit, the handoff routine rsyncs `<session-target>/` → `$CLAUDE_AIRLOCK_HOME/output/<ts>/<abs-src>/`. Session-scoped (`<ts>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
+- The original host path is **never** written. Users who want to promote results back manually `cp -a` from the output tree.
+- Recorded in `manifest.json` under `sync` so `claude-airlock recover <ts>` performs the same copy-out.
+
+**`--mount` (live RW bind):**
+
+- Plain Docker `-v <host>:<container>:rw`. No pre or post copy.
+- Container writes land on host immediately. Matches Docker's own mental model.
+- Only class of mount that mutates host state during the session. Declared per-path by the user → added to the "host writable paths" closed set as an opt-in category.
+- Ordering: `--mount` bind-mounts are appended after repo mounts so they win in Docker's overlap resolution (later mount takes precedence for overlapping container paths). This matters when the mount path nests inside a repo (e.g. `--mount node_modules` with `--repo ~/src/foo`).
+
+**When to choose which:**
+
+- `--cp` when you want a throwaway seed (e.g. test a build starting from a populated `node_modules`).
+- `--sync` when you want to keep the result but not let the container poke at the original copy (safer default for "rebuild then hand it back").
+- `--mount` when you want live, incremental writes to a persistent host cache (fastest; weakens isolation for that path).
 
 ## Container image
 
@@ -439,12 +483,13 @@ Used by both the exit trap and `claude-airlock recover`. Takes a `$SESSION/<ts>/
      - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
      - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<ts>/repos/<basename> sandbox/<ts>:sandbox/<ts>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
    - If fetch fails (branch doesn't exist, host path gone), log and continue — not fatal.
-3. For each `<path-encoded-cwd>` dir in `$SESSION/<ts>/transcripts/`:
+3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CLAUDE_AIRLOCK_HOME/output/<ts>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
+4. For each `<path-encoded-cwd>` dir in `$SESSION/<ts>/transcripts/`:
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
-4. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 5) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `sandbox/<ts>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `claude-airlock discard <ts>` to drop it — or re-run `claude-airlock recover <ts>` (the same warning repeats until discard).
-5. `rm -rf $SESSION/<ts>` unless step 4 preserved it.
+5. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 6) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `sandbox/<ts>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `claude-airlock discard <ts>` to drop it — or re-run `claude-airlock recover <ts>` (the same warning repeats until discard).
+6. `rm -rf $SESSION/<ts>` unless step 5 preserved it.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
 

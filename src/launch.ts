@@ -21,10 +21,14 @@ import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
 import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
+import { executeCopies, resolveArtifacts } from "./artifacts.js";
 
 export interface LaunchOptions {
   repos: string[];
   ros: string[];
+  cp: string[];
+  sync: string[];
+  mount: string[];
   base?: string;
   keepContainer: boolean;
   dockerfile?: string;
@@ -93,6 +97,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     }
   }
 
+  // Compute ts + session dir paths up-front so we can resolve artifact
+  // session-scratch targets before any filesystem side effects.
+  const ts = compactTimestamp();
+  const sessionPath = sessionDirFn(ts, env);
+
   // Resolve every repo's real git dir upfront so failure aborts before any writes.
   type RepoPlan = {
     basename: string;
@@ -110,11 +119,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     } catch (e) {
       die((e as Error).message);
     }
+    const bn = basename(hostPath);
     repoPlans.push({
-      basename: basename(hostPath),
+      basename: bn,
       hostPath,
       realGitDir,
-      sessionClonePath: "", // filled in once ts is known
+      sessionClonePath: join(sessionPath, "repos", bn),
       baseRef: opts.base,
     });
   }
@@ -124,6 +134,26 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   for (const r of roResolved) {
     if (!existsSync(r)) die(`--ro path does not exist: ${r}`);
   }
+
+  // Resolve cp/sync/mount: validate, detect overlaps, plan copies & mounts.
+  let artifacts;
+  try {
+    artifacts = resolveArtifacts({
+      cp: opts.cp,
+      sync: opts.sync,
+      mount: opts.mount,
+      repos: repoPlans.map((r) => ({
+        basename: r.basename,
+        hostPath: r.hostPath,
+        sessionClonePath: r.sessionClonePath,
+      })),
+      roPaths: roResolved,
+      sessionDir: sessionPath,
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
+  for (const w of artifacts.warnings) console.error(`claude-airlock: ${w}`);
 
   const hostClaude = realpath(hostClaudeDir(env));
   const marketplaces = discoverLocalMarketplaces(hostClaude, home);
@@ -141,8 +171,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
 
   // ---- Side-effect phase: create session dir, on any failure rm -rf it ----
-  const ts = compactTimestamp();
-  const sessionPath = sessionDirFn(ts, env);
   mkdirSync(join(sessionPath, "repos"), { recursive: true });
   mkdirSync(join(sessionPath, "transcripts"), { recursive: true });
   mkdirSync(outputDirPath(env), { recursive: true });
@@ -154,7 +182,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     creds = await resolveCredentials(sessionPath);
 
     for (const plan of repoPlans) {
-      const clonePath = join(sessionPath, "repos", plan.basename);
+      const clonePath = plan.sessionClonePath;
       await gitCloneShared(plan.hostPath, clonePath);
       await gitCheckoutNewBranch(clonePath, `sandbox/${ts}`, opts.base);
 
@@ -167,8 +195,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         pointLfsAtHost(clonePath, `/host-git-alternates/${plan.basename}/lfs/objects`);
       }
 
-      repoEntries.push({ ...plan, sessionClonePath: clonePath });
+      repoEntries.push(plan);
     }
+
+    // Pre-launch copy for --cp and --sync. Must run after clones so in-repo
+    // copies land in (or overwrite) the cloned working tree.
+    await executeCopies(artifacts.entries);
+
     setupOk = true;
   } finally {
     if (!setupOk) {
@@ -205,6 +238,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       host_path: r.hostPath,
       base_ref: r.baseRef,
     })),
+    sync: artifacts.syncRecords,
     claude_code: {
       host_version: await hostClaudeCodeVersion(),
     },
@@ -225,6 +259,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     roPaths: roResolved,
     pluginMarketplaces: marketplaces,
     homeInContainer: "/home/claude",
+    // --cp abs-source, --sync abs-source, --mount all bind RW. Appended AFTER
+    // repo mounts so overlapping paths (e.g. --mount inside a repo) win.
+    extraMounts: artifacts.extraMounts,
   });
 
   // Step 10: docker run args

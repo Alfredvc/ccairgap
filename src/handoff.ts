@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, statSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execa } from "execa";
 import { readManifest, UnknownManifestVersionError } from "./manifest.js";
 import { gitFetchSandbox, resolveGitDir } from "./git.js";
 import { writeAlternates } from "./alternates.js";
+import { outputDir } from "./paths.js";
 
 export type FetchStatus = "fetched" | "empty" | "failed";
 
@@ -192,6 +193,30 @@ export async function handoff(
       warnings.push(`fetch failed for ${repo.host_path} (branch ${branch})`);
     }
     fetched.push({ hostPath: repo.host_path, branch, status: ok ? "fetched" : "failed" });
+  }
+
+  // --sync copy-out: mirror each session_src → $output/<ts>/<abs_src>/.
+  // Idempotent (rsync -a). Best-effort: log on failure, keep going.
+  if (manifest.sync && manifest.sync.length > 0) {
+    const outRoot = join(outputDir(), ts);
+    for (const s of manifest.sync) {
+      if (!existsSync(s.session_src)) {
+        warnings.push(`sync source missing, skipping: ${s.session_src}`);
+        continue;
+      }
+      const dst = join(outRoot, s.src_host.replace(/^\//, ""));
+      try {
+        mkdirSync(dirname(dst), { recursive: true });
+        const srcStat = statSync(s.session_src);
+        if (srcStat.isDirectory()) {
+          await execa("rsync", ["-a", s.session_src.replace(/\/?$/, "/"), dst.replace(/\/?$/, "/")]);
+        } else {
+          await execa("cp", ["-a", s.session_src, dst]);
+        }
+      } catch (e) {
+        warnings.push(`--sync copy-out failed for ${s.src_host}: ${(e as Error).message}`);
+      }
+    }
   }
 
   const transcriptsDir = join(sessionDirPath, "transcripts");
