@@ -57,7 +57,7 @@ docs/SPEC.md      authoritative design
 - **Manifest `version` field gates handoff.** Bump when shape changes incompatibly. Handoff aborts with clear error on unknown version.
 - **Flag names + subcommand names are public API.** Rename = major bump.
 - **Exit trap is best-effort.** SIGKILL of CLI leaves session on disk; user runs `ccairgap recover <ts>`. Handoff must stay idempotent.
-- **`--cap-drop=ALL`, no `--privileged`, no `docker.sock` mount, no `SYS_ADMIN`.** Don't lower default Docker isolation.
+- **`--cap-drop=ALL`, no `--privileged`, no `docker.sock` mount, no `SYS_ADMIN`** in built-in args. Don't lower default Docker isolation in the CLI's own invocation. Users can opt into any docker flag via `--docker-run-arg` — that's a user-foot-gun escape hatch, not a defense claim. Appended after built-ins so last-wins overrides work.
 
 ## Config file
 

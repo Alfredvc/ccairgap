@@ -44,6 +44,8 @@ function mergeRun(cli: {
   print?: string;
   name?: string;
   hookEnable: string[];
+  dockerRunArg: string[];
+  warnDockerArgs?: boolean;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -60,6 +62,8 @@ function mergeRun(cli: {
     print: cli.print ?? cfg.print,
     name: cli.name ?? cfg.name,
     hookEnable: [...(cfg.hooks?.enable ?? []), ...cli.hookEnable],
+    dockerRunArg: [...(cfg.dockerRunArg ?? []), ...cli.dockerRunArg],
+    warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
   };
 }
 
@@ -127,7 +131,14 @@ async function main() {
       collect,
       [],
     )
-    .action(async (opts) => {
+    .option(
+      "--docker-run-arg <args>",
+      "extra args appended to `docker run`. Shell-quoted value (e.g. --docker-run-arg '-p 8080:8080'). Last-wins on conflicts with built-in args. Repeatable.",
+      collect,
+      [],
+    )
+    .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
+    .action(async (opts, cmd) => {
       // Load config file (if any). Paths inside config resolve relative to config file dir.
       let fileCfg: ConfigFile = {};
       const loaded = loadConfig(opts.config);
@@ -140,6 +151,12 @@ async function main() {
         opts.dockerBuildArg && Object.keys(opts.dockerBuildArg).length > 0
           ? opts.dockerBuildArg
           : undefined;
+
+      // warnDockerArgs default is `true`; only treat as "set via CLI" when the
+      // user actually passed --no-warn-docker-args (or --warn-docker-args).
+      const warnDockerArgsSource = cmd.getOptionValueSource("warnDockerArgs");
+      const cliWarnDockerArgs: boolean | undefined =
+        warnDockerArgsSource === "cli" ? (opts.warnDockerArgs as boolean) : undefined;
 
       const merged = mergeRun(
         {
@@ -157,6 +174,8 @@ async function main() {
           print: opts.print,
           name: opts.name,
           hookEnable: opts.hookEnable as string[],
+          dockerRunArg: opts.dockerRunArg as string[],
+          warnDockerArgs: cliWarnDockerArgs,
         },
         fileCfg,
       );
@@ -223,6 +242,8 @@ async function main() {
         print: merged.print,
         name: merged.name,
         hookEnable: merged.hookEnable,
+        dockerRunArgs: merged.dockerRunArg,
+        warnDockerArgs: merged.warnDockerArgs,
       });
       process.exit(result.exitCode);
     });

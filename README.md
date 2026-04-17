@@ -57,6 +57,8 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
 | `-n, --name <name>` | no | Session name. Branch becomes `sandbox/<name>` instead of `sandbox/<ts>`; forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
+| `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted, e.g. `--docker-run-arg "-p 8080:8080"` → two tokens. Appended after built-ins so docker's last-wins lets user args override defaults. Escape hatch — can weaken isolation. |
+| `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). |
 
 ## Hooks
 
@@ -78,11 +80,36 @@ If a hook's command references a binary that isn't in your container image, opti
 
 See `docs/SPEC.md` §"Hook policy" for the full mechanism.
 
+## Raw docker run args
+
+Need to publish a port, attach to a custom network, add an env var, or mount something the CLI doesn't surface a flag for? Use `--docker-run-arg`:
+
+```bash
+# Publish a dev server port
+ccairgap --docker-run-arg "-p 8080:8080"
+
+# Attach to a user-created docker network + extra env
+ccairgap \
+  --docker-run-arg "--network my-net" \
+  --docker-run-arg "-e MY_API_KEY=$KEY"
+
+# Mount an additional host dir RW (equivalent to --mount but via raw docker)
+ccairgap --docker-run-arg "-v /var/cache/npm:/var/cache/npm:rw"
+```
+
+Each value is shell-split with `shell-quote`, so quoting works the way it does in your shell. The tokens are appended after all built-in args, so docker's last-wins semantics let you override defaults (e.g. override `--cap-drop=ALL`, change `--network`, etc.).
+
+**Escape hatch, not a shield.** Raw docker args can weaken or completely remove the container isolation the tool is built to provide (`--privileged`, `--cap-add SYS_ADMIN`, `-v /var/run/docker.sock:/...`, `--network=host`, etc.). The CLI scans for known-sharp tokens and prints a one-line warning per hit on stderr — use `--no-warn-docker-args` (or `warn-docker-args: false` in config) to silence it. Warnings never block launch; you own the consequences.
+
+If the only thing you need is a single RW path, prefer `--mount <path>` — it's narrower in intent and stays within the structured flag surface.
+
+See `docs/SPEC.md` §"Raw docker run args" for the full spec.
+
 ## Config file
 
 Any launch flag can live in a YAML file. Default location: `<git-root>/.claude-airgap/config.yaml`. Override with `--config <path>`.
 
-Precedence: **CLI > config > built-in defaults**. Scalars (`repo`, `base`, `dockerfile`, `print`, `keep-container`, `rebuild`): CLI wins. Arrays (`extra-repo`, `ro`): concat across sources. `docker-build-arg` map merges per-key with CLI winning. Relative paths inside the config resolve against the config file's directory.
+Precedence: **CLI > config > built-in defaults**. Scalars (`repo`, `base`, `dockerfile`, `print`, `keep-container`, `rebuild`, `warn-docker-args`): CLI wins. Arrays (`extra-repo`, `ro`, `docker-run-arg`): concat across sources. `docker-build-arg` map merges per-key with CLI winning. Relative paths inside the config resolve against the config file's directory.
 
 Example `.claude-airgap/config.yaml`:
 
@@ -108,6 +135,10 @@ hooks:
   enable:
     - "python3 *"
     - "bash ~/.claude/statusline.sh"
+docker-run-arg:
+  - "-p 8080:8080"
+  - "--network my-net"
+# warn-docker-args: false
 ```
 
 Build-artifact keys (`cp`, `sync`, `mount`) take relative paths resolved against the workspace repo root at launch (not the config file's directory — unlike `repo` / `ro`). Use absolute paths to break out of the workspace.

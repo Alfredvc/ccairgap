@@ -13,7 +13,7 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 
 - **Accepted:** full exfiltration. Anything the container can read may be sent over the network.
 - **Not accepted:** any write to host filesystem outside the small set of explicitly writable paths listed in §"Host writable paths". Specifically: real git repositories, host `~/.claude/`, host `~/.claude.json`, and anything else on disk must survive the session byte-for-byte.
-- **Container escape:** not part of the threat model, but we avoid flags that lower the default Docker isolation (no `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount).
+- **Container escape:** not part of the threat model. The CLI's built-in docker invocation does not lower default Docker isolation (no `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount). Users can opt into any docker flag via `--docker-run-arg` (see §"Raw docker run args"); that surface is user-foot-gun territory, not a defense claim.
 
 ## Implementation
 
@@ -62,7 +62,8 @@ A session may cause writes to:
 2. `$XDG_STATE_HOME/claude-airgap/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `sandbox/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
-5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This is the only class of write that can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
+5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This class of write can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
+6. Anything a user adds via `--docker-run-arg` (see §"Raw docker run args"). Raw docker args are pass-through: a `-v <host>:<ctr>:rw`, `--mount`, `--pid=host`, etc. supplied this way can make host writes or weaken isolation beyond `--mount`'s narrow per-path semantics. Treated as user-declared opt-out.
 
 No other host path is writable by the container. `~/.claude/`, `~/.claude.json`, plugin marketplace repos, `--ro` reference paths are all RO-mounted.
 
@@ -92,6 +93,8 @@ Default (no subcommand): start a new session.
 | `-p, --print <prompt>` | no | Run Claude Code in non-interactive print mode: `claude -p "<prompt>"` instead of the REPL. The container still runs with full permissions and all mounts; it just does a single prompt and exits. Useful for smoke tests and scripted runs. |
 | `-n, --name <name>` | no | Session name. Replaces `<ts>` in the sandbox branch (so the branch becomes `sandbox/<name>`) and is forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Validated with `git check-ref-format refs/heads/sandbox/<name>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref or if `sandbox/<name>` already exists in `--repo`'s host repo. Collision is checked only against the workspace repo (`--repo`); `--extra-repo` entries are not pre-checked, so a stale branch in one of them will surface at fetch time on exit. |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
+| `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--network`, `--cap-drop`, etc.). Repeatable. See §"Raw docker run args". |
+| `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
 
 No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
@@ -155,6 +158,7 @@ In order:
     - `-it` (interactive)
     - `--name claude-airgap-<ts>`
     - Mount list per §"Container mount manifest"
+    - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
     - Image: `claude-airgap:<cli-version>` by default, or `claude-airgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 12. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
 13. Exec the `docker run` command.
@@ -291,6 +295,7 @@ Runs at container start. Steps:
 5. Patch `/home/claude/.claude.json` via `jq` to ensure:
    - `hasCompletedOnboarding: true`
    - `projects.<cwd>.hasTrustDialogAccepted: true` for each session repo's cwd
+   - `installMethod` and `autoUpdatesProtectedForNative` deleted (host may report `"native"` when the host Claude Code was installed via `claude.ai/install.sh`; the container always runs the npm-global install at `/usr/local/bin/claude`, so the host marker would cause Claude Code to look for a non-existent `~/.local/bin/claude` and nag about PATH)
 6. If `/host-claude-patched-settings.json` exists, `cp -L` it over `/home/claude/.claude/settings.json` before proceeding. This is the hook-policy overlay: a host-built copy of `settings.json` with hooks filtered per `--hook-enable` (or `disableAllHooks: true` injected when the enable list is empty). The next step's env merge layers on top of the filtered hooks.
 7. Merge overrides into `/home/claude/.claude/settings.json`. `.env` merged with `jq '.env = (.env // {}) + { ... }'` to preserve existing entries; `skipDangerousModePermissionPrompt` set to `true` to suppress the bypass-permissions startup warning inside the sandbox:
    ```json
@@ -387,6 +392,35 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 - On container exit, the CLI's exit trap recursively copies each `$SESSION/transcripts/<path-encoded-cwd>/` into host `~/.claude/projects/<same-dir-name>/` using `cp -r` (or `rsync -a`). Merging with any existing host content is safe — session UUIDs in nested dir names are unique.
 - Because container preserves host absolute paths for repo cwds, the encoded dir name matches between container and host — `claude --resume` on the host finds the transcript naturally.
 - Session dir is deleted after successful copy.
+
+## Raw docker run args
+
+`--docker-run-arg` is an escape hatch for users who need docker features the CLI does not (yet) surface as dedicated flags: publishing ports, extra env vars, attaching to a custom network, mounting additional volumes, overriding defaults, etc.
+
+**Parsing:**
+
+- Each `--docker-run-arg <value>` value is shell-split with [`shell-quote`](https://www.npmjs.com/package/shell-quote). `"-p 8080:8080"` becomes two tokens; `'--label "key=val with space"'` becomes `--label` + `key=val with space`.
+- Non-literal shell constructs (operators `&&`/`|`, subshells, globs) are rejected at launch: these must be literal docker tokens.
+- Repeatable; tokens from each invocation concatenate in order.
+- Config file key: `docker-run-arg: [<string>, …]`. Concat merge with CLI (config entries first, CLI appended).
+
+**Ordering:**
+
+- Built-in args come first: `docker run --rm -it --cap-drop=ALL --name … -e … -v …`.
+- User tokens are appended after all built-ins, before the image tag.
+- Docker resolves repeatable flags with last-wins semantics, so `--docker-run-arg "--network my-net"` overrides no built-in network flag (there is none), while `--docker-run-arg "--cap-drop NET_ADMIN"` narrows the earlier `--cap-drop=ALL`.
+
+**Danger warning:**
+
+- Before invoking docker, the CLI scans the parsed tokens for flags known to weaken default isolation: `--privileged`, `--cap-add`, `--security-opt`, `--device`, `--network=host` / `--net=host`, `--pid=host`, `--userns=host`, `--ipc=host`, `--uts=host`, substring `docker.sock`, substring `SYS_ADMIN`, and any `--cap-drop` narrower than `ALL`. Two-token forms (`--network host`, `--cap-add SYS_ADMIN`) are caught alongside the `=host` forms.
+- Each hit prints one stderr warning naming the token and the broad reason. The launch still proceeds — this is a nudge, not a gate.
+- Scan is best-effort; users can construct equivalent effects via args the scan does not know about. The CLI makes no claim of completeness.
+- Silence the warning with `--no-warn-docker-args` (or `warn-docker-args: false` in config).
+
+**Relation to the host-writable-paths invariant:**
+
+- Raw args that add RW mounts (`-v <host>:<ctr>:rw`, `--mount type=bind,source=<host>,...`) expand the writable-paths set beyond what the CLI can see. §"Host writable paths" item 6 records this formally.
+- Users who only want per-path host RW should prefer `--mount <path>` — it's narrower in semantics and stays within the structured flag surface.
 
 ## Hook policy
 

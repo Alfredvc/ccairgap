@@ -25,6 +25,8 @@ export interface ConfigFile {
   print?: string;
   name?: string;
   hooks?: { enable?: string[] };
+  dockerRunArg?: string[];
+  warnDockerArgs?: boolean;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -46,6 +48,10 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "print": "print",
   "name": "name",
   "hooks": "hooks",
+  "docker-run-arg": "dockerRunArg",
+  "dockerRunArg": "dockerRunArg",
+  "warn-docker-args": "warnDockerArgs",
+  "warnDockerArgs": "warnDockerArgs",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -186,6 +192,12 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "hooks":
         cfg.hooks = assertHooksBlock(val);
+        break;
+      case "dockerRunArg":
+        cfg.dockerRunArg = assertStringArray(val, "docker-run-arg");
+        break;
+      case "warnDockerArgs":
+        cfg.warnDockerArgs = assertBool(val, "warn-docker-args");
         break;
     }
   }

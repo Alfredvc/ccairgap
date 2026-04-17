@@ -54,6 +54,28 @@ dockerBuildArg:
     });
   });
 
+  it("parses docker-run-arg and warn-docker-args", () => {
+    const yaml = `
+docker-run-arg:
+  - "-p 8080:8080"
+  - "--network my-net"
+warn-docker-args: false
+`;
+    expect(parseConfig(yaml, SRC)).toEqual({
+      dockerRunArg: ["-p 8080:8080", "--network my-net"],
+      warnDockerArgs: false,
+    });
+  });
+
+  it("rejects non-array docker-run-arg and non-bool warn-docker-args", () => {
+    expect(() => parseConfig("docker-run-arg: -p 8080\n", SRC)).toThrow(
+      /config\.docker-run-arg: expected array of strings/,
+    );
+    expect(() => parseConfig('warn-docker-args: "no"\n', SRC)).toThrow(
+      /config\.warn-docker-args: expected boolean/,
+    );
+  });
+
   it("parses cp / sync / mount as string arrays", () => {
     const yaml = `
 cp:

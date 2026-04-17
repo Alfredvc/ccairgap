@@ -30,6 +30,11 @@ import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { applyHookPolicy } from "./hooks.js";
+import {
+  formatDangerWarnings,
+  parseDockerRunArgs,
+  scanDangerousArgs,
+} from "./dockerRunArgs.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -53,6 +58,14 @@ export interface LaunchOptions {
    * settings and overlay the filtered copies via bind mounts.
    */
   hookEnable: string[];
+  /**
+   * Raw args appended to `docker run` after all built-in args. Each value is
+   * shell-split (`-p 8080:8080` → two tokens). Opt-in escape hatch: user can
+   * publish ports, add env, override --network, etc. Can weaken isolation.
+   */
+  dockerRunArgs: string[];
+  /** Print a warning when dockerRunArgs contains known-sharp tokens. Default true. */
+  warnDockerArgs: boolean;
 }
 
 export interface LaunchResult {
@@ -361,6 +374,21 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     dockerArgs.push("-e", `AIRGAP_NAME=${opts.name}`);
   }
   for (const m of mounts) dockerArgs.push(...mountArg(m));
+
+  // User-supplied docker run args. Appended last so Docker's last-wins
+  // semantics let them override built-ins (e.g. --cap-drop, --network).
+  let extraDockerTokens: string[] = [];
+  try {
+    extraDockerTokens = parseDockerRunArgs(opts.dockerRunArgs);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  if (opts.warnDockerArgs) {
+    const hits = scanDangerousArgs(extraDockerTokens);
+    for (const line of formatDangerWarnings(hits)) console.error(line);
+  }
+  dockerArgs.push(...extraDockerTokens);
+
   dockerArgs.push(image.tag);
 
   // Step 11: exec docker run with exit-trap handoff
