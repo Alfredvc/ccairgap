@@ -13,35 +13,82 @@ The whole point of AI is to not do the work yourself. So why are you still babys
 
 See [`docs/SPEC.md`](docs/SPEC.md) for the full design and [`SECURITY.md`](SECURITY.md) for the threat model.
 
-## Install
+## Contents
+
+- [Setup](#setup)
+- [Quick start](#quick-start)
+- [Launch flags](#launch-flags)
+- [Hooks](#hooks)
+- [MCP servers](#mcp-servers)
+- [Raw docker run args](#raw-docker-run-args)
+- [Config file](#config-file)
+- [Subcommands](#subcommands)
+- [Environment variables](#environment-variables)
+- [Development](#development)
+
+## Setup
+
+Install:
 
 ```bash
 npm i -g ccairgap
 ```
 
-Requires Node ≥ 20 and Docker. Works on macOS; Linux should work; Windows/WSL2 may need path tweaks.
+Or run directly with npx:
 
-Log in on the host once with `claude` — `ccairgap` inherits those credentials via a read-only mount.
+```bash
+npx ccairgap
+```
+
+Requires Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS; Linux should work; Windows/WSL2 may need path tweaks.
+
+Log in on the host once with `claude` — ccairgap inherits those credentials via a read-only mount. First launch builds the container image (one-time; subsequent launches reuse it).
 
 ## Quick start
 
+Run with no args to open Claude inside a sandbox rooted at the current git repo:
+
 ```bash
-# Interactive session in the current git repo
 ccairgap
+```
 
-# Workspace + sibling repos + a reference dir
-ccairgap --repo ~/src/bar --extra-repo ~/src/bar --ro ~/src/docs
+Customize the container image (optional) by scaffolding a sidecar Dockerfile and config:
 
-# Walk-away via tmux
-tmux new -s work 'ccairgap --repo ~/src/bar'
+```bash
+ccairgap init   # writes .ccairgap/{Dockerfile, entrypoint.sh, config.yaml}
+```
+
+### Common setups
+
+```bash
+# Workspace + node_modules (read only)
+ccairgap --repo ~/src/foo --ro node_modules
 
 # Non-interactive print mode
 ccairgap -p "summarize README"
 ```
 
-On exit the CLI pushes Claude's work back as a `ccairgap/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch` (container never has write access to the real repo). If the session made no commits, no branch is created. If Claude committed to a side branch but left `ccairgap/<ts>` empty, the session dir is preserved with a warning so no work is lost — inspect it, recover what you need, then `ccairgap discard <ts>`.
+### On exit
 
-Git identity (`user.name` / `user.email`) is read from the host at launch (`git config --get`, local-to-`--repo` overrides global) and passed to the container so `git commit` works. If the host has no identity configured, a placeholder (`ccairgap <noreply@ccairgap.local>`) is used and a warning is printed — rewrite authors on the sandbox branch post-hoc if it matters. GPG/SSH signing is not supported inside the container.
+When the session ends, ccairgap pushes Claude's work back as a `ccairgap/<ts>` branch in each repo (`--repo` + every `--extra-repo`) via `git fetch`. The container never has write access to the real repo.
+
+```bash
+$ ccairgap -p "add login flow"
+# ... Claude works, commits, exits ...
+$ git log --oneline ccairgap/20260418T143022Z
+a3f1b2c Wire auth middleware
+b4e2d8f Add login route
+```
+
+- **No commits** → no branch created.
+- **Commits on a side branch, `ccairgap/<ts>` empty** → session dir preserved with a warning. Inspect, recover what you need, then `ccairgap discard <ts>`.
+
+### Git identity
+
+Git identity (`user.name` / `user.email`) is read from the host at launch (`git config --get`, local-to-`--repo` overrides global) and passed to the container so `git commit` works.
+
+- No host identity configured → placeholder `ccairgap <noreply@ccairgap.local>` used, warning printed. Rewrite authors on the sandbox branch post-hoc if it matters.
+- GPG/SSH signing is not supported inside the container.
 
 ## Launch flags
 
@@ -51,8 +98,8 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--repo <path>` | no | Host repo to expose as the workspace (container cwd). Cloned `--shared`, branch `ccairgap/<ts>` created. Defaults to cwd if it's a git repo. |
 | `--extra-repo <path>` | yes | Additional host repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | yes | Extra read-only bind mount. |
-| `--cp <path>` | yes | Copy a host path into the session at launch. Container sees it RW at the same abs path; changes are discarded on exit (never touch host). Relative paths resolve against the workspace repo. |
-| `--sync <path>` | yes | Same copy-in as `--cp`, plus: on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Original host path is never written. |
+| `--cp <path>` | yes | Copy a host path into the session at launch. Container sees it RW at the same abs path; changes are discarded on exit. Relative paths resolve against the workspace repo. |
+| `--sync <path>` | yes | Same copy-in as `--cp`, plus on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Original host path is never written. |
 | `--mount <path>` | yes | Plain RW bind-mount host → container at the same abs path. Live host writes, no copy. Opt-in weakening of the host-write invariant for that one path. |
 | `--base <ref>` | no | Base ref for `ccairgap/<ts>`. Default: HEAD of each `--repo`. |
 | `--keep-container` | no | Omit `docker run --rm` so the container persists for postmortem. |
@@ -60,12 +107,16 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Use `CLAUDE_CODE_VERSION=<semver>` to pin the Claude Code version (default: host version). |
 | `--rebuild` | no | Force image rebuild. |
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
-| `-n, --name <name>` | no | Session name. Branch becomes `ccairgap/<name>` instead of `ccairgap/<ts>`; forwarded to `claude -n "<name>"` as the initial session label. On the first user prompt a hook renames the session to `[ccairgap] <name>` (or `[ccairgap]` when unset), which is what `/resume` and the TUI's top-border label show. The two-step rename is intentional — matching labels would trigger Claude Code's hook-dedup and skip the TUI rename effect. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
-| `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
-| `--mcp-enable <glob>` | yes | Opt-in a Claude Code MCP server whose `name` matches `<glob>`. All MCP servers are disabled by default inside the sandbox (see below). Wildcard is `*`. |
-| `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted, e.g. `--docker-run-arg "-p 8080:8080"` → two tokens. Appended after built-ins so docker's last-wins lets user args override defaults. Escape hatch — can weaken isolation. |
-| `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). |
-| `--bare` | no | Launch a naked container: skip config-file discovery and cwd-as-workspace inference. Mount whatever you need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. Relative `--cp`/`--sync`/`--mount` paths anchor on cwd. `--config` still loads when explicit. See `docs/SPEC.md` §"Bare mode". |
+| `-n, --name <name>` | no | Session name. Branch becomes `ccairgap/<name>`; forwarded as Claude session label. Aborts on invalid git ref or branch collision. See notes below. |
+| `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox. Wildcard is `*`. |
+| `--mcp-enable <glob>` | yes | Opt-in a Claude Code MCP server whose `name` matches `<glob>`. All MCP servers are disabled by default. Wildcard is `*`. |
+| `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted. Escape hatch — can weaken isolation. |
+| `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
+| `--bare` | no | Launch a naked container: skip config-file discovery and cwd-as-workspace inference. See `docs/SPEC.md` §"Bare mode". |
+
+### Notes on `--name`
+
+The initial `claude -n "<name>"` sets the session label, then on the first user prompt a hook renames the session to `[ccairgap] <name>` (or `[ccairgap]` when unset). That relabeled form is what `/resume` and the TUI's top-border label show. The two-step rename is intentional — matching labels would trigger Claude Code's hook-dedup and skip the TUI rename effect.
 
 ## Hooks
 
@@ -87,7 +138,7 @@ If a hook's command references a binary that isn't in your container image, opti
 
 **`statusLine` is not a hook** for this purpose — it runs by default. ccairgap can't use Claude Code's `disableAllHooks: true` flag (it would also kill `statusLine`), so the empty-enable default just neutralizes hook fields directly, leaving `statusLine` intact. Your host status-line script runs as long as its binary deps exist inside the image.
 
-Unsure what's in scope? `ccairgap inspect` dumps the full config surface the container would see at launch as JSON `{hooks, mcpServers, env, marketplaces}` — every hook entry, every MCP server definition, every `env` var, and every `extraKnownMarketplaces` entry across user settings, enabled plugins, project `.claude/settings.json[.local]`, `~/.claude.json`, and `<repo>/.mcp.json`. Pick globs from real `command` strings, see which MCPs would load, confirm env passthroughs, and know which marketplace source paths will be RO-mounted — without hunting through config files by hand.
+Unsure what's in scope? `ccairgap inspect` dumps the full config surface the container would see at launch — every hook entry, every MCP server definition, every `env` var, and every `extraKnownMarketplaces` entry. Pick globs from real `command` strings without hunting through config files by hand.
 
 See `docs/SPEC.md` §"Hook policy" for the full mechanism.
 
@@ -157,7 +208,7 @@ Relative paths inside the config resolve against one of two anchors, depending o
 |------|--------|-----|
 | `repo`, `extra-repo`, `ro` | **Workspace anchor** — the git root when the config lives at `<git-root>/.ccairgap/config.yaml` (the canonical case); the config file's directory otherwise (e.g. when `--config /elsewhere/cfg.yaml` is passed). | These describe your project's repo-space. `repo: .` should mean "my repo", `ro: ../docs` should mean "the dir next to my repo" — not surprises mediated by the `.ccairgap/` subdir. |
 | `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in `.ccairgap/`". |
-| `cp`, `sync`, `mount` | **Workspace repo root** (resolved at launch, against `--repo`). | These name paths inside the workspace (`node_modules`, `dist`, `.cache`). `--cp node_modules` with `--repo ~/src/bar` → `~/src/foo/node_modules`. |
+| `cp`, `sync`, `mount` | **Workspace repo root** (resolved at launch, against `--repo`). | These name paths inside the workspace (`node_modules`, `dist`, `.cache`). `--cp node_modules` with `--repo ~/src/bar` → `~/src/bar/node_modules`. |
 
 Absolute paths always work and bypass anchoring.
 
@@ -211,11 +262,19 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 | Subcommand | Description |
 |------------|-------------|
 | `list` | List orphaned sessions on disk. |
-| `recover [<ts>]` | Run the handoff (fetch sandbox branch, copy transcripts, rm session dir). Idempotent. With no `<ts>` argument, falls back to `list` so `ccairgap recover` alone surfaces what's recoverable. |
+| `recover [<ts>]` | Run the handoff (fetch sandbox branch, copy transcripts, rm session dir). Idempotent. With no `<ts>`, falls back to `list`. |
 | `discard <ts>` | Delete a session dir without running handoff. |
-| `doctor` | Preflight: Docker running, credentials present, image present/stale, state dir writable, `git` + `rsync` + `cp` on PATH. Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift. |
-| `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config <path>` is passed. Fails if any of the three target files exist; `--force` overwrites all three (no merge — prior edits to `config.yaml` are lost). Lets you customize the container image without forking the repo. |
-| `inspect` | Enumerate the full config surface the container would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries. Walks user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json` / `.mcp.json` / `plugin.json#mcpServers`, project `.claude/settings.json[.local]`, `~/.claude.json` (user + user-project `mcpServers`), and `<repo>/.mcp.json` for `--repo` + every `--extra-repo`. Accepts `--config <path>`, `--repo <path>`, and `--extra-repo <path>` with the same semantics as launch. Default output: JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Managed-settings tiers (OS/MDM/server-delivered) omitted — not mounted into the container. Read-only — useful for picking `--hook-enable` globs, confirming which MCPs will load, and previewing the env + marketplace mounts. |
+| `doctor` | Preflight checks. See notes below. |
+| `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` into `<git-root>/.ccairgap/` (or `dirname(--config)` if `--config <path>` is passed). Fails if any target file exists; `--force` overwrites all three. Lets you customize the container image without forking the repo. |
+| `inspect` | Dump the full config surface the container would see at launch. See notes below. |
+
+### Notes on `doctor`
+
+Verifies: Docker running, credentials present, image present/stale, state dir writable, `git` + `rsync` + `cp` on PATH. Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift.
+
+### Notes on `inspect`
+
+Emits JSON `{hooks, mcpServers, env, marketplaces}` to stdout by default; `--pretty` renders human-readable tables instead. Walks user `~/.claude/settings.json`, each enabled plugin's `hooks/hooks.json` / `.mcp.json` / `plugin.json#mcpServers`, project `.claude/settings.json[.local]`, `~/.claude.json` (user + user-project `mcpServers`), and `<repo>/.mcp.json` for `--repo` + every `--extra-repo`. Accepts `--config`, `--repo`, `--extra-repo` with the same semantics as launch. Managed-settings tiers (OS/MDM/server-delivered) are omitted — not mounted into the container. Read-only — useful for picking `--hook-enable` globs, confirming which MCPs will load, and previewing the env + marketplace mounts.
 
 ## Environment variables
 
