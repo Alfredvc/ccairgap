@@ -25,6 +25,7 @@ export interface ConfigFile {
   print?: string;
   name?: string;
   hooks?: { enable?: string[] };
+  mcp?: { enable?: string[] };
   dockerRunArg?: string[];
   warnDockerArgs?: boolean;
 }
@@ -48,6 +49,7 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "print": "print",
   "name": "name",
   "hooks": "hooks",
+  "mcp": "mcp",
   "docker-run-arg": "dockerRunArg",
   "dockerRunArg": "dockerRunArg",
   "warn-docker-args": "warnDockerArgs",
@@ -193,6 +195,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
       case "hooks":
         cfg.hooks = assertHooksBlock(val);
         break;
+      case "mcp":
+        cfg.mcp = assertMcpBlock(val);
+        break;
       case "dockerRunArg":
         cfg.dockerRunArg = assertStringArray(val, "docker-run-arg");
         break;
@@ -214,6 +219,21 @@ function assertHooksBlock(v: unknown): { enable?: string[] } {
       out.enable = assertStringArray(val, "hooks.enable");
     } else {
       throw new Error(`config.hooks.${k}: unknown key. Allowed: enable`);
+    }
+  }
+  return out;
+}
+
+function assertMcpBlock(v: unknown): { enable?: string[] } {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) {
+    throw new Error("config.mcp: expected map (e.g. `mcp: { enable: [...] }`)");
+  }
+  const out: { enable?: string[] } = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (k === "enable") {
+      out.enable = assertStringArray(val, "mcp.enable");
+    } else {
+      throw new Error(`config.mcp.${k}: unknown key. Allowed: enable`);
     }
   }
   return out;

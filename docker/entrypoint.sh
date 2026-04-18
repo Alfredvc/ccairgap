@@ -11,6 +11,7 @@ HOST_CLAUDE="/host-claude"
 HOST_CLAUDE_JSON="/host-claude-json"
 HOST_CLAUDE_CREDS="/host-claude-creds"
 HOST_PATCHED_SETTINGS="/host-claude-patched-settings.json"
+HOST_PATCHED_CLAUDE_JSON="/host-claude-patched-json"
 
 mkdir -p "$CLAUDE_DIR"
 
@@ -44,15 +45,21 @@ if [ -f "$HOST_CLAUDE_CREDS" ]; then
 fi
 
 # Copy and patch ~/.claude.json.
-if [ -f "$HOST_CLAUDE_JSON" ]; then
+# MCP policy overlay wins: if the host-built patched copy is mounted (strips
+# user + user-project `mcpServers` per --mcp-enable), use it as the source so
+# the jq onboarding patch layers on top of the filtered MCP state.
+if [ -f "$HOST_PATCHED_CLAUDE_JSON" ]; then
+    cp -L "$HOST_PATCHED_CLAUDE_JSON" "$HOME_DIR/.claude.json"
+    chmod u+w "$HOME_DIR/.claude.json"
+elif [ -f "$HOST_CLAUDE_JSON" ]; then
     cp -L "$HOST_CLAUDE_JSON" "$HOME_DIR/.claude.json"
     chmod u+w "$HOME_DIR/.claude.json"
-
+fi
+if [ -f "$HOME_DIR/.claude.json" ]; then
     # CCAIRGAP_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
-    # installMethod / autoUpdatesProtectedForNative stripped: host may be "native"
-    # (binary at ~/.local/bin/claude) while container runs npm-global claude at
-    # /usr/local/bin/claude. Leaving host values triggers "claude command not found
-    # at /home/claude/.local/bin/claude" and PATH nags on every start.
+    # installMethod / autoUpdatesProtectedForNative stripped: let Claude Code
+    # re-detect install method from the binary path (/home/claude/.local/bin/claude)
+    # rather than inheriting stale host values.
     TMP_JSON="$(mktemp)"
     jq --arg trusted "${CCAIRGAP_TRUSTED_CWDS:-}" '
         .hasCompletedOnboarding = true

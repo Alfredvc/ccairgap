@@ -22,6 +22,7 @@ Unknown keys or wrong types abort launch with a clear error. The CLI validator i
 | `print` | string | `-p` / `--print` | Non-interactive prompt. |
 | `name` | string | `-n` / `--name` | Session name; branch becomes `ccairgap/<name>`. |
 | `hooks.enable` | `[string]` | `--hook-enable` (repeat) | Glob against hook `command` string. |
+| `mcp.enable` | `[string]` | `--mcp-enable` (repeat) | Glob against MCP server `name` (key under `mcpServers`). Project-scope `<repo>/.mcp.json` additionally requires host approval. |
 | `docker-run-arg` | `[string]` | `--docker-run-arg` (repeat) | Raw docker tokens, shell-split. |
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |
 
@@ -30,7 +31,7 @@ Unknown keys or wrong types abort launch with a clear error. The CLI validator i
 **CLI > config > built-in defaults.**
 
 - Scalars (`repo`, `base`, `dockerfile`, `print`, `name`, `keep-container`, `rebuild`, `warn-docker-args`): CLI wins if passed.
-- Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`): config values first, CLI appended. No dedup.
+- Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`): config values first, CLI appended. No dedup.
 - Maps (`docker-build-arg`): per-key merge; CLI value wins for overlapping keys.
 
 ## Path resolution
@@ -158,3 +159,4 @@ Notably absent (by design):
 - No `network` key — use `docker-run-arg: ["--network my-net"]`.
 - No `volumes` key distinct from `ro`/`cp`/`sync`/`mount` — those cover the structured cases; exotic mounts go through `docker-run-arg`.
 - No hook disable list (only enable) — default is "all disabled", enable is the only opt-in.
+- No MCP disable list (only enable) — default is "all disabled", enable is the only opt-in. Same model as hooks.

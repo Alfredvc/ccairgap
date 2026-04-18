@@ -57,11 +57,12 @@ Git identity (`user.name` / `user.email`) is read from the host at launch (`git 
 | `--base <ref>` | no | Base ref for `ccairgap/<ts>`. Default: HEAD of each `--repo`. |
 | `--keep-container` | no | Omit `docker run --rm` so the container persists for postmortem. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile. |
-| `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. |
+| `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Use `CLAUDE_CODE_VERSION=<semver>` to pin the Claude Code version (default: host version). |
 | `--rebuild` | no | Force image rebuild. |
 | `-p, --print <prompt>` | no | `claude -p "<prompt>"` instead of the REPL. |
 | `-n, --name <name>` | no | Session name. Branch becomes `ccairgap/<name>` instead of `ccairgap/<ts>`; forwarded to `claude -n "<name>"` as the initial session label. On the first user prompt a hook renames the session to `[ccairgap] <name>` (or `[ccairgap]` when unset), which is what `/resume` and the TUI's top-border label show. The two-step rename is intentional — matching labels would trigger Claude Code's hook-dedup and skip the TUI rename effect. Aborts on invalid git ref or collision with an existing branch in `--repo`. |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose `command` matches `<glob>`. All hooks are disabled by default inside the sandbox (see below). Wildcard is `*`. |
+| `--mcp-enable <glob>` | yes | Opt-in a Claude Code MCP server whose `name` matches `<glob>`. All MCP servers are disabled by default inside the sandbox (see below). Wildcard is `*`. |
 | `--docker-run-arg <args>` | yes | Extra args appended to `docker run`. Shell-quoted, e.g. `--docker-run-arg "-p 8080:8080"` → two tokens. Appended after built-ins so docker's last-wins lets user args override defaults. Escape hatch — can weaken isolation. |
 | `--no-warn-docker-args` | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). |
 | `--bare` | no | Launch a naked container: skip config-file discovery and cwd-as-workspace inference. Mount whatever you need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. Relative `--cp`/`--sync`/`--mount` paths anchor on cwd. `--config` still loads when explicit. See `docs/SPEC.md` §"Bare mode". |
@@ -89,6 +90,33 @@ If a hook's command references a binary that isn't in your container image, opti
 Unsure what's in scope? `ccairgap inspect` dumps the full config surface the container would see at launch as JSON `{hooks, mcpServers, env, marketplaces}` — every hook entry, every MCP server definition, every `env` var, and every `extraKnownMarketplaces` entry across user settings, enabled plugins, project `.claude/settings.json[.local]`, `~/.claude.json`, and `<repo>/.mcp.json`. Pick globs from real `command` strings, see which MCPs would load, confirm env passthroughs, and know which marketplace source paths will be RO-mounted — without hunting through config files by hand.
 
 See `docs/SPEC.md` §"Hook policy" for the full mechanism.
+
+## MCP servers
+
+All Claude Code MCP servers are **disabled by default** inside the sandbox. Most MCPs need per-sandbox setup — binaries installed in the image, env vars / credentials passed through, or host approval for project-scope servers — none of which happen automatically when a container launches.
+
+Opt servers back in with `--mcp-enable <glob>` or `mcp.enable: [glob, ...]` in config. The glob is matched against each server's `name` (the key under `mcpServers`). Wildcard `*`, anchored full match. Every source is filtered the same way: user `~/.claude.json`, user-project `~/.claude.json` `projects[<abs>].mcpServers`, project `<repo>/.mcp.json`, and each enabled plugin's `.mcp.json` / `plugin.json#mcpServers`.
+
+```bash
+# Enable the grafana MCP everywhere it's declared
+ccairgap --mcp-enable 'grafana'
+
+# Enable two specific servers
+ccairgap \
+  --mcp-enable 'grafana' \
+  --mcp-enable 'playwright'
+
+# Enable anything whose name starts with "codex-"
+ccairgap --mcp-enable 'codex-*'
+```
+
+**Project-scope servers (`<repo>/.mcp.json`) need host approval too.** Claude Code treats repo-shipped MCP servers as untrusted by default — a server only runs after you've approved it via the host's `/mcp` TUI or `enabledMcpjsonServers` in settings. Inside the airgap container the approval dialog is unreachable, so ccairgap treats "was it approved on host?" as the trust gate: a server matching `--mcp-enable` that the host hasn't approved is stripped. Approve on host first, then opt in via `--mcp-enable`. User-scope (`~/.claude.json`) and plugin-scope servers are not gated — you already put the server there / enabled the plugin.
+
+If an MCP's `command` references a binary that isn't in your container image, or relies on an env var that isn't passed through, opting it in still fails at start — extend the Dockerfile (`--dockerfile`) and pass env via `--docker-run-arg "-e NAME"`.
+
+Unsure what's in scope? `ccairgap inspect` dumps every server ccairgap would see, with `source` (`user` / `user-project` / `project` / `plugin`) and `approvalState` for project scope.
+
+See `docs/SPEC.md` §"MCP policy" for the full mechanism.
 
 ## Raw docker run args
 
@@ -164,6 +192,10 @@ hooks:
   enable:
     - "python3 *"
     - "node /path/to/audit.js"
+mcp:
+  enable:
+    - "grafana"
+    - "playwright"
 docker-run-arg:
   - "-p 8080:8080"
   - "--network my-net"
@@ -190,7 +222,7 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 | Env var | Effect |
 |---------|--------|
 | `CCAIRGAP_HOME` | Override state dir. Default: `$XDG_STATE_HOME/ccairgap/`. |
-| `CCAIRGAP_CC_VERSION` | Short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. |
+| `CCAIRGAP_CC_VERSION` | Short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Default: host `claude --version`. |
 
 ## Development
 

@@ -22,7 +22,7 @@ import {
 } from "./git.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
 import { buildMounts, mountArg } from "./mounts.js";
-import { ensureImage, defaultDockerfile } from "./image.js";
+import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
 import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
@@ -30,6 +30,7 @@ import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { applyHookPolicy } from "./hooks.js";
+import { applyMcpPolicy } from "./mcp.js";
 import { requireHostBinaries } from "./binaries.js";
 import {
   formatDangerWarnings,
@@ -60,6 +61,14 @@ export interface LaunchOptions {
    */
   hookEnable: string[];
   /**
+   * Globs matched against each MCP server's `name` key to opt it back in.
+   * Empty → every `mcpServers` field overlaid with `{}` at every source
+   * (`~/.claude.json` user + user-project, `<repo>/.mcp.json`, enabled plugins).
+   * Non-empty → filtered to surviving names. Project scope additionally
+   * requires host approval state = `approved`; glob match alone isn't enough.
+   */
+  mcpEnable: string[];
+  /**
    * Raw args appended to `docker run` after all built-in args. Each value is
    * shell-split (`-p 8080:8080` → two tokens). Opt-in escape hatch: user can
    * publish ports, add env, override --network, etc. Can weaken isolation.
@@ -87,14 +96,6 @@ function die(msg: string): never {
   process.exit(1);
 }
 
-async function hostClaudeCodeVersion(): Promise<string | undefined> {
-  try {
-    const { stdout } = await execa("claude", ["--version"], { timeout: 5_000 });
-    return stdout.trim();
-  } catch {
-    return undefined;
-  }
-}
 
 function dedupeResolved(paths: string[]): string[] {
   const seen = new Set<string>();
@@ -285,10 +286,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   // Step 7: image
   const dockerfilePath = opts.dockerfile ?? defaultDockerfile();
+  const defaultClaudeVersion = opts.dockerBuildArgs.CLAUDE_CODE_VERSION ?? (await hostClaudeVersion()) ?? "latest";
   const buildArgs: Record<string, string> = {
     HOST_UID: String(process.getuid?.() ?? 1000),
     HOST_GID: String(process.getgid?.() ?? 1000),
-    CLAUDE_CODE_VERSION: opts.dockerBuildArgs.CLAUDE_CODE_VERSION ?? "latest",
+    CLAUDE_CODE_VERSION: defaultClaudeVersion,
     ...opts.dockerBuildArgs,
   };
   const image = await ensureImage({
@@ -311,7 +313,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     branch,
     sync: artifacts.syncRecords,
     claude_code: {
-      host_version: await hostClaudeCodeVersion(),
+      host_version: await hostClaudeVersion(),
     },
   };
   writeManifest(sessionPath, manifest);
@@ -340,11 +342,34 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     })),
   });
 
+  // MCP policy: same overlay pattern as hooks. `~/.claude.json` (user + every
+  // user-project `mcpServers`) produces one patched copy at
+  // `/host-claude-patched-json`. Plugin `.mcp.json` / `plugin.json` and per-repo
+  // `<repo>/.mcp.json` get per-file bind overlays. Project scope additionally
+  // requires host approval state (`enabledMcpjsonServers` /
+  // `enableAllProjectMcpServers`, absent a `disabledMcpjsonServers` entry) —
+  // the approval dialog is unreachable inside the airgap container.
+  const resolvedClaudeJson = realpath(hostClaudeJson(env));
+  const mcpPolicyResult = applyMcpPolicy({
+    policy: { enableGlobs: opts.mcpEnable },
+    sessionDir: sessionPath,
+    hostClaudeDir: hostClaude,
+    hostClaudeJsonPath: resolvedClaudeJson,
+    pluginsCacheDir: pluginsCache,
+    pluginsCacheContainerPath,
+    repos: repoEntries.map((r) => ({
+      basename: r.basename,
+      sessionClonePath: r.sessionClonePath,
+      hostPath: r.hostPath,
+    })),
+  });
+
   const mounts = buildMounts({
     hostClaudeDir: hostClaude,
-    hostClaudeJson: realpath(hostClaudeJson(env)),
+    hostClaudeJson: resolvedClaudeJson,
     hostCredsFile: creds.hostPath,
     hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
+    hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
     pluginsCacheDir: pluginsCache,
     sessionTranscriptsDir: transcriptsDir,
     outputDir: outputDirPath(env),
@@ -352,11 +377,15 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     roPaths: roResolved,
     pluginMarketplaces: marketplaces,
     homeInContainer,
-    // --cp abs-source, --sync abs-source, --mount all bind RW. Hook-policy
-    // overrides are nested single-file overlays (RO) on top of the plugin
-    // cache and session clones. Appended AFTER repo/plugin-cache mounts so
-    // overlapping paths win — the overlay is the later mount.
-    extraMounts: [...artifacts.extraMounts, ...hookPolicyResult.overrideMounts],
+    // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
+    // MCP-policy overrides are nested single-file overlays (RO) on top of the
+    // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
+    // so overlapping paths win — the overlay is the later mount.
+    extraMounts: [
+      ...artifacts.extraMounts,
+      ...hookPolicyResult.overrideMounts,
+      ...mcpPolicyResult.overrideMounts,
+    ],
   });
 
   // Step 10: docker run args

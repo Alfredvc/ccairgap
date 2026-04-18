@@ -166,6 +166,26 @@ Don't put statusline scripts here — `statusLine` is not a hook in ccairgap's f
 
 Important caveat: enabling a hook doesn't guarantee it works — the command's binary must exist inside the container. If the hook shells out to a host-only binary, either install it via the custom Dockerfile or leave the hook disabled.
 
+## MCP policy cheat sheet
+
+All MCP servers are disabled by default inside the container — every source (user `~/.claude.json`, user-project, project `<repo>/.mcp.json`, plugin `.mcp.json` / `plugin.json`) is overlaid with `mcpServers: {}`. Re-enable individual servers with globs against their `name` (the key under `mcpServers`). Anchored full match, `*` is wildcard. Full cookbook in `references/mcp-patterns.md`.
+
+Common patterns:
+
+```yaml
+mcp:
+  enable:
+    - "grafana"                # exact match
+    - "playwright"
+    - "codex-*"                # any name starting with codex-
+```
+
+**Project-scope servers (`<repo>/.mcp.json`) need host approval in addition to the glob.** ccairgap treats the host approval state (`enabledMcpjsonServers` / `enableAllProjectMcpServers` — see `ccairgap inspect` → `approvalState`) as the trust signal; a server approved on host AND matching a glob survives. User-scope and plugin-scope have no such gate.
+
+Caveats:
+- **Enabling ≠ working.** The server's binary must be installed in the image (custom Dockerfile) and any required env vars / credentials must pass through (`docker-run-arg: ["-e API_KEY"]`). Same pattern as hooks.
+- **MCP servers often need secrets.** See `references/secrets-and-sensitive-data.md` — default is to surface the trade-off and wait, not silently wire secrets through.
+
 ## When `docker-run-arg` is *not* the answer
 
 `docker-run-arg` exists for edge cases the CLI doesn't surface as structured flags. The skill's default stance is: **do not propose it**. Most users never need one. Propose a `docker-run-arg` entry *only* when the user has clearly described a need that maps to one, in their own words — not because you inferred it.
@@ -191,6 +211,8 @@ Use this decision tree; full matrix in `references/artifact-decision.md`.
 
 **Is this a Claude Code hook the user wants active inside the sandbox?** → `--hook-enable '<glob>'` matched against the hook's `command` string. All hooks disabled by default. See `references/hook-patterns.md`.
 
+**Is this a Claude Code MCP server the user wants active inside the sandbox?** → `--mcp-enable '<glob>'` matched against the MCP server `name`. All MCPs disabled by default. Project-scope `<repo>/.mcp.json` servers also need host approval. See `references/mcp-patterns.md`.
+
 **Is it anything else (ports, networks, env vars, exotic mount options)?** → probably don't propose it. If the user has explicitly asked, see `references/docker-run-args.md`.
 
 ## Assets
@@ -211,6 +233,7 @@ Read only what you need.
 | `references/dockerfile-patterns.md` | User needs Python / Playwright / Rust / any non-default binary. |
 | `references/artifact-decision.md` | User has asked to cache or preserve a directory (`node_modules`, `target`, `dist`, etc.). |
 | `references/hook-patterns.md` | Enabling hooks, understanding which get disabled. |
+| `references/mcp-patterns.md` | Enabling MCP servers, understanding the host-approval gate for project-scope. |
 | `references/secrets-and-sensitive-data.md` | User has explicitly asked to wire in a credential or env var. |
 | `references/docker-run-args.md` | User has explicitly asked for something that requires raw docker args (port, network, env, resource limits). |
 

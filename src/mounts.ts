@@ -22,6 +22,13 @@ export interface BuildMountsInput {
    * jq step runs.
    */
   hostPatchedUserSettings?: string;
+  /**
+   * Host path of the patched `~/.claude.json` produced by the MCP-policy pass
+   * (user + user-project `mcpServers` filtered). Mounted at
+   * `/host-claude-patched-json` (single-file, RO); the entrypoint overlays it
+   * on the copied `~/.claude.json` before the jq onboarding patch.
+   */
+  hostPatchedClaudeJson?: string;
   pluginsCacheDir: string;
   sessionTranscriptsDir: string;
   outputDir: string;
@@ -52,6 +59,13 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     mounts.push({
       src: i.hostPatchedUserSettings,
       dst: "/host-claude-patched-settings.json",
+      mode: "ro",
+    });
+  }
+  if (i.hostPatchedClaudeJson) {
+    mounts.push({
+      src: i.hostPatchedClaudeJson,
+      dst: "/host-claude-patched-json",
       mode: "ro",
     });
   }

@@ -1,8 +1,8 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { enumerateMcpServers } from "./mcp.js";
+import { applyMcpPolicy, enumerateMcpServers } from "./mcp.js";
 
 describe("enumerateMcpServers", () => {
   let root: string;
@@ -328,5 +328,374 @@ describe("enumerateMcpServers", () => {
       repos: [],
     });
     expect(records.map((r) => r.name)).toEqual(["ok"]);
+  });
+});
+
+describe("applyMcpPolicy", () => {
+  let root: string;
+  let hostClaude: string;
+  let pluginsCache: string;
+  let claudeJsonPath: string;
+  let sessionDir: string;
+  const containerCache = "/home/claude/.claude/plugins/cache";
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "mcp-policy-"));
+    hostClaude = join(root, "host-claude");
+    pluginsCache = join(hostClaude, "plugins", "cache");
+    claudeJsonPath = join(root, ".claude.json");
+    sessionDir = join(root, "session");
+    mkdirSync(pluginsCache, { recursive: true });
+    mkdirSync(sessionDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeJSON(path: string, data: unknown): void {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify(data));
+  }
+
+  it("empty enable → every mcpServers field is {} across all sources", () => {
+    writeJSON(claudeJsonPath, {
+      mcpServers: { "user-global": { command: "x" } },
+      projects: {
+        "/some/repo": {
+          mcpServers: { "user-local": { command: "y" } },
+          hasTrustDialogAccepted: true,
+        },
+      },
+    });
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "p@m": true },
+    });
+    mkdirSync(join(pluginsCache, "m", "p", "1.0.0"), { recursive: true });
+    writeJSON(join(pluginsCache, "m", "p", "1.0.0", ".mcp.json"), {
+      mcpServers: { "plugin-srv": { command: "z" } },
+    });
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: [] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+
+    const patched = JSON.parse(readFileSync(res.patchedClaudeJsonPath, "utf8"));
+    expect(patched.mcpServers).toEqual({});
+    expect(patched.projects["/some/repo"].mcpServers).toEqual({});
+    // Non-mcp keys survive.
+    expect(patched.projects["/some/repo"].hasTrustDialogAccepted).toBe(true);
+
+    // Plugin overlay produced, empty mcpServers.
+    const pluginMount = res.overrideMounts.find(
+      (m) => m.dst === `${containerCache}/m/p/1.0.0/.mcp.json`,
+    );
+    expect(pluginMount).toBeDefined();
+    const pluginPatched = JSON.parse(readFileSync(pluginMount!.src, "utf8"));
+    expect(pluginPatched.mcpServers).toEqual({});
+  });
+
+  it("glob matches user + user-project by name", () => {
+    writeJSON(claudeJsonPath, {
+      mcpServers: {
+        grafana: { command: "g" },
+        other: { command: "o" },
+      },
+      projects: {
+        "/r": {
+          mcpServers: {
+            grafana: { command: "g2" },
+            random: { command: "r" },
+          },
+        },
+      },
+    });
+    writeJSON(join(hostClaude, "settings.json"), {});
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["grafana"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+
+    const patched = JSON.parse(readFileSync(res.patchedClaudeJsonPath, "utf8"));
+    expect(Object.keys(patched.mcpServers)).toEqual(["grafana"]);
+    expect(Object.keys(patched.projects["/r"].mcpServers)).toEqual(["grafana"]);
+  });
+
+  it("plugin filter: enabled plugin keeps glob-matching mcpServers, disabled plugin skipped", () => {
+    writeJSON(claudeJsonPath, {});
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "on@m": true, "off@m": false },
+    });
+
+    mkdirSync(join(pluginsCache, "m", "on", "1.0.0"), { recursive: true });
+    writeJSON(join(pluginsCache, "m", "on", "1.0.0", ".mcp.json"), {
+      mcpServers: {
+        keep: { command: "k" },
+        drop: { command: "d" },
+      },
+    });
+    writeJSON(join(pluginsCache, "m", "on", "1.0.0", "plugin.json"), {
+      name: "on",
+      mcpServers: { inline: { command: "i" } },
+    });
+
+    mkdirSync(join(pluginsCache, "m", "off", "1.0.0"), { recursive: true });
+    writeJSON(join(pluginsCache, "m", "off", "1.0.0", ".mcp.json"), {
+      mcpServers: { keep: { command: "shouldnotappear" } },
+    });
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["keep", "inline"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+
+    // Only the enabled plugin yields overlays (.mcp.json + plugin.json).
+    const dsts = res.overrideMounts.map((m) => m.dst);
+    expect(dsts).toContain(`${containerCache}/m/on/1.0.0/.mcp.json`);
+    expect(dsts).toContain(`${containerCache}/m/on/1.0.0/plugin.json`);
+    expect(dsts.some((d) => d.includes("/off/"))).toBe(false);
+
+    const fileMount = res.overrideMounts.find(
+      (m) => m.dst === `${containerCache}/m/on/1.0.0/.mcp.json`,
+    )!;
+    const filePatched = JSON.parse(readFileSync(fileMount.src, "utf8"));
+    expect(Object.keys(filePatched.mcpServers)).toEqual(["keep"]);
+
+    const inlineMount = res.overrideMounts.find(
+      (m) => m.dst === `${containerCache}/m/on/1.0.0/plugin.json`,
+    )!;
+    const inlinePatched = JSON.parse(readFileSync(inlineMount.src, "utf8"));
+    expect(Object.keys(inlinePatched.mcpServers)).toEqual(["inline"]);
+    // Non-mcp keys on plugin.json survive.
+    expect(inlinePatched.name).toBe("on");
+  });
+
+  it("directory-sourced plugin .mcp.json overlaid at the plugin host path", () => {
+    const marketDir = join(root, "markets", "sb");
+    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
+    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
+      name: "sb",
+      plugins: [{ name: "sb", source: "./" }],
+    });
+    writeJSON(join(marketDir, ".mcp.json"), {
+      mcpServers: {
+        grafana: { command: "g" },
+        other: { command: "o" },
+      },
+    });
+    writeJSON(claudeJsonPath, {});
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledPlugins: { "sb@sb": true },
+      extraKnownMarketplaces: {
+        sb: { source: { source: "directory", path: marketDir } },
+      },
+    });
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["grafana"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+
+    const overlay = res.overrideMounts.find(
+      (m) => m.dst === join(realpathSync(marketDir), ".mcp.json"),
+    );
+    expect(overlay).toBeDefined();
+    expect(overlay!.mode).toBe("ro");
+    const patched = JSON.parse(readFileSync(overlay!.src, "utf8"));
+    expect(Object.keys(patched.mcpServers)).toEqual(["grafana"]);
+  });
+
+  it("project scope: glob match is NOT enough — host approval is also required", () => {
+    const hostRepo = join(root, "repo");
+    const sessionClone = join(sessionDir, "repos", "repo");
+    mkdirSync(hostRepo, { recursive: true });
+    mkdirSync(sessionClone, { recursive: true });
+
+    // host approval: approve `good`, nothing for `bad`.
+    writeJSON(join(hostClaude, "settings.json"), {
+      enabledMcpjsonServers: ["good"],
+    });
+    writeJSON(claudeJsonPath, {});
+
+    // .mcp.json in the session clone (simulates a committed file post-clone).
+    writeJSON(join(sessionClone, ".mcp.json"), {
+      mcpServers: {
+        good: { command: "g" },
+        bad: { command: "b" },
+      },
+    });
+
+    // Enable glob matches BOTH servers, but only `good` is approved.
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["*"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [
+        {
+          basename: "repo",
+          sessionClonePath: sessionClone,
+          hostPath: hostRepo,
+        },
+      ],
+    });
+
+    const projMount = res.overrideMounts.find(
+      (m) => m.dst === join(hostRepo, ".mcp.json"),
+    );
+    expect(projMount).toBeDefined();
+    const patched = JSON.parse(readFileSync(projMount!.src, "utf8"));
+    expect(Object.keys(patched.mcpServers)).toEqual(["good"]);
+  });
+
+  it("project scope: enableAllProjectMcpServers approves everything, glob still filters", () => {
+    const hostRepo = join(root, "repo");
+    const sessionClone = join(sessionDir, "repos", "repo");
+    mkdirSync(hostRepo, { recursive: true });
+    mkdirSync(sessionClone, { recursive: true });
+
+    writeJSON(join(hostClaude, "settings.json"), {
+      enableAllProjectMcpServers: true,
+    });
+    writeJSON(claudeJsonPath, {});
+    writeJSON(join(sessionClone, ".mcp.json"), {
+      mcpServers: {
+        grafana: { command: "g" },
+        slack: { command: "s" },
+      },
+    });
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["grafana"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [
+        {
+          basename: "repo",
+          sessionClonePath: sessionClone,
+          hostPath: hostRepo,
+        },
+      ],
+    });
+
+    const projMount = res.overrideMounts.find(
+      (m) => m.dst === join(hostRepo, ".mcp.json"),
+    )!;
+    const patched = JSON.parse(readFileSync(projMount.src, "utf8"));
+    expect(Object.keys(patched.mcpServers)).toEqual(["grafana"]);
+  });
+
+  it("project scope: disabledMcpjsonServers wins over glob + enable-all", () => {
+    const hostRepo = join(root, "repo");
+    const sessionClone = join(sessionDir, "repos", "repo");
+    mkdirSync(hostRepo, { recursive: true });
+    mkdirSync(sessionClone, { recursive: true });
+
+    writeJSON(join(hostClaude, "settings.json"), {
+      enableAllProjectMcpServers: true,
+      disabledMcpjsonServers: ["blocked"],
+    });
+    writeJSON(claudeJsonPath, {});
+    writeJSON(join(sessionClone, ".mcp.json"), {
+      mcpServers: {
+        allowed: { command: "a" },
+        blocked: { command: "b" },
+      },
+    });
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["*"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [
+        {
+          basename: "repo",
+          sessionClonePath: sessionClone,
+          hostPath: hostRepo,
+        },
+      ],
+    });
+
+    const projMount = res.overrideMounts.find(
+      (m) => m.dst === join(hostRepo, ".mcp.json"),
+    )!;
+    const patched = JSON.parse(readFileSync(projMount.src, "utf8"));
+    expect(Object.keys(patched.mcpServers)).toEqual(["allowed"]);
+  });
+
+  it("missing ~/.claude.json still yields a patched copy with empty mcpServers", () => {
+    writeJSON(join(hostClaude, "settings.json"), {});
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["*"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath, // file doesn't exist
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [],
+    });
+
+    const patched = JSON.parse(readFileSync(res.patchedClaudeJsonPath, "utf8"));
+    expect(patched.mcpServers).toEqual({});
+    expect(res.overrideMounts).toEqual([]);
+  });
+
+  it("skipped entirely when <repo>/.mcp.json does not exist", () => {
+    const hostRepo = join(root, "repo");
+    const sessionClone = join(sessionDir, "repos", "repo");
+    mkdirSync(hostRepo, { recursive: true });
+    mkdirSync(sessionClone, { recursive: true });
+
+    writeJSON(join(hostClaude, "settings.json"), {});
+    writeJSON(claudeJsonPath, {});
+
+    const res = applyMcpPolicy({
+      policy: { enableGlobs: ["*"] },
+      sessionDir,
+      hostClaudeDir: hostClaude,
+      hostClaudeJsonPath: claudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      pluginsCacheContainerPath: containerCache,
+      repos: [
+        {
+          basename: "repo",
+          sessionClonePath: sessionClone,
+          hostPath: hostRepo,
+        },
+      ],
+    });
+
+    expect(res.overrideMounts.some((m) => m.dst.endsWith("/.mcp.json"))).toBe(false);
   });
 });

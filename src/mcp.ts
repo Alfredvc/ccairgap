@@ -1,11 +1,13 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   isPluginEnabled,
   listDirectoryPlugins,
   listPluginsOnDisk,
+  matchesEnable,
   readJsonOrNull,
 } from "./hooks.js";
+import type { Mount } from "./mounts.js";
 import { realpath } from "./paths.js";
 
 /**
@@ -259,4 +261,248 @@ export function enumerateMcpServers(input: EnumerateMcpInput): McpRecord[] {
   }
 
   return out;
+}
+
+/**
+ * MCP policy: default is "all MCP servers off". Users opt-in specific servers
+ * by a glob matched against the server `name` (key under `mcpServers`). Claude
+ * Code has no native per-server disable, so we filter MCP JSON at four sources
+ * (user `~/.claude.json` top-level, user-project `~/.claude.json` projects[*],
+ * project `<repo>/.mcp.json`, enabled plugin `.mcp.json` + `plugin.json`) and
+ * deliver the patched files as nested bind mounts (single-file overlays).
+ *
+ * Project-scope `<repo>/.mcp.json` is additionally gated by the host approval
+ * state (`enabledMcpjsonServers` / `enableAllProjectMcpServers` / absence of a
+ * `disabledMcpjsonServers` entry). A server that was never approved on the
+ * host is stripped even if the glob matches — the approval dialog is
+ * unreachable inside the airgap container, so "was it approved on host?" is
+ * the only trust signal available. User-scope and plugin-scope have no such
+ * gate (user put it there / enabled the plugin themselves).
+ */
+export interface McpPolicy {
+  enableGlobs: string[];
+}
+
+export interface McpPolicyRepo {
+  basename: string;
+  sessionClonePath: string;
+  hostPath: string;
+}
+
+export interface ApplyMcpPolicyInput {
+  policy: McpPolicy;
+  sessionDir: string;
+  /** Host ~/.claude/ (resolved). Read: settings.json (for approval scopes + enabledPlugins). */
+  hostClaudeDir: string;
+  /** Host path of `~/.claude.json`. Filtered and overlaid at `/host-claude-patched-json`. */
+  hostClaudeJsonPath: string;
+  /** Host plugins cache. Read: each plugin's `.mcp.json` / `plugin.json`. */
+  pluginsCacheDir: string;
+  /** Container path where the plugins cache mounts. Used to build nested override mount dsts. */
+  pluginsCacheContainerPath: string;
+  /** Session clones; used to find project `.mcp.json` (in the clone) and build override mount dsts at the container-facing repo path. */
+  repos: McpPolicyRepo[];
+}
+
+export interface ApplyMcpPolicyResult {
+  /**
+   * Host path of the patched `~/.claude.json` with user-scope and every
+   * user-project-scope `mcpServers` filtered. Always produced — empty enable
+   * list yields `mcpServers: {}` at every scope. Mounted RO at
+   * `/host-claude-patched-json`; entrypoint overlays it on the rsync'd copy
+   * before the jq onboarding patch.
+   */
+  patchedClaudeJsonPath: string;
+  /**
+   * Nested single-file bind mounts (RO):
+   * - plugin `.mcp.json` + `plugin.json` overrides (cache-backed and directory-sourced)
+   * - per-repo `<repo>/.mcp.json` overrides
+   * One entry per MCP-bearing source that exists on disk. With empty globs
+   * every `mcpServers` field is `{}`; with a non-empty list it's filtered
+   * down to surviving entries (and project-scope further to approved ones).
+   */
+  overrideMounts: Mount[];
+}
+
+function writeJsonAtomic(path: string, data: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o644 });
+}
+
+/**
+ * Filter an `mcpServers` object, keeping only entries whose name matches one
+ * of the globs. If `approvedSet` is provided (project scope), the name must
+ * ALSO be in the set. Returns a new object.
+ */
+function filterMcpServers(
+  servers: unknown,
+  globs: string[],
+  approvedSet?: Set<string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return out;
+  for (const [name, def] of Object.entries(servers as Record<string, unknown>)) {
+    if (!def || typeof def !== "object" || Array.isArray(def)) continue;
+    if (!matchesEnable(name, globs)) continue;
+    if (approvedSet && !approvedSet.has(name)) continue;
+    out[name] = def;
+  }
+  return out;
+}
+
+export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult {
+  const {
+    policy,
+    sessionDir,
+    hostClaudeDir,
+    hostClaudeJsonPath,
+    pluginsCacheDir,
+    pluginsCacheContainerPath,
+    repos,
+  } = input;
+  const globs = policy.enableGlobs;
+  const policyDir = join(sessionDir, "mcp-policy");
+
+  // 1) Patch `~/.claude.json`: user-scope + every user-project-scope `mcpServers`.
+  const claudeJsonRaw = (readJsonOrNull(hostClaudeJsonPath) ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const patchedClaudeJson: Record<string, unknown> = { ...claudeJsonRaw };
+  patchedClaudeJson.mcpServers = filterMcpServers(claudeJsonRaw.mcpServers, globs);
+  const projects = claudeJsonRaw.projects;
+  if (projects && typeof projects === "object" && !Array.isArray(projects)) {
+    const patchedProjects: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(projects as Record<string, unknown>)) {
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        patchedProjects[k] = v;
+        continue;
+      }
+      const proj = { ...(v as Record<string, unknown>) };
+      if ("mcpServers" in proj) {
+        proj.mcpServers = filterMcpServers(proj.mcpServers, globs);
+      }
+      patchedProjects[k] = proj;
+    }
+    patchedClaudeJson.projects = patchedProjects;
+  }
+  const patchedClaudeJsonPath = join(policyDir, "claude-json.json");
+  writeJsonAtomic(patchedClaudeJsonPath, patchedClaudeJson);
+
+  const overrideMounts: Mount[] = [];
+  const userSettings = readJsonOrNull(join(hostClaudeDir, "settings.json")) as
+    | Record<string, unknown>
+    | null;
+  const enabledPlugins = userSettings?.enabledPlugins;
+
+  // 2) Plugin `.mcp.json` + `plugin.json` (cache-backed).
+  const plugins = listPluginsOnDisk(pluginsCacheDir, pluginsCacheContainerPath);
+  for (const p of plugins) {
+    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
+    for (const fname of [".mcp.json", "plugin.json"]) {
+      const srcPath = join(p.hostDir, fname);
+      if (!existsSync(srcPath)) continue;
+      const raw = readJsonOrNull(srcPath);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+      patched.mcpServers = filterMcpServers(
+        (raw as Record<string, unknown>).mcpServers,
+        globs,
+      );
+      const outPath = join(
+        policyDir,
+        "plugins",
+        p.marketplace,
+        p.plugin,
+        p.version,
+        fname,
+      );
+      writeJsonAtomic(outPath, patched);
+      overrideMounts.push({
+        src: outPath,
+        dst: join(p.containerDir, fname),
+        mode: "ro",
+      });
+    }
+  }
+
+  // 3) Plugin `.mcp.json` + `plugin.json` (directory-sourced).
+  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
+    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
+    for (const fname of [".mcp.json", "plugin.json"]) {
+      const srcPath = join(dp.hostDir, fname);
+      if (!existsSync(srcPath)) continue;
+      const raw = readJsonOrNull(srcPath);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+      patched.mcpServers = filterMcpServers(
+        (raw as Record<string, unknown>).mcpServers,
+        globs,
+      );
+      const outPath = join(policyDir, "dir-plugins", dp.marketplace, dp.plugin, fname);
+      writeJsonAtomic(outPath, patched);
+      overrideMounts.push({
+        src: outPath,
+        dst: srcPath,
+        mode: "ro",
+      });
+    }
+  }
+
+  // 4) Project `<repo>/.mcp.json` — glob AND approved.
+  for (const r of repos) {
+    const mcpPath = join(r.sessionClonePath, ".mcp.json");
+    if (!existsSync(mcpPath)) continue;
+    const raw = readJsonOrNull(mcpPath);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const servers = (raw as Record<string, unknown>).mcpServers;
+
+    // Approval scopes read from host paths (matches `enumerateMcpServers`, so
+    // the state users see via `ccairgap inspect` is the same one used to gate
+    // the filter). `settings.local.json` is typically gitignored → not in the
+    // session clone → host path is the only place it lives.
+    const projSettings = readJsonOrNull(
+      join(r.hostPath, ".claude", "settings.json"),
+    ) as Record<string, unknown> | null;
+    const projLocal = readJsonOrNull(
+      join(r.hostPath, ".claude", "settings.local.json"),
+    ) as Record<string, unknown> | null;
+
+    let claudeJsonProjectEntry: Record<string, unknown> | null = null;
+    if (projects && typeof projects === "object" && !Array.isArray(projects)) {
+      const realRepo = tryRealpath(r.hostPath);
+      for (const [k, v] of Object.entries(projects as Record<string, unknown>)) {
+        if (
+          tryRealpath(k) === realRepo &&
+          v &&
+          typeof v === "object" &&
+          !Array.isArray(v)
+        ) {
+          claudeJsonProjectEntry = v as Record<string, unknown>;
+          break;
+        }
+      }
+    }
+    const scopes = [userSettings, projSettings, projLocal, claudeJsonProjectEntry];
+
+    const approvedSet = new Set<string>();
+    if (servers && typeof servers === "object" && !Array.isArray(servers)) {
+      for (const name of Object.keys(servers as Record<string, unknown>)) {
+        if (deriveApproval(name, scopes) === "approved") approvedSet.add(name);
+      }
+    }
+
+    const filtered = filterMcpServers(servers, globs, approvedSet);
+    const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+    patched.mcpServers = filtered;
+    const outPath = join(policyDir, "projects", r.basename, ".mcp.json");
+    writeJsonAtomic(outPath, patched);
+    overrideMounts.push({
+      src: outPath,
+      dst: join(r.hostPath, ".mcp.json"),
+      mode: "ro",
+    });
+  }
+
+  return { patchedClaudeJsonPath, overrideMounts };
 }

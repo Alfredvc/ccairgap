@@ -32,7 +32,7 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 
 - **CLI:** semver. Patch = bug fixes, minor = new flags / new optional manifest fields, major = flag rename or removal, manifest shape change, or state-dir layout change.
 - **Container image tag** = CLI version (or `custom-<hash>` when built from a user Dockerfile). See §"Container image".
-- **Claude Code inside the image:** defaults to `@latest` at build time. Same CLI version can therefore produce images with different Claude Code versions over time. Users who want reproducibility pin via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CCAIRGAP_CC_VERSION=<semver>`.
+- **Claude Code inside the image:** defaults to the host's installed Claude Code version at build time (detected via `claude --version`). Falls back to `latest` if detection fails. Users can override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CCAIRGAP_CC_VERSION=<semver>`.
 - **Manifest schema:** `$SESSION/manifest.json` carries a top-level `"version": <N>` field. The handoff routine reads it first and errors clearly on unknown versions. Bump only when the shape changes incompatibly.
 - **Flag stability:** launch-command flags and subcommand names are part of the public API. Renaming or removing either requires a major version bump.
 
@@ -263,12 +263,16 @@ ccairgap --bare --config ~/my-cfg.yaml
 | Host source | Container path | Mode | Notes |
 |-------------|----------------|------|-------|
 | `~/.claude/` (resolved) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds` row for credentials. |
-| `~/.claude.json` (resolved) | `/host-claude-json` | ro | Entrypoint copies to `~/.claude.json`, patches onboarding. |
+| `~/.claude.json` (resolved) | `/host-claude-json` | ro | Fallback source only — used when the MCP-policy patched copy is absent. Entrypoint normally overlays `/host-claude-patched-json` over this and then applies the jq onboarding patch. |
 | macOS: `$SESSION/creds/.credentials.json` / Linux: `~/.claude/.credentials.json` | `/host-claude-creds` | ro | Single-file mount. Entrypoint copies to `~/.claude/.credentials.json`, chmod 600. See §"Authentication flow". |
 | `$SESSION/hook-policy/user-settings.json` | `/host-claude-patched-settings.json` | ro | Single-file mount. Host-built copy of `settings.json` with `hooks` filtered per `--hook-enable` (empty list → `hooks: {}`) and `disableAllHooks: false` forced. Entrypoint overlays it on the rsync'd `~/.claude/settings.json` before the env-merge jq step. See §"Hook policy". |
 | `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled cache-backed plugin that ships a `hooks/hooks.json`. Always present (filtered = `{}` for the empty enable list). |
 | `$SESSION/hook-policy/dir-plugins/<market>/<plugin>/hooks.json` | `<pluginDir>/hooks/hooks.json` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin that ships `hooks/hooks.json`. Always present. |
 | `$SESSION/hook-policy/projects/<repo>/settings.json` (and `.local`) | `<original-host-path>/.claude/settings.json` (and `.local`) | ro | Nested single-file overlay on top of the session-clone's `.claude/` dir. One mount per repo `.claude/settings.json[.local]` that declares hooks. Always present. |
+| `$SESSION/mcp-policy/claude-json.json` | `/host-claude-patched-json` | ro | Single-file mount. Host-built copy of `~/.claude.json` with user-scope and every user-project-scope `mcpServers` filtered per `--mcp-enable` (empty list → `mcpServers: {}` at every scope). Entrypoint overlays it in place of `~/.claude.json` before the jq onboarding patch. Always present. See §"MCP policy". |
+| `$SESSION/mcp-policy/plugins/<market>/<plugin>/<ver>/{.mcp.json,plugin.json}` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/{.mcp.json,plugin.json}` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled cache-backed plugin file that declares `mcpServers`. Always present when source exists. |
+| `$SESSION/mcp-policy/dir-plugins/<market>/<plugin>/{.mcp.json,plugin.json}` | `<pluginDir>/{.mcp.json,plugin.json}` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin file that declares `mcpServers`. Always present when source exists. |
+| `$SESSION/mcp-policy/projects/<repo>/.mcp.json` | `<original-host-path>/.mcp.json` | ro | Nested single-file overlay on top of the session clone. One mount per repo whose `.mcp.json` exists. Filtered by glob **and** host approval state — servers approved on host via `enabledMcpjsonServers` / `enableAllProjectMcpServers` and matching the glob survive; everything else is stripped. |
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
@@ -327,7 +331,7 @@ Absolute paths are preserved between host and container so `settings.json` refer
 **Base:** `node:20-slim` (latest LTS).
 
 **Installed:**
-- `@anthropic-ai/claude-code` globally, version pinned via `ARG CLAUDE_CODE_VERSION=latest` (default tracks upstream; override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`).
+- Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via `ARG CLAUDE_CODE_VERSION` (default: host version detected at build time; `latest` if undetectable). Override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`.
 
 Apt invocation pattern (all package installs):
@@ -348,18 +352,25 @@ Not installed: `tmux` (user handles tmux outside the container).
 docker build \
   --build-arg HOST_UID=$(id -u) \
   --build-arg HOST_GID=$(id -g) \
-  --build-arg CLAUDE_CODE_VERSION=latest \
+  --build-arg CLAUDE_CODE_VERSION=2.1.89 \
   -t ccairgap:<cli-version> .
 ```
 
-Dockerfile:
+Dockerfile (condensed):
 ```dockerfile
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 ARG CLAUDE_CODE_VERSION=latest
+# user created first so native installer lands in /home/claude/.local/bin
 RUN groupadd -g ${HOST_GID} claude \
  && useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash claude
-RUN npm i -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+USER claude
+ENV PATH=/home/claude/.local/bin:$PATH
+RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
+        curl -fsSL https://claude.ai/install.sh | bash; \
+    else \
+        curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
+    fi
 ```
 
 Docker's layer cache handles rebuild on UID/GID change — the CLI always passes the args, Docker reuses layers when the values haven't changed.
@@ -398,11 +409,11 @@ Runs at container start. Steps:
 1. `mkdir -p /home/claude/.claude`
 2. Copy `/host-claude/` → `/home/claude/.claude/` with `rsync -rL --chmod=u+w` (transform symlinks into files, ensure writable in destination). Exclude these session-local entries so we don't drag host state into the container's fresh session view: `projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`. Also exclude `plugins/cache/` (RO-mounted separately at the same container path), `.credentials.json` (handled in the next step), and `.DS_Store` (macOS metadata at any depth — often has ACLs that break copies).
 3. If `/host-claude-creds` exists, `cp -L /host-claude-creds /home/claude/.claude/.credentials.json` and `chmod 600` the destination.
-4. Copy `/host-claude-json` → `/home/claude/.claude.json`.
+4. Copy `~/.claude.json` source → `/home/claude/.claude.json`. The MCP-policy overlay wins: if `/host-claude-patched-json` is mounted (strips user + user-project `mcpServers` per `--mcp-enable`), use it as the source; otherwise fall back to `/host-claude-json`. See §"MCP policy".
 5. Patch `/home/claude/.claude.json` via `jq` to ensure:
    - `hasCompletedOnboarding: true`
    - `projects.<cwd>.hasTrustDialogAccepted: true` for each session repo's cwd
-   - `installMethod` and `autoUpdatesProtectedForNative` deleted (host may report `"native"` when the host Claude Code was installed via `claude.ai/install.sh`; the container always runs the npm-global install at `/usr/local/bin/claude`, so the host marker would cause Claude Code to look for a non-existent `~/.local/bin/claude` and nag about PATH)
+   - `installMethod` and `autoUpdatesProtectedForNative` deleted (the container runs a native install at `/home/claude/.local/bin/claude`; deleting these fields lets Claude Code re-detect its install method from the binary path rather than inheriting stale host values)
 6. If `/host-claude-patched-settings.json` exists, `cp -L` it over `/home/claude/.claude/settings.json` before proceeding. This is the hook-policy overlay: a host-built copy of `settings.json` with `hooks` filtered per `--hook-enable` (empty list → `hooks: {}`) and `disableAllHooks: false` forced (so the custom `statusLine` survives). The next step's env merge layers on top of the filtered hooks.
 7. Merge overrides into `/home/claude/.claude/settings.json`. `.env` merged with `jq '.env = (.env // {}) + { ... }'` to preserve existing entries; `skipDangerousModePermissionPrompt` set to `true` to suppress the bypass-permissions startup warning inside the sandbox:
    ```json
@@ -568,6 +579,52 @@ Host files are never mutated; all patched copies live under `$SESSION/hook-polic
   - `marketplaces` — every `extraKnownMarketplaces` entry across the same three scopes, with a `sourceType` shortcut (`github` / `git` / `directory` / `file` / `hostPattern` / `settings`) and a `hostPath` shortcut for `directory` / `file` types.
   Users can build their enable-globs from the exact `command` strings, see which MCPs would load, confirm `env` passthroughs, and know which marketplace source paths will be RO-mounted, without walking plugin caches, project settings, or `~/.claude.json` by hand. Read-only.
   Managed-settings tiers (OS-level policy files, MDM plist/registry, Anthropic-delivered server-managed) are intentionally omitted — they aren't mounted into the container and don't affect what Claude sees inside the sandbox.
+
+## MCP policy
+
+Claude Code MCP (Model Context Protocol) servers are external processes Claude Code starts and speaks to via stdio/SSE/HTTP. Host configs routinely declare servers that the container can't start cleanly — binaries missing from the image, env vars / credentials that aren't passed through, host-only transports. Left unfiltered, each broken server prints errors on startup; more importantly, running a server the user didn't intend in the sandbox is a silent capability expansion.
+
+**Default: all MCP servers disabled.** The CLI overlays `mcpServers: {}` at every MCP-bearing source (user `~/.claude.json` top-level, user-project `~/.claude.json` `projects[*].mcpServers`, project `<repo>/.mcp.json`, enabled plugin `.mcp.json` / `plugin.json#mcpServers`). No server starts.
+
+**Opt-in: `--mcp-enable <glob>` (repeatable) or `mcp.enable: [<glob>, …]` in config.** Each glob is matched against the MCP server **name** (the key under `mcpServers`). Wildcard is `*` (anchored full match). Names matching any glob are kept; everything else is stripped. Project-scope servers (`<repo>/.mcp.json`) are additionally gated by host approval (see below).
+
+### Why name, not command
+
+MCP servers come in three transports: stdio (`command` + `args`), SSE (`url`), HTTP (`url` + `headers`). Only stdio carries a `command` string. Name is the only stable, user-visible identifier across all transports and appears directly in `ccairgap inspect` output.
+
+### Project-scope trust gate
+
+Claude Code treats `<repo>/.mcp.json` servers as untrusted — a server only runs after the user approves it via the `/mcp` TUI or by adding its name to `enabledMcpjsonServers` / setting `enableAllProjectMcpServers: true` in user, project, or `settings.local.json`. Approval state is persisted across those surfaces plus `~/.claude.json` `projects[<abs-path>]`.
+
+Inside the airgap container the approval dialog is unreachable (non-interactive startup, no user to click). The CLI therefore uses host approval as the trust signal: a project-scope server that matches `--mcp-enable` but was never approved on the host is stripped. Approval must be in place before launch. `disabledMcpjsonServers` wins over both approval and glob — a denied server always gets stripped.
+
+User-scope (`~/.claude.json` top-level), user-project scope (`~/.claude.json` `projects[*].mcpServers`), and plugin-scope servers have no such gate: the user put the server there / enabled the plugin themselves, glob match alone is sufficient.
+
+### Mechanism
+
+Same overlay pattern as §"Hook policy":
+
+- **`~/.claude.json` (user + user-project scope):** host file is read, `mcpServers` (top-level) and every `projects[*].mcpServers` are filtered, the patched copy is written to `$SESSION/mcp-policy/claude-json.json` and mounted RO at `/host-claude-patched-json`. The entrypoint `cp`s it over `~/.claude.json` before the jq onboarding patch. Always produced.
+- **Plugin `.mcp.json` / `plugin.json` (cache-backed):** for each `enabledPlugins[<plugin>@<market>] === true`, each file that exists under `~/.claude/plugins/cache/<market>/<plugin>/<ver>/` is filtered, written to `$SESSION/mcp-policy/plugins/<market>/<plugin>/<ver>/<fname>`, and mounted RO over the same path inside the container's plugin cache.
+- **Plugin `.mcp.json` / `plugin.json` (directory-sourced):** marketplaces with `source.source === "directory"` are loaded from the marketplace source tree (RO-mounted 1:1 by `discoverLocalMarketplaces`). For each enabled plugin the CLI filters `<pluginDir>/.mcp.json` and `<pluginDir>/plugin.json`, writes to `$SESSION/mcp-policy/dir-plugins/<market>/<plugin>/<fname>`, and mounts RO over the host path.
+- **Project `<repo>/.mcp.json`:** for each repo (`--repo` + every `--extra-repo`), if the session clone has `.mcp.json` it is filtered by glob AND approval state, written to `$SESSION/mcp-policy/projects/<repo>/.mcp.json`, and mounted RO at the repo's container path. Approval is derived from the host paths (user settings, `<repo>/.claude/settings.json[.local]`, `~/.claude.json` `projects[<abs>]`) — same scopes as `enumerateMcpServers`, so what `ccairgap inspect` shows as `approved` is exactly what survives the filter.
+
+Host files are never mutated; all patched copies live under `$SESSION/mcp-policy/` and die with the session dir.
+
+### Scope and limitations
+
+- **Identification is by name alone.** No transport/command-based targeting. A user who wants "only stdio MCPs" should enumerate names, not types.
+- **Enabling ≠ working.** The filter decides what makes it past the sandbox. The server still has to start inside the container — its binary must be installed in the image (custom Dockerfile) and any required env vars / credentials must be passed through (`--docker-run-arg "-e NAME"`). A matched but unrunnable server will fail at start-time like it would on the host.
+- **MCP server hooks** are declared via the plugin/user/project hook surfaces, not MCP surfaces. Enabling an MCP does not enable hooks it registers — those go through `--hook-enable`.
+- **Managed MCP tiers** (`/Library/Application Support/ClaudeCode/managed-mcp.json` and peers) are not mounted into the container. They are also not filtered — Claude Code inside the container won't see them at all.
+- **No "enable except X" semantics.** Only additive enable (subject to the project-scope approval AND). If you want most-but-not-one, enumerate the specific names.
+
+### CLI surface
+
+- Flag: `--mcp-enable <glob>` — repeatable.
+- Config file key: `mcp.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
+- Merge: CLI values append to config values (same semantics as `hooks.enable` / `--ro` / `--extra-repo`).
+- Introspection: `ccairgap inspect` prints every server name and source; see §"Hook policy" CLI surface for the full shape.
 
 ## Plugins, skills, commands, CLAUDE.md
 

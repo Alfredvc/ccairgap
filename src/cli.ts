@@ -44,6 +44,7 @@ function mergeRun(cli: {
   print?: string;
   name?: string;
   hookEnable: string[];
+  mcpEnable: string[];
   dockerRunArg: string[];
   warnDockerArgs?: boolean;
 }, cfg: ConfigFile) {
@@ -62,6 +63,7 @@ function mergeRun(cli: {
     print: cli.print ?? cfg.print,
     name: cli.name ?? cfg.name,
     hookEnable: [...(cfg.hooks?.enable ?? []), ...cli.hookEnable],
+    mcpEnable: [...(cfg.mcp?.enable ?? []), ...cli.mcpEnable],
     dockerRunArg: [...(cfg.dockerRunArg ?? []), ...cli.dockerRunArg],
     warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
   };
@@ -138,6 +140,12 @@ async function main() {
       [],
     )
     .option(
+      "--mcp-enable <glob>",
+      "enable a Claude Code MCP server whose `name` (key under `mcpServers`) matches <glob>. All MCP servers are disabled by default inside the sandbox; each --mcp-enable opts one back in. Project-scope `<repo>/.mcp.json` servers additionally require host approval (the approval dialog is unreachable inside the airgap). Glob wildcard is `*`. Repeatable.",
+      collect,
+      [],
+    )
+    .option(
       "--docker-run-arg <args>",
       "extra args appended to `docker run`. Shell-quoted value (e.g. --docker-run-arg '-p 8080:8080'). Last-wins on conflicts with built-in args. Repeatable.",
       collect,
@@ -192,6 +200,7 @@ async function main() {
           print: opts.print,
           name: opts.name,
           hookEnable: opts.hookEnable as string[],
+          mcpEnable: opts.mcpEnable as string[],
           dockerRunArg: opts.dockerRunArg as string[],
           warnDockerArgs: cliWarnDockerArgs,
         },
@@ -270,6 +279,7 @@ async function main() {
         print: merged.print,
         name: merged.name,
         hookEnable: merged.hookEnable,
+        mcpEnable: merged.mcpEnable,
         dockerRunArgs: merged.dockerRunArg,
         warnDockerArgs: merged.warnDockerArgs,
         bare,
