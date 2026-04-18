@@ -60,6 +60,36 @@ describe("resolveInitTarget", () => {
       /not in a git repo/,
     );
   });
+
+  it("targets .config/ccairgap/ when it exists and .ccairgap/ does not", () => {
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    initGitRepo(repo);
+    mkdirSync(join(repo, ".config", "ccairgap"), { recursive: true });
+    expect(resolveInitTarget({ cwd: repo, force: false })).toBe(
+      join(repo, ".config", "ccairgap"),
+    );
+  });
+
+  it("still targets .ccairgap/ when both canonical dirs exist", () => {
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    initGitRepo(repo);
+    mkdirSync(join(repo, ".ccairgap"));
+    mkdirSync(join(repo, ".config", "ccairgap"), { recursive: true });
+    expect(resolveInitTarget({ cwd: repo, force: false })).toBe(
+      join(repo, ".ccairgap"),
+    );
+  });
+
+  it("targets .ccairgap/ when neither canonical dir exists", () => {
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    initGitRepo(repo);
+    expect(resolveInitTarget({ cwd: repo, force: false })).toBe(
+      join(repo, ".ccairgap"),
+    );
+  });
 });
 
 describe("initCmd", () => {

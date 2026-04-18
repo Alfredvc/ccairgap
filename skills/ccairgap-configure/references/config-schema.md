@@ -1,6 +1,6 @@
 # Config schema — `.ccairgap/config.yaml`
 
-Default path: `<git-root>/.ccairgap/config.yaml`. Override with `--config <path>`. Both kebab-case (matches CLI flag names) and camelCase keys are accepted — kebab is preferred because it mirrors the flags.
+Default path: `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap prints a warning and uses the primary). Override with `--config <path>`. Both kebab-case (matches CLI flag names) and camelCase keys are accepted — kebab is preferred because it mirrors the flags.
 
 Unknown keys or wrong types abort launch with a clear error. The CLI validator is source of truth (`src/config.ts`) — this table mirrors it.
 
@@ -8,7 +8,7 @@ Unknown keys or wrong types abort launch with a clear error. The CLI validator i
 
 | YAML key | Type | Equivalent flag | Notes |
 |----------|------|-----------------|-------|
-| `repo` | string | `--repo` | Workspace repo. Single path. **Optional** — defaults to the git root containing the config. Relative → resolved against the **workspace anchor** (git root when config is at canonical `<git-root>/.ccairgap/config.yaml`). |
+| `repo` | string | `--repo` | Workspace repo. Single path. **Optional** — defaults to the git root containing the config. Relative → resolved against the **workspace anchor** (git root when config is at either canonical location: `<git-root>/.ccairgap/config.yaml` or `<git-root>/.config/ccairgap/config.yaml`). |
 | `extra-repo` | `[string]` | `--extra-repo` (repeat) | Additional repos mounted + cloned. Same anchor as `repo`. Not the workspace. |
 | `ro` | `[string]` | `--ro` (repeat) | RO bind mounts. Any path. Same anchor as `repo`. |
 | `cp` | `[string]` | `--cp` (repeat) | Copy-in-discard. Relative → resolved against **workspace repo root**. |
@@ -40,7 +40,7 @@ Three anchors, chosen by the semantic of each key. Absolute paths always work (a
 
 ### 1. Workspace anchor — for `repo`, `extra-repo`, `ro`
 
-These describe **repo-space**: your project, sibling repos, reference dirs next to your project. The anchor is the **git root** when the config lives at the canonical `<git-root>/.ccairgap/config.yaml` (which is the default). When `--config` points elsewhere (outside any `.ccairgap/` dir), the anchor falls back to the config file's own directory.
+These describe **repo-space**: your project, sibling repos, reference dirs next to your project. The anchor is the **git root** when the config lives at either canonical location (`<git-root>/.ccairgap/config.yaml` or `<git-root>/.config/ccairgap/config.yaml`). When `--config` points elsewhere (outside either canonical layout), the anchor falls back to the config file's own directory.
 
 In the canonical layout:
 
@@ -56,12 +56,14 @@ In the canonical layout:
 
 ### 2. Config-file-directory anchor — for `dockerfile`
 
-The Dockerfile is a sidecar file that lives next to `config.yaml`:
+The Dockerfile is a sidecar file that lives next to `config.yaml` (the same directory, whichever canonical location you use):
 
 | You write | Resolves to (for `<git-root>/.ccairgap/config.yaml`) |
 |-----------|-------------|
 | `dockerfile: Dockerfile` | `<git-root>/.ccairgap/Dockerfile` |
 | `dockerfile: ./images/custom.Dockerfile` | `<git-root>/.ccairgap/images/custom.Dockerfile` |
+
+(For `<git-root>/.config/ccairgap/config.yaml`, swap in `.config/ccairgap/` everywhere.)
 
 ### 3. Workspace-repo-root anchor — for `cp`, `sync`, `mount`
 

@@ -119,7 +119,7 @@ b4e2d8f Add login route
 
 | Flag | Default | Repeatable | Description |
 |------|---------|------------|-------------|
-| `--config <path>` | `<git-root>/.ccairgap/config.yaml` | no | YAML config file. |
+| `--config <path>` | `<git-root>/.ccairgap/config.yaml` (fallback: `<git-root>/.config/ccairgap/config.yaml`) | no | YAML config file. |
 | `--repo <path>` | cwd (if git repo) | no | Host repo exposed as the workspace (container cwd). Cloned `--shared`; branch `ccairgap/<ts>` created on exit. |
 | `--extra-repo <path>` | — | yes | Additional repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | — | yes | Extra read-only bind mount. |
@@ -222,7 +222,7 @@ See `docs/SPEC.md` §"Raw docker run args" for the full spec.
 
 ## Config file
 
-Any launch flag can live in a YAML file. Default location: `<git-root>/.ccairgap/config.yaml`. Override with `--config <path>`.
+Any launch flag can live in a YAML file. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. Override with `--config <path>`.
 
 Precedence: **CLI > config > built-in defaults**. Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `docker-run-arg`, etc.): concat (config first, CLI appended). `docker-build-arg` map merges per-key with CLI winning.
 
@@ -230,13 +230,13 @@ Precedence: **CLI > config > built-in defaults**. Scalars: CLI wins. Arrays (`ex
 
 | Keys | Anchor | Why |
 |------|--------|-----|
-| `repo`, `extra-repo`, `ro` | **Workspace anchor** — git root when config is at `<git-root>/.ccairgap/config.yaml`; config file's directory otherwise. | `repo: .` means your repo, `ro: ../docs` means a sibling — not mediated by the `.ccairgap/` subdir. |
-| `dockerfile` | Config file's directory. | Dockerfile is a sidecar that lives next to `config.yaml`. `dockerfile: Dockerfile` = `.ccairgap/Dockerfile`. |
+| `repo`, `extra-repo`, `ro` | **Workspace anchor** — git root when config is at either canonical location (`<git-root>/.ccairgap/config.yaml` or `<git-root>/.config/ccairgap/config.yaml`); config file's directory otherwise. | `repo: .` means your repo, `ro: ../docs` means a sibling. |
+| `dockerfile` | Config file's directory. | Dockerfile is a sidecar that lives next to `config.yaml`. `dockerfile: Dockerfile` = same directory as `config.yaml`. |
 | `cp`, `sync`, `mount` | Workspace repo root (resolved at launch against `--repo`). | These name paths inside the workspace (`node_modules`, `dist`, `.cache`). |
 
 Absolute paths bypass anchoring.
 
-Example `<git-root>/.ccairgap/config.yaml`:
+Example `<git-root>/.ccairgap/config.yaml` (or `.config/ccairgap/config.yaml`):
 
 ```yaml
 repo: .                    # optional; defaults to git root

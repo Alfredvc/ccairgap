@@ -89,9 +89,10 @@ async function main() {
   program
     .option(
       "--config <path>",
-      "path to yaml config file (default: <git-root>/.ccairgap/config.yaml). " +
+      "path to yaml config file (default: <git-root>/.ccairgap/config.yaml, " +
+        "fallback: <git-root>/.config/ccairgap/config.yaml). " +
         "Inside the config, relative `repo`/`extra-repo`/`ro` paths anchor on the git " +
-        "root (parent of `.ccairgap/`); relative `dockerfile` anchors on the config " +
+        "root (parent of the config dir); relative `dockerfile` anchors on the config " +
         "file's directory; relative `cp`/`sync`/`mount` anchor on the workspace repo root.",
     )
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
@@ -359,13 +360,15 @@ async function main() {
     .command("init")
     .description(
       "materialize the bundled Dockerfile, entrypoint.sh, and a minimal " +
-        "config.yaml into <git-root>/.ccairgap/ (or dirname(--config) if " +
-        "--config is passed). Lets you customize the container image without " +
-        "forking the repo.",
+        "config.yaml into <git-root>/.ccairgap/ (or <git-root>/.config/ccairgap/ " +
+        "when that dir already exists, or dirname(--config) if --config is " +
+        "passed). Lets you customize the container image without forking the repo.",
     )
     .option(
       "--config <path>",
-      "target a specific config file location instead of <git-root>/.ccairgap/config.yaml",
+      "target a specific config file location instead of the default " +
+        "(<git-root>/.ccairgap/config.yaml, or <git-root>/.config/ccairgap/config.yaml " +
+        "when that dir already exists)",
     )
     .option(
       "--force",

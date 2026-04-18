@@ -171,9 +171,9 @@ In order:
 
 ## Config file
 
-YAML file that mirrors launch flags. Default location: `<git-root>/.ccairgap/config.yaml`. Override: `--config <path>`.
+YAML file that mirrors launch flags. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. Override: `--config <path>`.
 
-- **Load:** the CLI walks up from `cwd` to find the git root; if `<git-root>/.ccairgap/config.yaml` exists it's loaded. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
+- **Load:** the CLI walks up from `cwd` to find the git root; it checks `<git-root>/.ccairgap/config.yaml` first, then `<git-root>/.config/ccairgap/config.yaml`; the first one found is loaded. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
 - **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth.
 - **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
 - **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
@@ -184,7 +184,7 @@ Three anchors, chosen by the semantic of each key. Absolute paths bypass anchori
 
 | Keys | Anchor | Rationale |
 |------|--------|-----------|
-| `repo`, `extra-repo`, `ro` | **Workspace anchor.** When the config lives at the canonical `<X>/.ccairgap/config.yaml`, anchor = `<X>` (= the git root). When `--config` points elsewhere (e.g. `/tmp/cfg.yaml`), anchor = `dirname(configPath)`. | These paths describe the user's repo-space — "my repo", "a sibling repo", "the docs dir next to my project". Anchoring on the git root (in the canonical case) makes `repo: .` mean the workspace, `ro: ../docs` mean a sibling of the workspace. Anchoring on the `.ccairgap/` subdir (an implementation detail of ccairgap) would force every user to write `repo: ..` and `ro: ../../docs`. |
+| `repo`, `extra-repo`, `ro` | **Workspace anchor.** When the config lives at either canonical location (`<X>/.ccairgap/config.yaml` or `<X>/.config/ccairgap/config.yaml`), anchor = `<X>` (= the git root). When `--config` points elsewhere (e.g. `/tmp/cfg.yaml`), anchor = `dirname(configPath)`. | These paths describe the user's repo-space — "my repo", "a sibling repo", "the docs dir next to my project". Anchoring on the git root makes `repo: .` mean the workspace, `ro: ../docs` mean a sibling. |
 | `dockerfile` | **Config file's directory.** | The Dockerfile is a sidecar file that lives next to `config.yaml`. `dockerfile: Dockerfile` means "the Dockerfile in this same directory". |
 | `cp`, `sync`, `mount` | **Workspace repo root**, resolved at launch against the final `--repo` value. Under `--bare`, anchor on CLI `$(pwd)` instead (see §"Bare mode"). | See §"Build artifact paths". These name paths inside the workspace, not paths relative to the config file's location. |
 
@@ -193,7 +193,7 @@ Implementation: `src/config.ts` `resolveConfigPaths` handles `repo`/`extra-repo`
 ### Example
 
 ```yaml
-# <git-root>/.ccairgap/config.yaml
+# <git-root>/.ccairgap/config.yaml  (or .config/ccairgap/config.yaml)
 
 # Workspace-space (anchored on git root)
 repo: .                 # optional; defaults to git root anyway
@@ -228,7 +228,7 @@ hooks:
 
 **What `--bare` turns off:**
 
-- **Config file loading.** The default `<git-root>/.ccairgap/config.yaml` is ignored even if present. `--bare` + explicit `--config <path>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
+- **Config file loading.** Default config discovery (`<git-root>/.ccairgap/config.yaml` / `<git-root>/.config/ccairgap/config.yaml`) is skipped. `--bare` + explicit `--config <path>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
 - **Workspace inference from cwd.** Normal mode defaults `--repo` to `$(pwd)` when cwd is a git repo. `--bare` skips this — the workspace stays unset unless `--repo` is passed explicitly.
 - **Empty-session guard.** Normal mode errors when no `--repo` / `--ro` / git-repo-cwd is available. `--bare` proceeds with zero mounts; the user gets a Claude-only container with no host repos or reference material at all.
 

@@ -1,14 +1,18 @@
-# .ccairgap/config.yaml — annotated template.
+# ccairgap config.yaml — annotated template.
 #
 # Default load path: <git-root>/.ccairgap/config.yaml
+#   Fallback:        <git-root>/.config/ccairgap/config.yaml
+#   (Only loaded when the primary is absent. If both exist, ccairgap prints
+#   a warning to stderr and uses the primary.)
 # Override: ccairgap --config <path>
 #
 # Precedence: CLI > config > defaults.
 #
 # Relative path resolution — three anchors:
-#   - `repo`, `extra-repo`, `ro` → WORKSPACE ANCHOR (= git root in the canonical
-#     layout; = config file's dir when --config points outside a .ccairgap/).
-#     Write these as if you were standing in the git root, not in .ccairgap/.
+#   - `repo`, `extra-repo`, `ro` → WORKSPACE ANCHOR (= git root when the config
+#     lives at either canonical location; = config file's dir otherwise).
+#     Write these as if you were standing in the git root, not in the
+#     config directory.
 #   - `dockerfile` → this config file's own directory (sidecar convention).
 #   - `cp`, `sync`, `mount` → workspace repo root, resolved at launch.
 #

@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { parseConfig, resolveConfigPaths } from "./config.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { execaSync } from "execa";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  parseConfig,
+  resolveConfigPath,
+  resolveConfigPaths,
+} from "./config.js";
 
 const SRC = "/repo/.ccairgap/config.yaml";
 
@@ -191,6 +205,22 @@ describe("resolveConfigPaths", () => {
     expect(out.dockerfile).toBe("/repo/.ccairgap/Dockerfile");
   });
 
+  it("resolves workspace paths against git root for .config/ccairgap/ layout", () => {
+    const cfg = {
+      repo: ".",
+      extraRepo: ["../sibling"],
+      ro: ["../docs"],
+      dockerfile: "Dockerfile",
+    };
+    const out = resolveConfigPaths(cfg, "/repo/.config/ccairgap/config.yaml");
+    expect(out).toEqual({
+      repo: "/repo",
+      extraRepo: ["/sibling"],
+      ro: ["/docs"],
+      dockerfile: "/repo/.config/ccairgap/Dockerfile",
+    });
+  });
+
   it("falls back to config dir when config is not in a .ccairgap/ dir", () => {
     const cfg = {
       repo: "./sub",
@@ -219,5 +249,76 @@ describe("resolveConfigPaths", () => {
       mount: [".cache"],
     };
     expect(resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml")).toEqual(cfg);
+  });
+
+  it("does not treat ccairgap/ as canonical when parent is not .config/", () => {
+    const cfg = { repo: "." };
+    const out = resolveConfigPaths(cfg, "/some/path/ccairgap/config.yaml");
+    expect(out.repo).toBe("/some/path/ccairgap"); // configDir, not git root
+  });
+});
+
+describe("resolveConfigPath", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "airgap-cfg-")));
+    execaSync("git", ["init", "-q"], { cwd: root });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  function writePrimary(): string {
+    const dir = join(root, ".ccairgap");
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, "");
+    return p;
+  }
+
+  function writeAlternate(): string {
+    const dir = join(root, ".config", "ccairgap");
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, "");
+    return p;
+  }
+
+  it("returns .ccairgap/config.yaml when only that exists", () => {
+    const primary = writePrimary();
+    expect(resolveConfigPath(undefined, root)).toBe(primary);
+  });
+
+  it("returns .config/ccairgap/config.yaml when only that exists", () => {
+    const alternate = writeAlternate();
+    expect(resolveConfigPath(undefined, root)).toBe(alternate);
+  });
+
+  it("returns .ccairgap/config.yaml and warns when both exist", () => {
+    const primary = writePrimary();
+    writeAlternate();
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(resolveConfigPath(undefined, root)).toBe(primary);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const msg = warn.mock.calls[0]?.[0];
+    expect(msg).toMatch(/both \.ccairgap\/config\.yaml and \.config\/ccairgap\/config\.yaml/);
+    expect(msg).toMatch(/using \.ccairgap\/config\.yaml/);
+  });
+
+  it("returns undefined when neither exists", () => {
+    expect(resolveConfigPath(undefined, root)).toBeUndefined();
+  });
+
+  it("does not emit the collision warning when --config is passed explicitly", () => {
+    const primary = writePrimary();
+    writeAlternate();
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Explicit --config pointing at the primary: loader must skip the walk
+    // (and thus skip the collision warning).
+    expect(resolveConfigPath(primary, root)).toBe(primary);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

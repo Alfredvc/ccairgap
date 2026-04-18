@@ -297,7 +297,16 @@ export function resolveInitTarget(opts: InitOptions): string {
       reject: false,
     });
     if (exitCode === 0 && stdout.trim()) {
-      return join(stdout.trim(), ".ccairgap");
+      const gitRoot = stdout.trim();
+      const primary = join(gitRoot, ".ccairgap");
+      const alternate = join(gitRoot, ".config", "ccairgap");
+      // Avoid silently shadowing an existing .config/ccairgap/ config: if the
+      // alternate dir already exists and .ccairgap/ does not, target the
+      // alternate so init writes where the loader will pick it up first.
+      if (existsSync(alternate) && !existsSync(primary)) {
+        return alternate;
+      }
+      return primary;
     }
   } catch {
     // fall through to error

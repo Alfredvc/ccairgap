@@ -3,8 +3,9 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execaSync } from "execa";
 import { parse as parseYaml } from "yaml";
 
-/** Default config file path relative to git repo root. */
+/** Default config file paths relative to git repo root (checked in order). */
 export const DEFAULT_CONFIG_REL = ".ccairgap/config.yaml";
+export const ALTERNATE_CONFIG_REL = ".config/ccairgap/config.yaml";
 
 /**
  * All CLI options that can live in config. Camel-cased to match launch opts.
@@ -73,7 +74,7 @@ function gitRepoRoot(cwd: string): string | undefined {
 /**
  * Resolve config file to load.
  *  - If `explicit` set: must exist, absolute or resolved against cwd.
- *  - Else: git-repo-root/.ccairgap/config.yaml if present, else none.
+ *  - Else: checks .ccairgap/config.yaml then .config/ccairgap/config.yaml under git root.
  */
 export function resolveConfigPath(
   explicit: string | undefined,
@@ -88,8 +89,19 @@ export function resolveConfigPath(
   }
   const root = gitRepoRoot(cwd);
   if (!root) return undefined;
-  const p = join(root, DEFAULT_CONFIG_REL);
-  return existsSync(p) ? p : undefined;
+  const primary = join(root, DEFAULT_CONFIG_REL);
+  const alternate = join(root, ALTERNATE_CONFIG_REL);
+  const primaryExists = existsSync(primary);
+  const alternateExists = existsSync(alternate);
+  if (primaryExists && alternateExists) {
+    console.error(
+      `ccairgap: warning: both ${DEFAULT_CONFIG_REL} and ${ALTERNATE_CONFIG_REL} ` +
+        `found; using ${DEFAULT_CONFIG_REL}`,
+    );
+  }
+  if (primaryExists) return primary;
+  if (alternateExists) return alternate;
+  return undefined;
 }
 
 function assertStringArray(v: unknown, key: string): string[] {
@@ -254,12 +266,12 @@ export function loadConfig(
  * Resolve config-file paths. Two anchors, by semantic:
  *
  *  - Workspace-space paths (`repo`, `extra-repo`, `ro`) resolve against the
- *    "workspace anchor". When the config lives at the canonical
- *    `<git-root>/.ccairgap/config.yaml`, the anchor is the git-root
- *    (`dirname` of the `.ccairgap/` dir) so users can write `repo: .`,
- *    `ro: ../docs`, `extra-repo: ../sibling` and have them mean what they
- *    say about their project. When `--config` points somewhere else, fall
- *    back to the config file's own directory.
+ *    "workspace anchor". When the config lives at either canonical location
+ *    (`<git-root>/.ccairgap/config.yaml` or
+ *    `<git-root>/.config/ccairgap/config.yaml`), the anchor is the git-root
+ *    so users can write `repo: .`, `ro: ../docs`, `extra-repo: ../sibling`
+ *    and have them mean what they say about their project. When `--config`
+ *    points somewhere else, fall back to the config file's own directory.
  *
  *  - `dockerfile` resolves against the config file's directory (sidecar
  *    convention — the Dockerfile lives next to the config).
@@ -271,8 +283,15 @@ export function loadConfig(
  */
 export function resolveConfigPaths(cfg: ConfigFile, configPath: string): ConfigFile {
   const configDir = dirname(configPath);
-  const workspaceAnchor =
-    basename(configDir) === ".ccairgap" ? dirname(configDir) : configDir;
+  const parentDir = dirname(configDir);
+  let workspaceAnchor: string;
+  if (basename(configDir) === ".ccairgap") {
+    workspaceAnchor = parentDir; // <git-root>/.ccairgap/config.yaml
+  } else if (basename(configDir) === "ccairgap" && basename(parentDir) === ".config") {
+    workspaceAnchor = dirname(parentDir); // <git-root>/.config/ccairgap/config.yaml
+  } else {
+    workspaceAnchor = configDir; // non-canonical --config path
+  }
   const against = (anchor: string) => (p: string) =>
     isAbsolute(p) ? p : resolve(anchor, p);
   const viaWorkspace = against(workspaceAnchor);

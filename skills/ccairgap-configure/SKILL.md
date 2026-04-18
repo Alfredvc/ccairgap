@@ -7,7 +7,7 @@ description: Configure `ccairgap` (ccairgap) for a specific project or workflow 
 
 `ccairgap` runs Claude Code with `--dangerously-skip-permissions` inside a Docker container. Two configuration surfaces handle almost every real request:
 
-1. **`.ccairgap/config.yaml`** — same keys as CLI flags. Default path `<git-root>/.ccairgap/config.yaml`.
+1. **`.ccairgap/config.yaml`** — same keys as CLI flags. Default path `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap warns and uses the primary).
 2. **Custom `Dockerfile`** — extend the bundled `node:20-slim` base when a workflow needs binaries not shipped by default (Python, Playwright, language toolchains, MCP server binaries). Referenced via `dockerfile:` in config.
 
 There is a third surface — `--docker-run-arg` — but it is an escape hatch, not a recommendation you should reach for. See "When `docker-run-arg` is *not* the answer" below. **Do not propose it unless the user has explicitly described a need it addresses.**
@@ -88,7 +88,7 @@ Emit the minimum artifact set needed. If the user only needs a `config.yaml`, do
 
 Default locations (adjust if the user prefers elsewhere):
 
-- Config: `<git-root>/.ccairgap/config.yaml` — ccairgap's default path, no `--config` needed.
+- Config: `<git-root>/.ccairgap/config.yaml` — ccairgap's default path, no `--config` needed. (`<git-root>/.config/ccairgap/config.yaml` also works as a fallback — use it only if the project already keeps tool configs under `.config/`.)
 - Dockerfile: `<git-root>/.ccairgap/Dockerfile` — set `dockerfile: Dockerfile` in config (sidecar convention).
 
 Every artifact should be **commented**. Treat the YAML and the Dockerfile as teaching artifacts the user has to live with. Explain why each non-default key is there in a short inline comment. **Delete keys the user doesn't use — do not ship the full template with commented-out examples.**
@@ -239,7 +239,7 @@ Read only what you need.
 
 ## Common traps
 
-- **Don't put host-absolute paths in committed `config.yaml`.** Use relative paths. Three anchors: `repo`/`extra-repo`/`ro` resolve against the **git root** (parent of `.ccairgap/`). `dockerfile` resolves against the **config file's directory** (sidecar, so `dockerfile: Dockerfile` finds `.ccairgap/Dockerfile`). `cp`/`sync`/`mount` resolve against the **workspace repo root** at launch. Absolute paths work but don't transfer between teammates.
+- **Don't put host-absolute paths in committed `config.yaml`.** Use relative paths. Three anchors: `repo`/`extra-repo`/`ro` resolve against the **git root** (parent of the config dir — works for both `.ccairgap/` and `.config/ccairgap/`). `dockerfile` resolves against the **config file's directory** (sidecar, so `dockerfile: Dockerfile` finds the Dockerfile next to the config). `cp`/`sync`/`mount` resolve against the **workspace repo root** at launch. Absolute paths work but don't transfer between teammates.
 - **Don't recommend `--privileged`, `--cap-add`, `--pid=host`, `--network=host`, or `docker.sock` mounts to "make it work".** Those defeat the sandbox. Diagnose the root cause; if the honest answer is "this workflow can't run sandboxed", say so.
 - **Don't default to RW mounts for artifact dirs.** `node_modules`, `.venv`, `target/` get no config entry unless the user asks to cache them. First-run cost is not an escalation trigger.
 - **Don't forget UID/GID.** The base Dockerfile's `ARG HOST_UID` / `ARG HOST_GID` pattern is load-bearing for bind-mount file ownership. Custom Dockerfiles that skip this will write root-owned files to the host on any bind mount.

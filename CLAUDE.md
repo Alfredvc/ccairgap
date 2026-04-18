@@ -68,10 +68,10 @@ docs/SPEC.md      authoritative design
 
 ## Config file
 
-`--config <path>` or default `<git-root>/.ccairgap/config.yaml`. YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
+`--config <path>` or default `<git-root>/.ccairgap/config.yaml` (fallback `<git-root>/.config/ccairgap/config.yaml`). YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
 
 **Relative path resolution** — three anchors by semantic (implemented in `src/config.ts` `resolveConfigPaths` + `src/artifacts.ts`):
-- `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at canonical `<git-root>/.ccairgap/config.yaml` (i.e. `dirname(configDir)` when `basename(configDir) === ".ccairgap"`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
+- `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at either canonical location (`<git-root>/.ccairgap/config.yaml` or `<git-root>/.config/ccairgap/config.yaml`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
 - `dockerfile` → **config file's directory** (sidecar convention). `dockerfile: Dockerfile` = `.ccairgap/Dockerfile`.
 - `cp`, `sync`, `mount` → **workspace repo root** at launch (`artifacts.ts`, not `resolveConfigPaths`).
 
