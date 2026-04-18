@@ -1,8 +1,14 @@
+<div align="center">
+
 # ccairgap
+
+![ccairgap — walk away, work lands as a branch](docs/readme-banner.jpg)
 
 [![CI](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml/badge.svg)](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/ccairgap.svg)](https://www.npmjs.com/package/ccairgap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
 
 Running Claude with full permissions on your host is risky. Running it with permission prompts means babysitting every tool call — and rules are hard to get right. ccairgap gives you a third option: your Claude Code, running inside Docker with the same skills, config, hooks, and MCP servers, against a sandboxed clone of exactly what it needs. Full permissions. No babysitting. Work lands as a branch when the session ends.
 
