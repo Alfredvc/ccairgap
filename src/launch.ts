@@ -385,6 +385,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
+  dockerArgs.push("-e", "COLORTERM=truecolor");
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }
