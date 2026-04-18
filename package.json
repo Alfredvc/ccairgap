@@ -29,7 +29,7 @@
     "ccairgap": "dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/cli.js",
     "docker",
     "README.md",
     "LICENSE",
@@ -39,6 +39,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build",
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
