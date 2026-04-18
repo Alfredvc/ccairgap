@@ -61,12 +61,6 @@ ccairgap
 
 Claude opens at your repo's root with your full setup — config, CLAUDE.md, skills, slash commands. Hooks and MCP servers are available; see [Hooks](#hooks) and [MCP servers](#mcp-servers) for how to opt them in.
 
-Scaffold a sidecar Dockerfile and config to customize the container image:
-
-```bash
-ccairgap init   # writes .ccairgap/{Dockerfile, entrypoint.sh, config.yaml}
-```
-
 ### Common setups
 
 ```bash
