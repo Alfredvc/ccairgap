@@ -4,9 +4,14 @@
 [![npm](https://img.shields.io/npm/v/ccairgap.svg)](https://www.npmjs.com/package/ccairgap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Run Claude Code with `--dangerously-skip-permissions` inside a Docker container. Hand it a task, walk away. Host filesystem is physically unable to be mutated outside a small set of explicitly writable paths. Exfiltration is an accepted risk; host state destruction is not.
+The whole point of AI is to not do the work yourself. So why are you still babysitting every command? ccairgap runs Claude airgapped from your files. Hand it a task, go live your life, come back to a branch.
 
-See [`docs/SPEC.md`](docs/SPEC.md) for the full design.
+- **Instant launch.** No copying. Works on huge repos.
+- **Your Claude setup comes with you.** Config and skills automatically. Hooks and MCPs with a little setup.
+- **Auto-delivery.** Work lands back as a new branch when the session ends.
+- **Docker underneath.** Total flexibility when you need it.
+
+See [`docs/SPEC.md`](docs/SPEC.md) for the full design and [`SECURITY.md`](SECURITY.md) for the threat model.
 
 ## Install
 
