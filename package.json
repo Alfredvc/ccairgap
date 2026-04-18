@@ -7,11 +7,11 @@
   "author": "Alfredo V. Clemente",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alfredvc/ccairgap.git"
+    "url": "git+https://github.com/Alfredvc/ccairgap.git"
   },
-  "homepage": "https://github.com/alfredvc/ccairgap#readme",
+  "homepage": "https://github.com/Alfredvc/ccairgap#readme",
   "bugs": {
-    "url": "https://github.com/alfredvc/ccairgap/issues"
+    "url": "https://github.com/Alfredvc/ccairgap/issues"
   },
   "keywords": [
     "claude",
