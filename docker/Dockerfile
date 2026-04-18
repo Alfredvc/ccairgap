@@ -16,8 +16,6 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       vim \
  && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
-
 RUN set -e; \
     if ! getent group ${HOST_GID} > /dev/null; then \
         groupadd -g ${HOST_GID} claude; \
@@ -30,13 +28,24 @@ RUN set -e; \
     fi; \
     mkdir -p /home/claude && chown -R ${HOST_UID}:${HOST_GID} /home/claude
 
+USER claude
+WORKDIR /home/claude
+
+ENV PATH=/home/claude/.local/bin:$PATH
+
+RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
+        curl -fsSL https://claude.ai/install.sh | bash; \
+    else \
+        curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
+    fi
+
 # Pre-create bind-mount target dirs so Docker doesn't auto-create them as root:root
 # before the entrypoint runs. Matches container paths:
 #   /home/claude/.claude/projects       <- $SESSION/transcripts (rw)
 #   /home/claude/.claude/plugins/cache  <- ~/.claude/plugins/cache (ro)
-RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache \
- && chown -R ${HOST_UID}:${HOST_GID} /home/claude
+RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache
 
+USER root
 COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
 RUN chmod +x /usr/local/bin/ccairgap-entrypoint
 

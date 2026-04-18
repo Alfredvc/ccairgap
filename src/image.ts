@@ -111,3 +111,14 @@ export async function readImageClaudeVersion(tag: string): Promise<string | unde
     return undefined;
   }
 }
+
+/** Best-effort: read Claude Code version from the host `claude` binary. */
+export async function hostClaudeVersion(): Promise<string | undefined> {
+  try {
+    const { stdout } = await execa("claude", ["--version"], { timeout: 5_000 });
+    const match = stdout.trim().match(/(\d+\.\d+\.\d+(?:-\S+)?)/);
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}

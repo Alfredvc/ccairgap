@@ -46,7 +46,7 @@ src/
   paths.ts        XDG state dir resolution; CCAIRGAP_HOME override
   version.ts      cliVersion() from package.json
 docker/
-  Dockerfile      node:20-slim; claude-code@${CLAUDE_CODE_VERSION:-latest}; non-root `claude` at HOST_UID/HOST_GID
+  Dockerfile      node:20-slim; native installer (claude.ai/install.sh) pinned to ${CLAUDE_CODE_VERSION} (default: host version); non-root `claude` at HOST_UID/HOST_GID
   entrypoint.sh   rsync /host-claude → ~/.claude, copy creds, patch .claude.json, exec claude
 docs/SPEC.md      authoritative design
 ```
