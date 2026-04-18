@@ -25,6 +25,7 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full design.
 ## Contents
 
 - [Setup](#setup)
+- [Agent Skills](#agent-skills)
 - [Quick start](#quick-start)
 - [Why ccairgap?](#why-ccairgap)
 - [Launch flags](#launch-flags)
@@ -56,6 +57,14 @@ Requires Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS; Linux
 Log in on the host once with `claude` — ccairgap inherits those credentials automatically. First launch builds the container image (one-time; subsequent launches reuse it).
 
 **Git identity.** ccairgap reads your `git config user.name` / `user.email` from the host at launch and passes them to the container so commits work. If no identity is configured, a placeholder `ccairgap <noreply@ccairgap.local>` is used and a warning is printed. GPG/SSH signing is not supported inside the container.
+
+## Agent Skills
+
+Install skills for Claude Code:
+
+```bash
+npx skills add alfredvc/ccairgap
+```
 
 ## Quick start
 
