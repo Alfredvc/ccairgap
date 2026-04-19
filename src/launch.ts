@@ -21,6 +21,7 @@ import {
   resolveGitDir,
 } from "./git.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
+import { filterSubsumedMarketplaces } from "./marketplaces.js";
 import { buildMounts, mountArg } from "./mounts.js";
 import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
 import { handoff } from "./handoff.js";
@@ -249,6 +250,20 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     }
   }
 
+  // Step: discover and pre-filter plugin marketplaces.
+  // Filtering subsumed-by-repo marketplaces BEFORE resolveArtifacts is
+  // critical — resolveArtifacts's overlap check would otherwise fatal on the
+  // marketplace-equals-workspace-repo case instead of letting it pass through
+  // as a warn-and-drop.
+  const hostClaude = realpath(hostClaudeDir(env));
+  const rawMarketplaces = discoverLocalMarketplaces(hostClaude, home);
+  const marketplaceFilter = filterSubsumedMarketplaces(
+    rawMarketplaces,
+    repoPlans.map((r) => r.hostPath),
+  );
+  for (const w of marketplaceFilter.warnings) console.error(`ccairgap: ${w}`);
+  const marketplaces = marketplaceFilter.marketplaces;
+
   // Resolve cp/sync/mount: validate, detect overlaps, plan copies & mounts.
   let artifacts;
   try {
@@ -262,6 +277,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         sessionClonePath: r.sessionClonePath,
       })),
       roPaths: roResolved,
+      marketplaces,
       sessionDir: sessionPath,
       relativeAnchor: opts.bare ? process.cwd() : undefined,
     });
@@ -269,9 +285,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     die((e as Error).message);
   }
   for (const w of artifacts.warnings) console.error(`ccairgap: ${w}`);
-
-  const hostClaude = realpath(hostClaudeDir(env));
-  const marketplaces = discoverLocalMarketplaces(hostClaude, home);
 
   // ---- Orphan scan (advisory only) ----
   const orphans = await scanOrphans(cliVersion());
