@@ -77,4 +77,29 @@ describe("buildMounts + collision resolver", () => {
     input.roPaths = ["/host-git-alternates/some-repo/objects"];
     expect(() => buildMounts(input)).toThrow(/host-git-alternates/);
   });
+
+  it("mounts ~/.claude/plugins at host-abs path so known_marketplaces.json installLocation resolves", () => {
+    mkdirSync(join(root, "claude", "plugins", "marketplaces", "some-market"), { recursive: true });
+    mkdirSync(join(root, "claude", "plugins", "cache", "some-market", "some-plugin", "1.0.0"), { recursive: true });
+    const input = baseInput(root);
+
+    const mounts = buildMounts(input);
+    const hostPluginsPath = join(root, "claude", "plugins");
+    const hostAbsMount = mounts.find((m) => m.src === hostPluginsPath && m.dst === hostPluginsPath);
+    expect(hostAbsMount).toBeDefined();
+    expect(hostAbsMount?.mode).toBe("ro");
+  });
+
+  it("skips host-abs-path plugins mount when host ~/.claude matches container $HOME/.claude", () => {
+    mkdirSync(join(root, "home", "claude", ".claude", "plugins"), { recursive: true });
+    const input = baseInput(root);
+    input.hostClaudeDir = join(root, "home", "claude", ".claude");
+    input.homeInContainer = join(root, "home", "claude");
+
+    const mounts = buildMounts(input);
+    const hostAbsCandidates = mounts.filter(
+      (m) => m.source.kind === "plugins-host-path",
+    );
+    expect(hostAbsCandidates).toHaveLength(0);
+  });
 });

@@ -286,6 +286,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/mcp-policy/dir-plugins/<market>/<plugin>/{.mcp.json,plugin.json}` | `<pluginDir>/{.mcp.json,plugin.json}` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin file that declares `mcpServers`. Always present when source exists. |
 | `$SESSION/mcp-policy/projects/<repo>/.mcp.json` | `<original-host-path>/.mcp.json` | ro | Nested single-file overlay on top of the session clone. One mount per repo whose `.mcp.json` exists. Filtered by glob **and** host approval state — servers approved on host via `enabledMcpjsonServers` / `enableAllProjectMcpServers` and matching the glob survive; everything else is stripped. |
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
+| `~/.claude/plugins/` (resolved) | `<host-abs-path>/.claude/plugins/` | ro | Second RO mount of plugins tree at the original host absolute path. `known_marketplaces.json` (`installLocation`) and `installed_plugins.json` (`installPath`) store absolute host paths; without a mount at the real host path, Claude Code startup fails with "Plugin X not found in marketplace Y" for `github`/`git`/`npm`/`url`-sourced marketplaces. Skipped when host `~/.claude` coincides with container `$HOME/.claude` (no new path). |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` | `<original-host-path>` | rw | Session clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. |
@@ -661,7 +662,7 @@ Host files are never mutated; all patched copies live under `$SESSION/mcp-policy
 
 **Plugin marketplace discovery:**
 - The CLI extracts absolute paths from `extraKnownMarketplaces` entries in host `~/.claude/settings.json` whose `source.source` is `"directory"` or `"file"`. These reference plugin marketplaces living outside `~/.claude/` (e.g. `~/src/agentfiles`, `~/src/claude-meta`).
-- `github`/`git`/`npm`/`url` marketplaces resolve via the RO-mounted `~/.claude/plugins/cache/` — no extra mount needed.
+- `github`/`git`/`npm`/`url` marketplaces resolve via `known_marketplaces.json` whose `installLocation` points at `~/.claude/plugins/marketplaces/<name>`, and `installed_plugins.json` whose `installPath` points at `~/.claude/plugins/cache/<market>/<plugin>/<ver>`. Both fields store absolute host paths, so ccairgap RO-mounts `~/.claude/plugins/` at its host absolute path (in addition to the container-$HOME cache mount). No extra per-marketplace mount needed.
 - Each extracted path is RO bind-mounted at its original absolute path so `settings.json` references resolve inside the container — UNLESS the path equals or is nested inside a `--repo`/`--extra-repo` tree, in which case the mount is dropped (the repo's session clone already serves those files at the same container path). A stderr warning names the affected marketplace.
 
 Exact jq query:

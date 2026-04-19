@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "transcripts" | "output" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -91,6 +91,28 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       dst: join(i.homeInContainer, ".claude", "plugins", "cache"),
       mode: "ro",
       source: { kind: "plugins-cache" },
+    });
+  }
+
+  // Host-abs-path mount of ~/.claude/plugins/. known_marketplaces.json and
+  // installed_plugins.json store absolute host paths like
+  // /Users/<user>/.claude/plugins/marketplaces/<name> and
+  // /Users/<user>/.claude/plugins/cache/<market>/<plugin>/<ver>. The
+  // container-$HOME plugins/cache mount above makes those paths resolvable only
+  // when host $HOME matches container $HOME (/home/claude). For everything else
+  // (normal macOS/Linux host) we need to surface plugins/ at its real host
+  // absolute path too; otherwise Claude Code startup fails with
+  // "Plugin X not found in marketplace Y" for github-sourced marketplaces.
+  // Skip when host and container $HOME coincide (no new path) or when the dir
+  // is absent.
+  const hostPluginsDir = join(i.hostClaudeDir, "plugins");
+  const containerClaudeDir = join(i.homeInContainer, ".claude");
+  if (existsSync(hostPluginsDir) && i.hostClaudeDir !== containerClaudeDir) {
+    mounts.push({
+      src: hostPluginsDir,
+      dst: hostPluginsDir,
+      mode: "ro",
+      source: { kind: "plugins-host-path" },
     });
   }
 

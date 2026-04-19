@@ -59,6 +59,7 @@ function label(src: MountSource): string {
     case "patched-settings": return `patched user settings`;
     case "patched-claude-json": return `patched ~/.claude.json`;
     case "plugins-cache": return `plugins cache RO mount`;
+    case "plugins-host-path": return `plugins host-abs-path RO mount`;
     case "transcripts": return `transcripts RW mount`;
     case "output": return `/output RW mount`;
   }
