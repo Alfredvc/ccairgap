@@ -50,6 +50,12 @@ ccairgap
 ```
 Claude opens at your repo root, work as normal. Then when you are done simply exit claude and any comitted changes will appear in your repository as a new branch `ccairgap/<id>`
 
+The sandboxed Claude has:
+- Your CLAUDE.md, both project and global
+- Your skills from: project, global, inside plugins
+- Your hooks (may require adjusting your dockerfile)
+- Your MCP servers (likely requires adjusting your dockerfile)
+
 ### Common setups:
 
 ```bash
