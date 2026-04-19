@@ -533,7 +533,7 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 
 - Claude writes session transcripts to `~/.claude/projects/<path-encoded-cwd>/` inside the container.
 - `<path-encoded-cwd>` is the absolute cwd with `/` replaced by `-`. Example: cwd `/Users/alfredvc/src/foo` → dir `-Users-alfredvc-src-foo`. This is deterministic encoding, not a hash; same path always produces the same dir name.
-- The directory contains `<session-uuid>/*.jsonl` plus nested `<session-uuid>/subagents/*.jsonl` for subagent transcripts.
+- The directory contains a flat `<session-uuid>.jsonl` main transcript plus an optional sibling `<session-uuid>/` dir for subagent content (present only when the session spawned subagents). The subagent dir holds `subagents/<agent-id>.jsonl` and `subagents/<agent-id>.meta.json` pairs. A per-project `permissions_log.jsonl` sits alongside the main file and is cross-session.
 - The `projects/` path is a bind mount of an empty-per-session host dir: `$SESSION/transcripts/`. Container sees only its own session's transcripts — no read, modify, or delete access to older ones.
 - On container exit, the CLI's exit trap recursively copies each `$SESSION/transcripts/<path-encoded-cwd>/` into host `~/.claude/projects/<same-dir-name>/` using `cp -r` (or `rsync -a`). Merging with any existing host content is safe — session UUIDs in nested dir names are unique.
 - Because container preserves host absolute paths for repo cwds, the encoded dir name matches between container and host — `claude --resume` on the host finds the transcript naturally.
