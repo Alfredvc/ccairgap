@@ -166,8 +166,11 @@ async function main() {
     .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
     .option("--no-clipboard", "disable image-clipboard passthrough (host-side watcher + bridge-dir RO mount). Passthrough is enabled by default on supported hosts (macOS with pngpaste; Linux Wayland/X11 with wl-clipboard/xclip; WSL2 with wl-clipboard). No-op under --print.")
     .option(
-      "-r, --resume <session-id>",
-      "resume an existing Claude session by UUID. Looks up the transcript under " +
+      "-r, --resume <id-or-name>",
+      "resume an existing Claude session. Accepts a session UUID OR the session's " +
+        "custom title (e.g. what `claude` prints on exit). Titles are matched " +
+        "case-insensitively and must be exact; ambiguous or missing titles error with " +
+        "a candidate list. Looks up the transcript under " +
         "~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl on the host and " +
         "copies it into the sandbox. Requires a workspace repo (--repo or cwd git repo); " +
         "incompatible with --bare / ro-only launches.",

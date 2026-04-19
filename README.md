@@ -62,10 +62,11 @@ ccairgap --repo ~/src/foo --extra-repo ~/src/bar
 # Hand it a task and walk away
 ccairgap -p "add login flow"
 
-# Resume a host-started session inside the sandbox
+# Resume a session — UUID or the session name claude prints on exit
 ccairgap -r 01234567-89ab-cdef-0123-456789abcdef
+ccairgap -r 'Refactor login flow'
 
-# Resume a ccairgap started session on host
+# Resume a ccairgap-started session on host
 claude --resume 01234567-89ab-cdef-0123-456789abcdef
 ```
 
@@ -123,7 +124,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `--rebuild` | off | no | Force image rebuild. |
 | `-p, --print <prompt>` | — | no | `claude -p "<prompt>"` instead of the REPL. |
 | `-n, --name <name>` | random `<adj>-<noun>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix; the final id is `<name>-<4hex>`. Drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label (`ccairgap <id>`, rewritten to `[ccairgap] <id>` by the rename hook). Must be a valid git ref component. See notes below. |
-| `-r, --resume <session-id>` | — | no | Resume an existing Claude session by UUID inside the sandbox. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` into the session before `docker run`. Works with both host-born and ccairgap-born sessions. Requires a workspace repo. |
+| `-r, --resume <id-or-name>` | — | no | Resume an existing Claude session inside the sandbox. Accepts a session **UUID** or the session's **custom title** (what `claude` prints on exit; case-insensitive exact match). The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` into the session before `docker run`. Ambiguous or missing titles error with a candidate list. Works with both host-born and ccairgap-born sessions. Requires a workspace repo. On exit, ccairgap prints `ccairgap --resume <uuid>` (and `ccairgap --resume '<title>'` when set) so you can re-enter. |
 | `--hook-enable <glob>` | all disabled | yes | Opt-in a hook by matching its raw `command` string. Wildcard `*`. |
 | `--mcp-enable <glob>` | all disabled | yes | Opt-in an MCP server by `name`. Wildcard `*`. |
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. |
@@ -136,7 +137,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 - `--name` supplies only the **prefix**; a 4-hex suffix is always appended (`<name>-<4hex>`), so two launches with the same `--name` never collide on branch, container, or session dir.
 - The full `<id>` surfaces in `ccairgap list`, the container name (`ccairgap-<id>`), the branch (`ccairgap/<id>`), and the session directory.
 - The two-step rename (label → title) is intentional: the two strings still differ, so Claude Code's hook-dedup fires and the TUI rename effect paints the top-border.
-- `--resume <session-id>`: the resumed session uses the new `<id>` as its label — prior display name is not preserved.
+- `--resume <id-or-name>`: the resumed session uses the new `<id>` as its label — prior display name is not preserved.
 
 ## Hooks
 
