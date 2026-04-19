@@ -53,6 +53,12 @@ export interface BuildMountsInput {
     sessionClonePath: string;
     hostPath: string;
     realGitDir: string;
+    /**
+     * Unique per-repo segment for alternates mount dsts (produced by
+     * `alternatesName()`). Prevents two repos that share a `basename` from
+     * colliding on `/host-git-alternates/<basename>/objects`.
+     */
+    alternatesName: string;
   }>;
   roPaths: string[];
   pluginMarketplaces: string[];
@@ -107,7 +113,7 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     if (existsSync(objDir)) {
       mounts.push({
         src: objDir,
-        dst: `/host-git-alternates/${r.basename}/objects`,
+        dst: `/host-git-alternates/${r.alternatesName}/objects`,
         mode: "ro",
         source: { kind: "alternates", repoHostPath: r.hostPath, category: "objects" },
       });
@@ -117,7 +123,7 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     if (existsSync(lfsDir)) {
       mounts.push({
         src: lfsDir,
-        dst: `/host-git-alternates/${r.basename}/lfs/objects`,
+        dst: `/host-git-alternates/${r.alternatesName}/lfs/objects`,
         mode: "ro",
         source: { kind: "alternates", repoHostPath: r.hostPath, category: "lfs" },
       });

@@ -28,6 +28,7 @@ import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
 import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
+import { alternatesName } from "./alternatesName.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { applyHookPolicy } from "./hooks.js";
 import { applyMcpPolicy } from "./mcp.js";
@@ -203,6 +204,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     hostPath: string;
     realGitDir: string;
     sessionClonePath: string;
+    alternatesName: string;
     baseRef?: string;
   };
   const repoPlans: RepoPlan[] = [];
@@ -215,11 +217,15 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       die((e as Error).message);
     }
     const bn = basename(hostPath);
+    const altName = alternatesName(bn, hostPath);
     repoPlans.push({
       basename: bn,
       hostPath,
       realGitDir,
-      sessionClonePath: join(sessionPath, "repos", bn),
+      // Use altName in the clone path too so two repos sharing a basename
+      // do not overwrite each other's clone under $SESSION/repos/.
+      sessionClonePath: join(sessionPath, "repos", altName),
+      alternatesName: altName,
       baseRef: opts.base,
     });
   }
@@ -298,10 +304,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       // Point alternates at the container-side mount so the container can
       // commit into its own objects dir without colliding with the RO host
       // mount.
-      writeAlternates(clonePath, `/host-git-alternates/${plan.basename}/objects`);
+      writeAlternates(clonePath, `/host-git-alternates/${plan.alternatesName}/objects`);
 
       if (existsSync(join(plan.realGitDir, "lfs", "objects"))) {
-        pointLfsAtHost(clonePath, `/host-git-alternates/${plan.basename}/lfs/objects`);
+        pointLfsAtHost(clonePath, `/host-git-alternates/${plan.alternatesName}/lfs/objects`);
       }
 
       repoEntries.push(plan);
@@ -347,6 +353,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       basename: r.basename,
       host_path: r.hostPath,
       base_ref: r.baseRef,
+      alternates_name: r.alternatesName,
     })),
     branch,
     sync: artifacts.syncRecords,
@@ -377,6 +384,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       basename: r.basename,
       sessionClonePath: r.sessionClonePath,
       hostPath: r.hostPath,
+      alternatesName: r.alternatesName,
     })),
   });
 
@@ -399,6 +407,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       basename: r.basename,
       sessionClonePath: r.sessionClonePath,
       hostPath: r.hostPath,
+      alternatesName: r.alternatesName,
     })),
   });
 

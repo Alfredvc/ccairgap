@@ -287,6 +287,8 @@ export interface McpPolicyRepo {
   basename: string;
   sessionClonePath: string;
   hostPath: string;
+  /** Unique per-repo segment for policy scratch dirs. Produced by `alternatesName()`. */
+  alternatesName: string;
 }
 
 export interface ApplyMcpPolicyInput {
@@ -497,7 +499,7 @@ export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult
     const filtered = filterMcpServers(servers, globs, approvedSet);
     const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
     patched.mcpServers = filtered;
-    const outPath = join(policyDir, "projects", r.basename, ".mcp.json");
+    const outPath = join(policyDir, "projects", r.alternatesName, ".mcp.json");
     writeJsonAtomic(outPath, patched);
     overrideMounts.push({
       src: outPath,

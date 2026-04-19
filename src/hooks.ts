@@ -33,6 +33,8 @@ export interface HookPolicyRepo {
   basename: string;
   sessionClonePath: string;
   hostPath: string;
+  /** Unique per-repo segment for policy scratch dirs. Produced by `alternatesName()`. */
+  alternatesName: string;
 }
 
 export interface ApplyHookPolicyInput {
@@ -497,7 +499,7 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
       const filtered = filterHooksField(rawHooks, globs);
       const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
       patched.hooks = filtered;
-      const outPath = join(policyDir, "projects", r.basename, fname);
+      const outPath = join(policyDir, "projects", r.alternatesName, fname);
       writeJsonAtomic(outPath, patched);
       overrideMounts.push({
         src: outPath,
