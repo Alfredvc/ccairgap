@@ -121,13 +121,43 @@ async function checkImage(): Promise<DoctorCheck> {
     const createdAt = new Date(stdout.trim());
     const ageDays = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
     const stale = ageDays > 14;
-    return {
-      name: "image",
-      ok: !stale,
-      detail: `${tag} age=${ageDays.toFixed(1)}d${stale ? " (stale, consider --rebuild)" : ""}`,
-    };
+    const staleTags = await listStaleDefaultTags(tag);
+    const parts = [`${tag} age=${ageDays.toFixed(1)}d`];
+    if (stale) parts.push("(stale, consider --rebuild)");
+    if (staleTags.length > 0) {
+      parts.push(
+        `; ${staleTags.length} older ccairgap:${cliVersion()}-* tag(s) present — ` +
+          `prune with \`docker image rm ${staleTags.join(" ")}\``,
+      );
+    }
+    return { name: "image", ok: !stale, warn: staleTags.length > 0 && !stale, detail: parts.join(" ") };
   } catch (e) {
     return { name: "image", ok: false, detail: (e as Error).message };
+  }
+}
+
+/**
+ * List `ccairgap:<cli-version>-*` tags other than `currentTag`. The content
+ * hash suffix was added so entrypoint/Dockerfile edits produce a new tag;
+ * older hashes for the same CLI version are stale. Best-effort — empty on
+ * any docker error.
+ */
+async function listStaleDefaultTags(currentTag: string): Promise<string[]> {
+  try {
+    const prefix = `ccairgap:${cliVersion()}-`;
+    const { stdout } = await execa("docker", [
+      "image",
+      "ls",
+      "--format",
+      "{{.Repository}}:{{.Tag}}",
+      "ccairgap",
+    ]);
+    return stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith(prefix) && s !== currentTag);
+  } catch {
+    return [];
   }
 }
 

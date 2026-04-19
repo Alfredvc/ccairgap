@@ -42,7 +42,7 @@ src/
   inspectFormat.ts pretty-print tables for `ccairgap inspect --pretty`
   plugins.ts      plugin marketplace directory/file-source discovery
   credentials.ts  macOS: `security find-generic-password -s "Claude Code-credentials"` → $SESSION/creds. Linux: verify ~/.claude/.credentials.json exists.
-  image.ts        docker build; tag = ccairgap:<cli-version> or :custom-<sha256(dockerfile)[:12]>
+  image.ts        docker build; tag = ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]> or :custom-<sha256(dockerfile)[:12]>
   paths.ts        XDG state dir resolution; CCAIRGAP_HOME override
   version.ts      cliVersion() from package.json
 docker/
@@ -60,7 +60,7 @@ docs/SPEC.md      authoritative design
 - **Creds path differs by OS.** macOS: materialize keychain item to `$SESSION/creds/.credentials.json` (0600). Linux: bind-mount `~/.claude/.credentials.json` directly. Both surface as `/host-claude-creds`.
 - **`/host-claude` RO mount excludes `.credentials.json`** — creds flow solely via `/host-claude-creds` to keep entrypoint uniform.
 - **`rsync -rL`** in entrypoint materializes symlinks as files. Exclude session-local dirs (`projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`), `plugins/cache/` (RO-mounted separately), `.credentials.json`, `.DS_Store`.
-- **Image tag = CLI version**, or `custom-<hash>` when `--dockerfile`. Rebuild only on: tag missing / `--rebuild` / custom-hash changed. Never auto-rebuild on age — `doctor` warns >14 days.
+- **Image tag = CLI version + content hash of `Dockerfile`+`entrypoint.sh`** (`ccairgap:<cli-version>-<hash8>`), or `custom-<hash>` when `--dockerfile`. Edits to either baked file produce a new tag, so rebuild-on-miss auto-applies changes. Rebuild triggers: tag missing / `--rebuild` / custom-hash changed. Never auto-rebuild on age — `doctor` warns >14 days. Old `<cli-version>-*` tags linger after upgrades; `doctor` lists them and users prune via `docker image rm`.
 - **Manifest `version` field gates handoff.** Bump when shape changes incompatibly. Handoff aborts with clear error on unknown version.
 - **Flag names + subcommand names are public API.** Rename = major bump.
 - **Exit trap is best-effort.** SIGKILL of CLI leaves session on disk; user runs `ccairgap recover <id>`. Handoff must stay idempotent.

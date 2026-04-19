@@ -49,10 +49,23 @@ function resolveBundledDockerAsset(name: string): string {
   throw new Error(`bundled docker/${name} not found alongside CLI`);
 }
 
-/** Compute the image tag for a given Dockerfile path. */
+/**
+ * Compute the image tag for a given Dockerfile path.
+ *
+ * Default path: `ccairgap:<cli-version>-<hash8>` where the hash covers both
+ * the Dockerfile and entrypoint.sh content. Edits to either bake a new tag,
+ * so the rebuild-on-miss path auto-applies changes. Stale `ccairgap:<v>-*`
+ * tags linger until the user prunes them — `ccairgap doctor` surfaces them.
+ *
+ * Custom path (`--dockerfile`): `ccairgap:custom-<hash12>` over the
+ * Dockerfile alone. User owns their entrypoint if any.
+ */
 export function computeTag(dockerfile: string, defaultPath: string): string {
   if (resolve(dockerfile) === resolve(defaultPath)) {
-    return `ccairgap:${cliVersion()}`;
+    const h = createHash("sha256");
+    h.update(readFileSync(dockerfile));
+    h.update(readFileSync(defaultEntrypoint()));
+    return `ccairgap:${cliVersion()}-${h.digest("hex").slice(0, 8)}`;
   }
   const content = readFileSync(dockerfile);
   const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);

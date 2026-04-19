@@ -31,7 +31,7 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 ## Versioning
 
 - **CLI:** semver. Patch = bug fixes, minor = new flags / new optional manifest fields, major = flag rename or removal, manifest shape change, or state-dir layout change.
-- **Container image tag** = CLI version (or `custom-<hash>` when built from a user Dockerfile). See §"Container image".
+- **Container image tag** = CLI version + content hash of `Dockerfile`+`entrypoint.sh` (or `custom-<hash>` when built from a user Dockerfile). See §"Container image".
 - **Claude Code inside the image:** defaults to the host's installed Claude Code version at build time (detected via `claude --version`). Falls back to `latest` if detection fails. Users can override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CCAIRGAP_CC_VERSION=<semver>`.
 - **Manifest schema:** `$SESSION/manifest.json` carries a top-level `"version": <N>` field. The handoff routine reads it first and errors clearly on unknown versions. Bump only when the shape changes incompatibly.
 - **Flag stability:** launch-command flags and subcommand names are part of the public API. Renaming or removing either requires a major version bump.
@@ -177,7 +177,7 @@ In order:
     - `--name ccairgap-<id>`
     - Mount list per §"Container mount manifest"
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
-    - Image: `ccairgap:<cli-version>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
+    - Image: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 13. Install exit trap: run §"Handoff routine" against `$SESSION/<id>/`.
 14. Exec the `docker run` command.
 
@@ -378,7 +378,7 @@ docker build \
   --build-arg HOST_UID=$(id -u) \
   --build-arg HOST_GID=$(id -g) \
   --build-arg CLAUDE_CODE_VERSION=2.1.89 \
-  -t ccairgap:<cli-version> .
+  -t ccairgap:<cli-version>-<hash8> .
 ```
 
 Dockerfile (condensed):
@@ -404,17 +404,16 @@ Docker's layer cache handles rebuild on UID/GID change — the CLI always passes
 
 | Invocation | Tag |
 |------------|-----|
-| Default | `ccairgap:<cli-version>` |
+| Default | `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>` |
 | `--dockerfile <path>` | `ccairgap:custom-<sha256(dockerfile)[:12]>` |
 
-The hash suffix for custom Dockerfiles is deterministic: the same Dockerfile content always produces the same tag, so rebuilds are skipped when nothing changed. Custom and default tags coexist without collision.
+Both suffixes are deterministic: identical content always produces the same tag, so rebuilds are skipped when nothing changed. The default tag includes a content hash over both baked files so edits to either the Dockerfile or `entrypoint.sh` (shipped with a CLI upgrade, or a manual patch) produce a new tag and auto-trigger a rebuild on next launch. Custom and default tags coexist without collision.
 
 **Rebuild triggers** (the CLI builds the image only if one of these applies):
-1. No local image matches the computed tag.
+1. No local image matches the computed tag (covers: first run, CLI upgrade with new version, edits to bundled `Dockerfile` / `entrypoint.sh`, edits to a custom Dockerfile).
 2. `--rebuild` was passed.
-3. `--dockerfile` was passed and its content hash differs from any existing `custom-*` tag.
 
-Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the image is older than a threshold (default: 14 days) so the user can explicitly `--rebuild`.
+Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the current image is older than a threshold (default: 14 days) so the user can explicitly `--rebuild`. `doctor` also lists older `ccairgap:<cli-version>-*` tags that linger after content-hash changes so the user can prune them manually with `docker image rm` — the CLI never removes images itself.
 
 ## Container image customization
 
