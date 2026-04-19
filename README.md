@@ -90,6 +90,9 @@ ccairgap -p "add login flow"
 
 # Inside tmux so the session outlives your terminal
 tmux new-session -d -s work 'ccairgap -p "add login flow"'
+
+# Resume a host-started session inside the sandbox
+ccairgap -r 01234567-89ab-cdef-0123-456789abcdef
 ```
 
 ### On exit
@@ -133,6 +136,7 @@ b4e2d8f Add login route
 | `--rebuild` | off | no | Force image rebuild. |
 | `-p, --print <prompt>` | — | no | `claude -p "<prompt>"` instead of the REPL. |
 | `-n, --name <name>` | random `<adj>-<noun>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix; the final id is `<name>-<4hex>`. Drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label (`[ccairgap] <id>`). Must be a valid git ref component. See notes below. |
+| `-r, --resume <session-id>` | — | no | Resume an existing Claude session by UUID inside the sandbox. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` into the session before `docker run`. Works with both host-born and ccairgap-born sessions. Requires a workspace repo. |
 | `--hook-enable <glob>` | all disabled | yes | Opt-in a hook by matching its raw `command` string. Wildcard `*`. |
 | `--mcp-enable <glob>` | all disabled | yes | Opt-in an MCP server by `name`. Wildcard `*`. |
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. |
