@@ -6,7 +6,7 @@ import { readManifest } from "./manifest.js";
 import { countCommitsAhead } from "./git.js";
 
 export interface Orphan {
-  ts: string;
+  id: string;
   sessionDir: string;
   repos: string[];
   commits: Record<string, number>;
@@ -29,10 +29,10 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
   const running = await runningContainers();
   const out: Orphan[] = [];
 
-  for (const ts of readdirSync(dir)) {
-    const sd = join(dir, ts);
+  for (const id of readdirSync(dir)) {
+    const sd = join(dir, id);
     if (!statSync(sd).isDirectory()) continue;
-    if (running.has(`ccairgap-${ts}`)) continue;
+    if (running.has(`ccairgap-${id}`)) continue;
 
     let repos: string[] = [];
     const commits: Record<string, number> = {};
@@ -41,8 +41,9 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
       repos = m.repos.map((r) => r.host_path);
       // Pre-existing sessions from old CLI builds that wrote branches as
       // `sandbox/<ts>` and omitted `branch` from the manifest — fall back so
-      // commit counts still render for them.
-      const branch = m.branch ?? `sandbox/${ts}`;
+      // commit counts still render for them. Legacy dirs use a timestamp as
+      // their `id`, so the substitution remains correct.
+      const branch = m.branch ?? `sandbox/${id}`;
       for (const r of m.repos) {
         const sessionClone = join(sd, "repos", r.basename);
         if (existsSync(sessionClone)) {
@@ -57,7 +58,7 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
       // unreadable manifest: still list as orphan
     }
 
-    out.push({ ts, sessionDir: sd, repos, commits });
+    out.push({ id, sessionDir: sd, repos, commits });
   }
 
   return out;

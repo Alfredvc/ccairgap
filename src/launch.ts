@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { execa } from "execa";
 import {
-  compactTimestamp,
   hostClaudeDir,
   hostClaudeJson,
   outputDir as outputDirPath,
@@ -13,13 +12,12 @@ import {
 } from "./paths.js";
 import { writeManifest, type Manifest } from "./manifest.js";
 import {
-  checkRefFormat,
-  gitBranchExists,
   gitCheckoutNewBranch,
   gitCloneShared,
   readHostGitIdentity,
   resolveGitDir,
 } from "./git.js";
+import { generateId, listAllContainerNames } from "./sessionId.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
 import { buildMounts, mountArg } from "./mounts.js";
 import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
@@ -51,7 +49,13 @@ export interface LaunchOptions {
   rebuild: boolean;
   /** If set, container runs `claude -p "<prompt>"` instead of interactive REPL. */
   print?: string;
-  /** If set, sandbox branch becomes `ccairgap/<name>` (instead of `ccairgap/<ts>`) and is forwarded to `claude -n <name>`. */
+  /**
+   * User-supplied prefix for the session id. If set, the final id becomes
+   * `<name>-<4hex>`; otherwise a random `<adj>-<noun>-<4hex>` is generated.
+   * The id drives the session dir, container name (`ccairgap-<id>`), branch
+   * (`ccairgap/<id>`), and Claude's session label (`claude -n "ccairgap <id>"`,
+   * rewritten to `[ccairgap] <id>` by the rename hook on first prompt).
+   */
   name?: string;
   /**
    * Globs matched against each hook's raw `command` string to opt it back in.
@@ -86,7 +90,7 @@ export interface LaunchOptions {
 
 export interface LaunchResult {
   exitCode: number;
-  ts: string;
+  id: string;
   sessionDir: string;
   imageTag: string;
 }
@@ -144,30 +148,22 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     }
   }
 
-  // Compute ts + session dir paths up-front so we can resolve artifact
-  // session-scratch targets before any filesystem side effects.
-  const ts = compactTimestamp();
-  const sessionPath = sessionDirFn(ts, env);
-
-  // Branch name: `ccairgap/<name ?? ts>`. `<ts>` is always well-formed; a user-
-  // supplied `<name>` is validated via `git check-ref-format` on the full ref.
-  const branchSuffix = opts.name ?? ts;
-  const branch = `ccairgap/${branchSuffix}`;
-  if (opts.name !== undefined) {
-    if (!(await checkRefFormat(`refs/heads/${branch}`))) {
-      die(`--name "${opts.name}" is not a valid git ref component (branch would be ${branch})`);
-    }
-  }
+  // Session id is computed below after repoPlans is built — generateId reuses
+  // the workspace repo's realpath result rather than re-running realpath here.
+  let id: string;
+  let sessionPath: string;
+  let branch: string;
 
   // Resolve every repo's real git dir upfront so failure aborts before any writes.
-  type RepoPlan = {
+  // Phase 1: resolve each repo's git dir. `sessionClonePath` is filled in
+  // after `id` is generated below, because it depends on the session dir.
+  type PendingRepo = {
     basename: string;
     hostPath: string;
     realGitDir: string;
-    sessionClonePath: string;
     baseRef?: string;
   };
-  const repoPlans: RepoPlan[] = [];
+  const pendingRepos: PendingRepo[] = [];
   for (const hostPathRaw of opts.repos) {
     const hostPath = realpath(hostPathRaw);
     let realGitDir: string;
@@ -176,33 +172,45 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     } catch (e) {
       die((e as Error).message);
     }
-    const bn = basename(hostPath);
-    repoPlans.push({
-      basename: bn,
+    pendingRepos.push({
+      basename: basename(hostPath),
       hostPath,
       realGitDir,
-      sessionClonePath: join(sessionPath, "repos", bn),
       baseRef: opts.base,
     });
   }
+
+  // Session id = `<prefix>-<4hex>`. Prefix is `opts.name` if set, else random
+  // `<adj>-<noun>`. Retries on collision with an existing session dir, docker
+  // container (running or stopped), or branch in the workspace repo.
+  // repoPlans[0].hostPath is already realpath'd; reuse it so no extra syscall
+  // and the ordering of error messages (missing-git-repo before docker probe)
+  // stays the same as pre-rename.
+  try {
+    const gen = await generateId({
+      userPrefix: opts.name,
+      workspaceRepo: pendingRepos[0]?.hostPath,
+      runningContainers: await listAllContainerNames(),
+      env,
+    });
+    id = gen.id;
+  } catch (e) {
+    die((e as Error).message);
+  }
+  sessionPath = sessionDirFn(id, env);
+  branch = `ccairgap/${id}`;
+
+  // Phase 2: attach session clone paths now that `id` (and so `sessionPath`) exists.
+  type RepoPlan = PendingRepo & { sessionClonePath: string };
+  const repoPlans: RepoPlan[] = pendingRepos.map((r) => ({
+    ...r,
+    sessionClonePath: join(sessionPath, "repos", r.basename),
+  }));
 
   // --ro paths must exist.
   const roResolved = dedupeResolved(opts.ros);
   for (const r of roResolved) {
     if (!existsSync(r)) die(`--ro path does not exist: ${r}`);
-  }
-
-  // Branch-collision check (only meaningful when --name is passed; `ccairgap/<ts>`
-  // is always unique). Check only the workspace repo (repoPlans[0]); extra repos
-  // ride along and are left to surface their own collision at fetch time if any.
-  if (opts.name !== undefined && repoPlans.length > 0) {
-    const workspace = repoPlans[0]!;
-    if (await gitBranchExists(workspace.hostPath, branch)) {
-      die(
-        `branch ${branch} already exists in ${workspace.hostPath}. ` +
-          `Pick a different --name or delete the existing branch.`,
-      );
-    }
   }
 
   // Resolve cp/sync/mount: validate, detect overlaps, plan copies & mounts.
@@ -234,10 +242,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   if (orphans.length > 0) {
     console.error("ccairgap: orphaned sessions detected:");
     for (const o of orphans) {
-      console.error(`  ${o.ts}  repos=${o.repos.join(",") || "(none)"}`);
+      console.error(`  ${o.id}  repos=${o.repos.join(",") || "(none)"}`);
     }
-    console.error("  Recover: ccairgap recover <ts>");
-    console.error("  Discard: ccairgap discard <ts>");
+    console.error("  Recover: ccairgap recover <id>");
+    console.error("  Discard: ccairgap discard <id>");
     console.error("");
   }
 
@@ -409,7 +417,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   if (!opts.keepContainer) dockerArgs.push("--rm");
   // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
   dockerArgs.push(opts.print ? "-i" : "-it");
-  dockerArgs.push("--cap-drop=ALL", "--security-opt=no-new-privileges", "--name", `ccairgap-${ts}`);
+  dockerArgs.push("--cap-drop=ALL", "--security-opt=no-new-privileges", "--name", `ccairgap-${id}`);
   dockerArgs.push("-e", `CCAIRGAP_CWD=${containerCwd}`);
   dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);
@@ -418,9 +426,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }
-  if (opts.name !== undefined) {
-    dockerArgs.push("-e", `CCAIRGAP_NAME=${opts.name}`);
-  }
+  // CCAIRGAP_NAME carries the session id to the entrypoint, which uses it for
+  // `claude -n "ccairgap <id>"` and the rename-hook sessionTitle `[ccairgap] <id>`.
+  dockerArgs.push("-e", `CCAIRGAP_NAME=${id}`);
   for (const m of mounts) dockerArgs.push(...mountArg(m));
 
   // User-supplied docker run args. Appended last so Docker's last-wins
@@ -452,11 +460,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       await handoff(sessionPath, cliVersion());
     } catch (e) {
       console.error(`ccairgap: handoff failed: ${(e as Error).message}`);
-      console.error(`  Recover manually: ccairgap recover ${ts}`);
+      console.error(`  Recover manually: ccairgap recover ${id}`);
     }
   }
 
-  return { exitCode, ts, sessionDir: sessionPath, imageTag: image.tag };
+  return { exitCode, id, sessionDir: sessionPath, imageTag: image.tag };
 }
 
 // Re-export sessionsDir for CLI convenience

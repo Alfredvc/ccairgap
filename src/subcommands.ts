@@ -45,13 +45,13 @@ export async function listOrphans(): Promise<void> {
     const commits = Object.entries(o.commits)
       .map(([k, v]) => `${k}+${v}`)
       .join(" ");
-    console.log(`${o.ts}  repos=${o.repos.join(",") || "(none)"}  ${commits}`);
+    console.log(`${o.id}  repos=${o.repos.join(",") || "(none)"}  ${commits}`);
   }
 }
 
-export async function recover(ts?: string): Promise<void> {
-  if (!ts) return listOrphans();
-  const sd = sessionDirFn(ts);
+export async function recover(id?: string): Promise<void> {
+  if (!id) return listOrphans();
+  const sd = sessionDirFn(id);
   if (!existsSync(sd)) {
     console.error(`ccairgap: no session dir at ${sd}`);
     process.exit(1);
@@ -60,21 +60,21 @@ export async function recover(ts?: string): Promise<void> {
   const counts = { fetched: 0, empty: 0, failed: 0 };
   for (const f of result.fetched) counts[f.status]++;
   console.log(
-    `recovered ${ts}: ${counts.fetched} fetched, ${counts.empty} empty, ${counts.failed} failed, ` +
+    `recovered ${id}: ${counts.fetched} fetched, ${counts.empty} empty, ${counts.failed} failed, ` +
       `${result.transcriptsCopied} transcript dirs copied, ` +
       `session dir ${result.removed ? "removed" : result.preserved ? "preserved" : "kept"}`,
   );
   if (result.warnings.length > 0) process.exitCode = 1;
 }
 
-export function discard(ts: string): void {
-  const sd = sessionDirFn(ts);
+export function discard(id: string): void {
+  const sd = sessionDirFn(id);
   if (!existsSync(sd)) {
     console.error(`ccairgap: no session dir at ${sd}`);
     process.exit(1);
   }
   rmSync(sd, { recursive: true, force: true });
-  console.log(`discarded ${ts}`);
+  console.log(`discarded ${id}`);
 }
 
 interface DoctorCheck {

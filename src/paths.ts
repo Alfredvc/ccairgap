@@ -20,8 +20,8 @@ export function outputDir(env?: NodeJS.ProcessEnv): string {
   return join(stateRoot(env), "output");
 }
 
-export function sessionDir(ts: string, env?: NodeJS.ProcessEnv): string {
-  return join(sessionsDir(env), ts);
+export function sessionDir(id: string, env?: NodeJS.ProcessEnv): string {
+  return join(sessionsDir(env), id);
 }
 
 export function hostClaudeDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -30,12 +30,6 @@ export function hostClaudeDir(env: NodeJS.ProcessEnv = process.env): string {
 
 export function hostClaudeJson(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.HOME ?? homedir(), ".claude.json");
-}
-
-/** ISO 8601 compact UTC timestamp, e.g. 20260417T143022Z. */
-export function compactTimestamp(d: Date = new Date()): string {
-  const iso = d.toISOString();
-  return iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
 /** readlink -f equivalent. Throws if path doesn't exist. */

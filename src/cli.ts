@@ -106,7 +106,7 @@ async function main() {
     )
     .option(
       "--sync <path>",
-      "like --cp, but on exit the container-written copy is mirrored to $CCAIRGAP_HOME/output/<ts>/<abs-src>/. Repeatable.",
+      "like --cp, but on exit the container-written copy is mirrored to $CCAIRGAP_HOME/output/<id>/<abs-src>/. Repeatable.",
       collect,
       [],
     )
@@ -116,7 +116,7 @@ async function main() {
       collect,
       [],
     )
-    .option("--base <ref>", "base ref for ccairgap/<ts> branch (default: HEAD)")
+    .option("--base <ref>", "base ref for ccairgap/<id> branch (default: HEAD)")
     .option("--keep-container", "do not pass --rm to docker run")
     .option("--dockerfile <path>", "use a custom Dockerfile")
     .option(
@@ -132,7 +132,7 @@ async function main() {
     )
     .option(
       "-n, --name <name>",
-      "session name. Used as branch suffix (`ccairgap/<name>`) and forwarded to `claude -n \"[ccairgap] <name>\"` so the session shows up with that label in `/resume` and the terminal title. The `[ccairgap]` prefix is always applied. Must be a valid git ref component; aborts on collision with an existing branch in --repo.",
+      "session id prefix. Used as-is; the CLI appends a 4-hex suffix so the final id is `<name>-<4hex>`. The id drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label (`[ccairgap] <id>`). If omitted, a random `<adj>-<noun>` prefix is generated. Must be a valid git ref component.",
     )
     .option(
       "--hook-enable <glob>",
@@ -296,17 +296,17 @@ async function main() {
     });
 
   program
-    .command("recover [ts]")
-    .description("run handoff for a session (idempotent); without <ts>, same as list")
-    .action(async (ts?: string) => {
-      await recover(ts);
+    .command("recover [id]")
+    .description("run handoff for a session (idempotent); without <id>, same as list")
+    .action(async (id?: string) => {
+      await recover(id);
     });
 
   program
-    .command("discard <ts>")
+    .command("discard <id>")
     .description("delete a session dir without running handoff")
-    .action((ts: string) => {
-      discard(ts);
+    .action((id: string) => {
+      discard(id);
     });
 
   program

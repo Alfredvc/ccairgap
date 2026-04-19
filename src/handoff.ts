@@ -11,7 +11,7 @@ export type FetchStatus = "fetched" | "empty" | "failed";
 
 export interface HandoffResult {
   sessionDir: string;
-  ts: string;
+  id: string;
   fetched: Array<{ hostPath: string; branch: string; status: FetchStatus }>;
   transcriptsCopied: number;
   removed: boolean;
@@ -93,7 +93,7 @@ export async function handoff(
   cliVersion: string,
   logger: (msg: string) => void = (m) => console.error(m),
 ): Promise<HandoffResult> {
-  const ts = sessionDirPath.split("/").filter(Boolean).pop() ?? "<unknown>";
+  const id = sessionDirPath.split("/").filter(Boolean).pop() ?? "<unknown>";
   const warnings: string[] = [];
   const fetched: HandoffResult["fetched"] = [];
   let transcriptsCopied = 0;
@@ -104,7 +104,7 @@ export async function handoff(
     warnings.push(`session dir does not exist: ${sessionDirPath}`);
     return {
       sessionDir: sessionDirPath,
-      ts,
+      id,
       fetched,
       transcriptsCopied,
       removed,
@@ -121,7 +121,7 @@ export async function handoff(
       warnings.push(e.message);
       return {
         sessionDir: sessionDirPath,
-        ts,
+        id,
         fetched,
         transcriptsCopied,
         removed,
@@ -132,7 +132,7 @@ export async function handoff(
     warnings.push(`cannot read manifest: ${(e as Error).message}`);
     return {
       sessionDir: sessionDirPath,
-      ts,
+      id,
       fetched,
       transcriptsCopied,
       removed,
@@ -144,7 +144,7 @@ export async function handoff(
   // Manifests from older CLI builds lack `branch`; those builds wrote the
   // branch as `sandbox/<ts>`, so fall back to that name to keep recover working
   // on pre-existing sessions on disk.
-  const branch = manifest.branch ?? `sandbox/${ts}`;
+  const branch = manifest.branch ?? `sandbox/${id}`;
 
   for (const repo of manifest.repos) {
     const sessionClone = join(sessionDirPath, "repos", repo.basename);
@@ -184,7 +184,7 @@ export async function handoff(
         warnings.push(
           `${repo.host_path}: ${branch} empty, but other local branches have commits: ${desc}. ` +
             `session preserved at ${sessionDirPath}. Inspect: \`git -C ${sessionClone} log <branch>\`. ` +
-            `Drop when done: \`ccairgap discard ${ts}\`.`,
+            `Drop when done: \`ccairgap discard ${id}\`.`,
         );
       }
       fetched.push({ hostPath: repo.host_path, branch, status: "empty" });
@@ -201,7 +201,7 @@ export async function handoff(
   // --sync copy-out: mirror each session_src → $output/<ts>/<abs_src>/.
   // Idempotent (rsync -a). Best-effort: log on failure, keep going.
   if (manifest.sync && manifest.sync.length > 0) {
-    const outRoot = join(outputDir(), ts);
+    const outRoot = join(outputDir(), id);
     for (const s of manifest.sync) {
       if (!existsSync(s.session_src)) {
         warnings.push(`sync source missing, skipping: ${s.session_src}`);
@@ -241,7 +241,7 @@ export async function handoff(
 
   if (preserved) {
     warnings.push(
-      `session dir preserved at ${sessionDirPath}. Drop when done: \`ccairgap discard ${ts}\`.`,
+      `session dir preserved at ${sessionDirPath}. Drop when done: \`ccairgap discard ${id}\`.`,
     );
   } else {
     try {
@@ -256,7 +256,7 @@ export async function handoff(
 
   return {
     sessionDir: sessionDirPath,
-    ts,
+    id,
     fetched,
     transcriptsCopied,
     removed,
