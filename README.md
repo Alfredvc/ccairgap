@@ -14,66 +14,48 @@
 
 Same config, skills, hooks, and MCP servers as on your host. Full permissions inside. Launches in seconds, even on huge repos. Work lands as new git branches in your repo on exit.
 
-## Security
+- **Full permissions, contained** — full tool permissions inside Docker; host filesystem physically out of reach.
+- **Your Claude, not a stripped-down one** — inherits your config, skills, hooks, and MCP servers.
+- **Work lands as branches** — commits appear in your repo on exit; nothing lost if you walk away.
+- **Fast on large repos** — shared clone, no full copy.
+- **Opt-in hooks and MCP servers** — disabled by default; enable by glob via flag or config.
+- **Resume any session** — start on host or sandbox, continue on either.
 
-ccairgap protects your host filesystem: Claude can only write to a small, explicit set of paths. It does **not** prevent exfiltration — anything the container can read may be sent over the network. See [`SECURITY.md`](SECURITY.md) for the threat model and [`docs/SPEC.md`](docs/SPEC.md) for the design.
+## Why ccairgap?
 
-## Contents
+**vs. running `claude --dangerously-skip-permissions` on your host.** One bad tool call — or one prompt-injected instruction — can touch any file your user account can. ccairgap constrains the writable surface physically: not by rules, but by not mounting those paths.
 
-- [Security](#security)
-- [Setup](#setup)
-- [Quick start](#quick-start)
-- [Agent Skills](#agent-skills)
-- [Why ccairgap?](#why-ccairgap)
-- [Launch flags](#launch-flags)
-- [Hooks](#hooks)
-- [MCP servers](#mcp-servers)
-- [Raw docker run args](#raw-docker-run-args)
-- [Config file](#config-file)
-- [Subcommands](#subcommands)
-- [Environment variables](#environment-variables)
-- [Development](#development)
-- [Contributing](#contributing)
+**vs. using Claude with permission prompts.** Prompts are tedious to babysit, blanket rules risk over-permissioning, and precise rules are hard to write. ccairgap skips the permission layer entirely — the sandbox itself is the layer.
+
+**vs. other Claude sandbox tools.** Most give you a stripped-down Claude. ccairgap gives you yours — fully configured, exactly as it runs on your host.
 
 ## Setup
-
-Install:
 
 ```bash
 npm i -g ccairgap
 ```
 
-Or run directly with npx:
+**Requirements:** Node ≥ 20, Docker, `git`, and `rsync` on PATH. macOS, Linux, and Windows/WSL2.
 
-```bash
-npx ccairgap
-```
+**Login:** Run `claude` once on the host — ccairgap inherits the credentials automatically.
 
-**Requirements.** Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS, Linux, Windows/WSL2.
-
-**Login.** Run `claude` once on the host — ccairgap inherits the credentials.
-
-**First launch.** Builds the container image (~1–2 min, one-time); every launch after is seconds.
-
-**Git identity.** ccairgap reads your `git config user.name` / `user.email` from the host and passes them to the container so commits work. If no identity is configured, a `ccairgap <noreply@ccairgap.local>` placeholder is used and a warning is printed. GPG/SSH signing is not supported inside the container.
+**First launch:** Builds the container image (~1–2 min, one-time). Every launch after is seconds.
 
 ## Quick start
 
-Run with no args inside any git repo:
+Run inside any git repo:
 
 ```bash
 ccairgap
 ```
 
-Claude opens at your repo's root. Hooks and MCP servers are available but opt-in — see [Hooks](#hooks) and [MCP servers](#mcp-servers).
-
-### Common setups
+Claude opens at your repo root. Common setups:
 
 ```bash
-# Workspace + node_modules (read only)
-ccairgap --repo ~/src/foo --ro node_modules
+# Read-only sibling (e.g. node_modules)
+ccairgap --ro node_modules
 
-# Two repos: primary workspace + a sibling Claude can read
+# Two repos: primary workspace + readable sibling
 ccairgap --repo ~/src/foo --extra-repo ~/src/bar
 
 # Hand it a task and walk away
@@ -86,9 +68,7 @@ tmux new-session -d -s work 'ccairgap -p "add login flow"'
 ccairgap -r 01234567-89ab-cdef-0123-456789abcdef
 ```
 
-### On exit
-
-When the session ends, Claude's commits land as `ccairgap/<id>` in each repo:
+On exit, Claude's commits land as `ccairgap/<id>` in each repo:
 
 ```bash
 $ ccairgap -p "add login flow"
@@ -103,19 +83,30 @@ b4e2d8f Add login route
 
 ## Agent Skills
 
-Install skills for Claude Code:
-
 ```bash
 npx skills add alfredvc/ccairgap
 ```
 
-## Why ccairgap?
+## Security
 
-**vs. running `claude --dangerously-skip-permissions` on your host.** One bad tool call — or one prompt-injected instruction — can touch any file your user account can. ccairgap constrains the writable surface physically: not by rules, but by not mounting those paths.
+ccairgap protects your host filesystem: Claude can only write to a small, explicit set of paths. It does **not** prevent exfiltration — anything the container can read may be sent over the network. See [`SECURITY.md`](SECURITY.md) for the threat model and [`docs/SPEC.md`](docs/SPEC.md) for the design.
 
-**vs. using Claude with permission prompts.** Prompts are tedious to babysit, blanket rules risk over-permissioning, and precise rules are hard to write. ccairgap skips the permission layer entirely — the sandbox itself is the layer.
+## Contents
 
-**vs. other Claude sandbox tools.** Most give you a stripped-down Claude. ccairgap gives you yours — fully configured, exactly as it runs on your host.
+- [Why ccairgap?](#why-ccairgap)
+- [Security](#security)
+- [Setup](#setup)
+- [Quick start](#quick-start)
+- [Agent Skills](#agent-skills)
+- [Launch flags](#launch-flags)
+- [Hooks](#hooks)
+- [MCP servers](#mcp-servers)
+- [Raw docker run args](#raw-docker-run-args)
+- [Config file](#config-file)
+- [Subcommands](#subcommands)
+- [Environment variables](#environment-variables)
+- [Development](#development)
+- [Contributing](#contributing)
 
 ## Launch flags
 
