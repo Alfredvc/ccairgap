@@ -195,6 +195,11 @@ if [ -n "${CCAIRGAP_RESUME:-}" ]; then
     RESUME_ARGS=(-r "$CCAIRGAP_RESUME")
 fi
 
+# test-only backdoor: see CCAIRGAP_TEST_CMD in CLAUDE.md
+if [ -n "${CCAIRGAP_TEST_CMD:-}" ]; then
+  exec sh -c "$CCAIRGAP_TEST_CMD"
+fi
+
 if [ -n "${CCAIRGAP_PRINT:-}" ]; then
     exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" -p "$CCAIRGAP_PRINT"
 else

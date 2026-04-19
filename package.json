@@ -45,7 +45,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "release": "npm run typecheck && npm test && commit-and-tag-version"
+    "release": "npm run typecheck && npm test && commit-and-tag-version",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:tier1": "vitest run --config vitest.e2e.config.ts e2e/tier1",
+    "test:e2e:tier2": "vitest run --config vitest.e2e.config.ts e2e/tier2",
+    "test:e2e:cleanup": "docker ps -a --filter name=^/ccairgap- --format '{{.Names}}' | xargs -r docker rm -f"
   },
   "dependencies": {
     "commander": "^12.1.0",
