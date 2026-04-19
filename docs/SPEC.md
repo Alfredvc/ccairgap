@@ -66,6 +66,8 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/ccairgap/
   `--name` surfaces before any filesystem side effects.
 - Host `~/.claude/` is the source of credentials, settings, plugins, skills, commands, CLAUDE.md. It is RO-mounted into the container; there is no separate profile volume.
 
+When `CLAUDE_CONFIG_DIR` is set on the host, ccairgap reads that directory instead of `~/.claude/` for both the config directory and `.claude.json` (resolved as `<CLAUDE_CONFIG_DIR>/.claude.json`). This matches Claude Code's own resolution. The variable is **not** forwarded into the container; inside the sandbox the config home is always the default `~/.claude`.
+
 ## Host writable paths (the only ones)
 
 A session may cause writes to:

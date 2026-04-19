@@ -25,10 +25,12 @@ export function sessionDir(id: string, env?: NodeJS.ProcessEnv): string {
 }
 
 export function hostClaudeDir(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.CLAUDE_CONFIG_DIR) return env.CLAUDE_CONFIG_DIR;
   return join(env.HOME ?? homedir(), ".claude");
 }
 
 export function hostClaudeJson(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.CLAUDE_CONFIG_DIR) return join(env.CLAUDE_CONFIG_DIR, ".claude.json");
   return join(env.HOME ?? homedir(), ".claude.json");
 }
 
