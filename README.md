@@ -141,6 +141,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. |
 | `--no-warn-docker-args` | warnings on | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
 | `--no-preserve-dirty` | off | no | Skip the dirty-working-tree preservation check on exit. Intended for scripted / CI use where uncommitted container-side edits are disposable (e.g. `npm install` artifacts). Orphan-branch and scan-failure preservation still fire. |
+| `--no-auto-memory` | — | no | Skip the auto-memory RO mount. Use when you want a clean-slate memory in the sandbox. |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See `docs/SPEC.md` §"Bare mode". |
 
 ### Notes on `--name`

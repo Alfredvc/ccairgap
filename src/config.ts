@@ -51,6 +51,7 @@ export interface ConfigFile {
   resume?: string;
   clipboard?: boolean;
   noPreserveDirty?: boolean;
+  noAutoMemory?: boolean;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -81,6 +82,8 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "clipboard": "clipboard",
   "no-preserve-dirty": "noPreserveDirty",
   "noPreserveDirty": "noPreserveDirty",
+  "no-auto-memory": "noAutoMemory",
+  "noAutoMemory": "noAutoMemory",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -273,6 +276,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "noPreserveDirty":
         cfg.noPreserveDirty = assertBool(val, "no-preserve-dirty");
+        break;
+      case "noAutoMemory":
+        cfg.noAutoMemory = assertBool(val, "no-auto-memory");
         break;
     }
   }

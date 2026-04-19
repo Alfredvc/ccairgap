@@ -111,6 +111,13 @@ export interface LaunchOptions {
    * Orphan-branch and scan-failure preservation still fire.
    */
   noPreserveDirty: boolean;
+  /**
+   * Skip the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`
+   * env-var forwarding. Use if Claude Code's EROFS handling becomes noisy
+   * or if the user wants a clean-slate sandbox. Matches `--no-clipboard`
+   * precedent. Config key: `no-auto-memory: true`.
+   */
+  noAutoMemory: boolean;
 }
 
 export interface LaunchResult {
