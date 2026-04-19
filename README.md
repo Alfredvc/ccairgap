@@ -52,7 +52,7 @@ Or run directly with npx:
 npx ccairgap
 ```
 
-Requires Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS; Linux should work; Windows/WSL2 may need path tweaks.
+Requires Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS, Linux, Windows/WSL2.
 
 Log in on the host once with `claude` — ccairgap inherits those credentials automatically. First launch builds the container image (one-time; subsequent launches reuse it).
 
