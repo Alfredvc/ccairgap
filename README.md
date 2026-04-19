@@ -14,11 +14,11 @@
 
 Same config, skills, hooks, and MCP servers as on your host. Full permissions inside. Launches in seconds, even on huge repos. Work lands as new git branches in your repo on exit.
 
-- **Full permissions, contained** — full tool permissions inside Docker; host filesystem physically out of reach.
-- **Your Claude, not a stripped-down one** — inherits your config, skills, hooks, and MCP servers.
-- **Work lands as branches** — commits appear in your repo on exit; nothing lost if you walk away.
+- **Full permissions, contained** — host filesystem physically out of reach.
+- **Your Claude** — config, skills, hooks, and MCP servers all inherited.
+- **Work lands as branches** — nothing lost if you walk away.
 - **Fast on large repos** — shared clone, no full copy.
-- **Opt-in hooks and MCP servers** — disabled by default; enable by glob via flag or config.
+- **Opt-in hooks and MCP** — disabled by default; enable by glob.
 - **Resume any session** — start on host or sandbox, continue on either.
 
 ## Why ccairgap?
