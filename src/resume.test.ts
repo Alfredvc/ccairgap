@@ -11,7 +11,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractLatestAgentName, resolveResumeSource, copyResumeTranscript } from "./resume.js";
+import {
+  extractLatestAgentName,
+  resolveResumeSource,
+  copyResumeTranscript,
+  REVERSE_READ_CHUNK,
+} from "./resume.js";
 
 describe("extractLatestAgentName", () => {
   let dir: string;
@@ -85,6 +90,70 @@ describe("extractLatestAgentName", () => {
     const p = join(dir, "t.jsonl");
     writeFileSync(p, '{"type":"agent-name"}\n');
     expect(extractLatestAgentName(p)).toBeUndefined();
+  });
+
+  it("returns the latest agent-name from a transcript larger than the reverse-read chunk", () => {
+    const p = join(dir, "big.jsonl");
+    // Build ~200 KB of padding lines, then the target agent-name as the last line.
+    const padLine = '{"type":"user","message":{"content":"' + "x".repeat(200) + '"}}';
+    const padCount = Math.ceil((200 * 1024) / (padLine.length + 1));
+    const lines: string[] = [];
+    for (let i = 0; i < padCount; i++) lines.push(padLine);
+    lines.push('{"type":"agent-name","agentName":"target"}');
+    writeFileSync(p, lines.join("\n") + "\n");
+    // Sanity: file is genuinely larger than the chunk so the reverse-read loop
+    // exercises more than one iteration.
+    expect(statSync(p).size).toBeGreaterThan(REVERSE_READ_CHUNK);
+    expect(extractLatestAgentName(p)).toBe("target");
+  });
+
+  it("handles an agent-name line that straddles a chunk boundary", () => {
+    const p = join(dir, "straddle.jsonl");
+    const targetLine = '{"type":"agent-name","agentName":"split-target"}';
+    // File layout: <padBefore><target>\n<padAfter>. Boundary between chunk 1
+    // (rightmost) and chunk 2 sits at byte `size - REVERSE_READ_CHUNK`.
+    // Place the target so it straddles that boundary: target starts well left
+    // of the boundary, ends well right of it. Total file size = 2 * CHUNK
+    // (so chunk 2 is full, exercising the boundary logic).
+    const totalSize = REVERSE_READ_CHUNK * 2;
+    const targetByteLen = targetLine.length + 1; // +1 for trailing \n
+    // padBefore positions target start so that target straddles the boundary.
+    // Boundary is at `totalSize - REVERSE_READ_CHUNK`. We want target's middle
+    // ~at the boundary, so target start ≈ boundary - targetLine.length/2.
+    const padBeforeBytes =
+      totalSize - REVERSE_READ_CHUNK - Math.floor(targetLine.length / 2);
+    // Both pads must end in \n so each line is JSONL-parseable. Build padBefore
+    // from a short repeating line + a custom-length final line, sized exactly.
+    const buildPad = (n: number): string => {
+      const unit = '{"type":"user","message":{"content":"x"}}\n';
+      const repeats = Math.floor(n / unit.length);
+      let out = unit.repeat(repeats);
+      const remainder = n - out.length;
+      if (remainder === 0) return out;
+      // Construct a single \n-terminated JSON line of `remainder` bytes.
+      const wrapper = '{"type":"user","message":{"content":""}}';
+      const inner = remainder - 1 - wrapper.length;
+      if (inner < 0) {
+        // Too small for a JSON line — pad with empty lines (just \n bytes).
+        return out + "\n".repeat(remainder);
+      }
+      out += `{"type":"user","message":{"content":"${"x".repeat(inner)}"}}\n`;
+      return out;
+    };
+    const padBefore = buildPad(padBeforeBytes);
+    const padAfterBytes = totalSize - padBefore.length - targetByteLen;
+    const padAfter = buildPad(padAfterBytes);
+    const content = padBefore + targetLine + "\n" + padAfter;
+    writeFileSync(p, content);
+    // Sanity: file size matches and target straddles the boundary.
+    const stat = statSync(p);
+    expect(stat.size).toBe(totalSize);
+    const boundary = stat.size - REVERSE_READ_CHUNK;
+    const targetStart = padBefore.length;
+    const targetEnd = targetStart + targetLine.length; // last byte of JSON, before \n
+    expect(targetStart).toBeLessThan(boundary);
+    expect(targetEnd).toBeGreaterThan(boundary);
+    expect(extractLatestAgentName(p)).toBe("split-target");
   });
 });
 
