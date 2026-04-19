@@ -44,7 +44,8 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release": "npm run typecheck && npm test && commit-and-tag-version"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -55,6 +56,7 @@
   "devDependencies": {
     "@types/node": "^20.17.0",
     "@types/shell-quote": "^1.7.5",
+    "commit-and-tag-version": "^12.7.1",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

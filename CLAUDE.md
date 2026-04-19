@@ -96,3 +96,21 @@ Absolute paths bypass anchoring. `repo` is optional; defaults to the git root th
 3. Keep runtime deps minimal. No new deps without reason.
 4. Don't bypass SPEC §"Host writable paths". If a new write target is needed, discuss before coding.
 5. Don't add flags/env vars not in SPEC. If truly needed, add to SPEC first.
+
+## Releasing
+
+Local-driven, cargo-release style. Conventional Commits (`feat:`, `fix:`, `perf:`, `refactor:`, `feat!:` for breaking) drive versioning + CHANGELOG.
+
+```
+npm run release           # auto bump (feat→minor, fix→patch, ! → minor pre-1.0)
+npm run release -- --release-as minor    # force minor
+npm run release -- --release-as 1.0.0    # force exact version
+npm run release -- --dry-run             # preview
+git push --follow-tags origin main       # triggers .github/workflows/release.yml → npm publish
+```
+
+`commit-and-tag-version`: runs typecheck+test, regenerates `CHANGELOG.md`, bumps `package.json`, commits, tags `vX.Y.Z`. Don't bump version or edit CHANGELOG manually.
+
+Config: `.versionrc.json` (sections shown: feat/fix/perf/refactor; hidden: docs/chore/test/style/ci/build).
+
+Pre-1.0: breaking commits (`feat!:`) bump minor, not major. Going to 1.0.0 → run `npm run release -- --release-as 1.0.0` once.
