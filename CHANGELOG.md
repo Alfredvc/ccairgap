@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.3.0](https://github.com/Alfredvc/ccairgap/compare/v0.2.0...v0.3.0) (2026-04-19)
+
+
+### Features
+
+* **cli:** add --no-clipboard flag and config key ([8929b47](https://github.com/Alfredvc/ccairgap/commit/8929b478cda4bd03cd8ca37ee04450984bee9bd4))
+* **cli:** add --no-preserve-dirty opt-out flag ([b9e62f7](https://github.com/Alfredvc/ccairgap/commit/b9e62f7e7a4a6251ada6d0aa389b2c7a535162c6))
+* **clipboard:** host-side clipboardBridge module with per-platform watchers ([80ae75c](https://github.com/Alfredvc/ccairgap/commit/80ae75c7784787de902dbf9010ff158d0a0dfec8))
+* **config:** add --profile for named config files ([6741296](https://github.com/Alfredvc/ccairgap/commit/674129685df166129a6383eb662e38ce6ede1657))
+* **docker:** pre-create /run/ccairgap-clipboard bridge dir; add no-xclip invariant test ([43c2a27](https://github.com/Alfredvc/ccairgap/commit/43c2a27319918098eee27ed7cac605ea7d57edb7))
+* **doctor:** report clipboard mode + install hints ([05586d0](https://github.com/Alfredvc/ccairgap/commit/05586d015d79d14204673aaeb1609782eef7d604))
+* **entrypoint:** install fake wl-paste shim + runtime xclip-present warning ([c1529ce](https://github.com/Alfredvc/ccairgap/commit/c1529ced80d2d412cc18fc2a52d57c314deb22a3))
+* **git:** add dirtyTree() helper for working-tree scan ([6ec8e2d](https://github.com/Alfredvc/ccairgap/commit/6ec8e2db1321860ac6b7fd9126be1e3c6f7022bb))
+* **handoff:** preserve session on dirty tree or scan failure ([c617484](https://github.com/Alfredvc/ccairgap/commit/c617484047dbdb373176a388e0166ef6b8ca0be7))
+* **launch:** integrate clipboard bridge setup + await cleanup in finally ([b3d5865](https://github.com/Alfredvc/ccairgap/commit/b3d5865190fd79f99b3b1512a72d45c40142f5d2))
+* **list:** surface dirty counts in scanOrphans + listOrphans ([db70838](https://github.com/Alfredvc/ccairgap/commit/db708384cf38bc35354915d2d1f4ee8d3c1c5684))
+* **mounts:** add clipboard-bridge MountSource kind and /run/ccairgap-clipboard reserved prefix ([e203d0c](https://github.com/Alfredvc/ccairgap/commit/e203d0c13021cba5e8f19c53af885c55da33a139))
+* **recover:** refuse to run against live container; share docker-ps probe ([88edd12](https://github.com/Alfredvc/ccairgap/commit/88edd12d2761174e4a60cc2b69a3ade541adf266))
+* **resume:** accept session name or UUID for --resume ([12bacf0](https://github.com/Alfredvc/ccairgap/commit/12bacf05081efdb6465e7d00ec3bbe7fc9d4719d))
+
+
+### Bug Fixes
+
+* **clipboard:** replace pngpaste with built-in osascript on macOS ([b68024f](https://github.com/Alfredvc/ccairgap/commit/b68024f2e327b0bf001337656d09d84bf6bf142c))
+* **naming:** always pass ccairgap <id> to claude -n and rename hook ([d4c329b](https://github.com/Alfredvc/ccairgap/commit/d4c329b65be7fc763d359db105cbdf1090438429))
+
 ## [0.2.0](https://github.com/Alfredvc/ccairgap/compare/v0.1.0...v0.2.0) (2026-04-19)
 
 
