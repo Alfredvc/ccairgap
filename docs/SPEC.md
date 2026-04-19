@@ -800,7 +800,7 @@ Post-processing in the CLI:
 
 ## Run mode
 
-Entrypoint ends with `exec claude --dangerously-skip-permissions`.
+Entrypoint ends with `exec claude --dangerously-skip-permissions`. Immediately before this, the entrypoint checks `CCAIRGAP_TEST_CMD`: if set, it `exec sh -c "$CCAIRGAP_TEST_CMD"` instead. This is a test-only hook; the CLI never sets it.
 
 - `ccairgap` drops directly into Claude's REPL.
 - For walk-away use, user wraps in tmux on the host: `tmux new -s work 'ccairgap ...'`.

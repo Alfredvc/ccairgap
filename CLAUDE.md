@@ -19,6 +19,12 @@ npm test             # vitest run
 npm run test:watch
 ```
 
+## Testing
+
+- Unit tests: `src/*.test.ts`, colocated, mock `execa`/`fs`/`docker`. Run via `npm test`.
+- E2e tests: `e2e/**/*.e2e.ts`, manual-run via `npm run test:e2e`. Tier 1 (no docker) covers subcommands + config + resume resolution. Tier 2 (docker, fake entrypoint via `CCAIRGAP_TEST_CMD`) covers launch, handoff, mounts, alternates, signals, image hashing, artifacts. **E2e is never wired into CI.**
+- Real-claude smoke: `bash e2e/smoke.sh`. Human-eyeballed. Run before tagging a release.
+
 ## Layout
 
 ```
@@ -77,6 +83,7 @@ docs/SPEC.md      authoritative design
 - **Handoff preserves session dir on dirty working tree or scan failure.** `handoff()` treats any `git status --porcelain` non-empty output (per-repo) **or** any scan error as a preservation trigger, in addition to the existing orphan-branch logic. The final `rm -rf` is gated on all three conditions being absent. The dirty scan runs **after** the alternates rewrite in the per-repo loop — both steps must stay in that order across refactors. Applies to both exit-trap and `ccairgap recover` paths; `--no-preserve-dirty` / config key `no-preserve-dirty: true` suppresses the dirty trigger for scripted callers — the scan still runs so scan-failure and orphan preservation can fire.
 - **Project-scope Claude config overlay is working-tree, not HEAD.** `overlayProjectClaudeConfig` rsyncs host `<hostPath>/.claude/`, `.mcp.json`, `CLAUDE.md` into each session clone after `gitCheckoutNewBranch`, before `applyHookPolicy` / `applyMcpPolicy` / `executeCopies`. Covers the common gap where `settings.local.json` (gitignored by default) and uncommitted project skills/commands/agents never reach the container. Paired invariant: `dirtyTree` pathspec-excludes the same three paths (`:(exclude).claude :(exclude).mcp.json :(exclude)CLAUDE.md`) so overlay-introduced uncommitted state doesn't trigger preservation — and container-side edits to those paths are also invisible to the scan and discarded on exit. The two must stay in sync: changing the overlay scope requires updating the dirtyTree pathspec and vice versa. rsync `-L` materializes symlinks so `CLAUDE.md → AGENTS.md` and out-of-repo skill symlinks work without special casing.
 - **`recover <id>` refuses to run against a live container.** Pre-handoff check uses the shared `runningContainerNames()` helper (`src/sessionId.ts`) — same probe as `ccairgap list`. If `ccairgap-<id>` is in the running set, abort with a message telling the user to `docker stop` or let the session exit normally. Required because the dirty scan and (existing) `git fetch` would race with container writes.
+- **`CCAIRGAP_TEST_CMD` is a test-only backdoor in `entrypoint.sh`.** When set, the entrypoint `exec sh -c "$CCAIRGAP_TEST_CMD"` instead of `exec claude …`. The CLI never sets it; only e2e tests do, via `--docker-run-arg`. Do not add CLI-surfaced plumbing that sets this variable — the whole point is that production paths never touch it.
 
 ## Config file
 
