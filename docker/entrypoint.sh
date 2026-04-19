@@ -125,14 +125,14 @@ CWD="${CCAIRGAP_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
-# Session name → `claude -n <name>` (seeds /resume label + terminal title).
-# Intentionally differs from the UserPromptSubmit hook's sessionTitle output:
-# the hook applies "[ccairgap]" / "[ccairgap] $CCAIRGAP_NAME" on first prompt,
-# which renames the session and paints the TUI's TextInput border. If `-n` and
-# the hook emitted the same string, Claude's hook dedup (Ma8) would skip the
-# rename and the border recolor would never fire.
+# Session label → `claude -n "ccairgap <id>"` (seeds /resume label + terminal
+# title). Intentionally differs from the UserPromptSubmit hook's sessionTitle
+# output "[ccairgap] <id>": if the two strings matched, Claude's hook dedup
+# would skip the rename and the TUI TextInput border would never recolor.
+# CCAIRGAP_NAME carries the full session id from the CLI; the fallback branch
+# only runs when the entrypoint is executed directly without the CLI env.
 if [ -n "${CCAIRGAP_NAME:-}" ]; then
-    NAME_ARGS=(-n "$CCAIRGAP_NAME")
+    NAME_ARGS=(-n "ccairgap $CCAIRGAP_NAME")
 else
     NAME_ARGS=(-n "ccairgap")
 fi
