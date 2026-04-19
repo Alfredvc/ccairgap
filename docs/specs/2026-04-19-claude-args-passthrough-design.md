@@ -93,16 +93,25 @@ Organized by reason. Every entry covers all canonical forms:
 
 ### HARD deny — broken inside the sandbox (host paths or host services)
 
-| Claude flag | Why |
-|-------------|-----|
-| `--ide` | no IDE socket is exposed into the container |
-| `-w`, `--worktree`, `--tmux` | ccairgap IS the isolation layer; a nested worktree inside the container clone makes no sense |
-| `--add-dir` | host paths do not resolve in the container |
-| `--plugin-dir` | same |
-| `--debug-file` | same (the `--debug` flag itself is fine) |
-| `--mcp-config` | ccairgap has a hook-policy-style MCP allowlist (`--mcp-enable`); host-path configs bypass it. Use `--mcp-enable` instead |
-| `--strict-mcp-config` | pairs with `--mcp-config`; without it, this nukes all MCP |
-| `--settings` | both the file-path form (host paths don't resolve) and the JSON-string form (bypasses hook/MCP policy) are denied for a consistent rule. Users with in-session settings needs should instead adjust their host `~/.claude/settings.json` or use `--hook-enable` / `--mcp-enable` |
+| Claude flag | Error-message reason |
+|-------------|----------------------|
+| `--ide` | IDE socket not exposed by default; use `--docker-run-arg -v /path/to/ide-socket:...` to wire one up |
+| `-w`, `--worktree` | ccairgap IS the isolation layer; use a second `ccairgap` invocation for parallel worktrees |
+| `--tmux` | pairs with `--worktree` (also denied); tmux binary is not in the container image |
+| `--add-dir` | host paths do not resolve in the container; use `ccairgap --ro <path>` to expose a host dir |
+| `--plugin-dir` | host paths do not resolve; plugins flow via host `~/.claude/plugins/` RO mount |
+| `--debug-file` | host paths do not resolve; use `--debug` and capture container stderr |
+| `--mcp-config` | bypasses ccairgap's MCP allowlist (`--mcp-enable`); also references host paths |
+| `--strict-mcp-config` | pairs with `--mcp-config` (also denied) |
+| `--settings` | bypasses ccairgap's hook/MCP policy (both file-path and JSON-string forms); adjust host `~/.claude/settings.json` or use `--hook-enable` / `--mcp-enable` |
+
+### HARD deny — pointless inside a fully-wired container
+
+| Claude flag | Error-message reason |
+|-------------|----------------------|
+| `-h`, `--help` | would exit before the session starts; run `claude --help` on the host |
+| `-v`, `--version` | would exit before the session starts; run `ccairgap doctor` for the in-image version |
+| `--chrome`, `--no-chrome` | no Chrome binary inside the container; the integration cannot run |
 
 ### SOFT drop (warn on stderr, strip from args)
 
@@ -110,12 +119,14 @@ Organized by reason. Every entry covers all canonical forms:
 |-------------|-----|
 | `--dangerously-skip-permissions` | already set unconditionally by the entrypoint |
 | `--allow-dangerously-skip-permissions` | redundant with the above |
-| `-h`, `--help` | would print help and exit inside a fully-wired container. Tell the user: run `claude --help` on the host |
-| `-v`, `--version` | same — suggest `ccairgap doctor` for the in-image version |
 
-Soft-drop rationale: hard-erroring on these would annoy users who
-reasonably assume they're harmless no-ops. The strip-and-warn shape
-makes the no-op explicit without killing a session setup.
+Soft-drop rationale: these are literal no-ops (the entrypoint
+already sets them). Stripping with a warning is strictly
+informational — user intent is preserved. Contrast with
+`--help` / `--version` / `--chrome` (moved to hard-deny above),
+where the user's intent is "do this specific thing," and silently
+dropping would leave them staring at a REPL or hit a runtime
+failure.
 
 ### Allow (implicit — everything not in the lists above)
 
@@ -129,7 +140,6 @@ is likely to want today:
 `--bare` (claude's `--bare`, distinct from ccairgap's `--bare`),
 `--disable-slash-commands`, `--brief`,
 `--exclude-dynamic-system-prompt-sections`, `--setting-sources`,
-`--chrome` / `--no-chrome` (no-op in container, harmless),
 print-mode companions (`--output-format`, `--input-format`,
 `--max-budget-usd`, `--json-schema`, `--no-session-persistence`,
 `--include-partial-messages`, `--include-hook-events`,
@@ -233,27 +243,49 @@ args before `-p "$CCAIRGAP_PRINT"` (see §"Entrypoint changes").
 
 ### CLI layer (`src/cli.ts`)
 
-Commander already understands `--` as a separator. The action
-callback receives `cmd.args` which contains positionals — **and**,
-after `--`, the raw passthrough. Rather than rely on commander's
-internal handling (which varies across versions for what ends up
-in `cmd.args` vs `program.args`), the CLI explicitly splits
-`process.argv` on the first bare `--` and hands the tail to the
-new module.
+Commander's default handling of `--` is to strip the separator and
+append everything after to the action's positional `args`, which
+would trip the existing `preAction` unknown-command guard at
+`cli.ts:89-93` (`program.error(\`unknown command '${first}'\`)`).
+Feature is unreachable without an explicit pre-split.
 
-- Pre-parse step: locate the first `--` in `process.argv` (after
-  the ccairgap binary name). Everything before stays as commander's
-  input. Everything after becomes `cliClaudeArgs: string[]`.
-- The root `.action` gets a new `claudeArgs` value via the
-  merge layer; `mergeRun` concatenates `[...cfg.claudeArgs,
-  ...cliClaudeArgs]` (config first).
-- Subcommands (`list`, `recover`, `discard`, `doctor`, `inspect`,
-  `init`) do **not** accept passthrough. The `--` split in
-  `process.argv` runs before commander's subcommand dispatch;
-  when the first post-program-name token is a subcommand, the
-  passthrough tail is silently dropped (no-op — the subcommand
-  wouldn't forward it anywhere). Documented as such; not a
-  failure mode worth erroring on.
+**Algorithm:**
+
+1. Before calling `program.parseAsync`, scan `process.argv` for
+   the first bare `--` token (after the binary + script name,
+   `argv[2..]`). Let `sep` be its index.
+2. If `sep` is found: `cliClaudeArgs = argv.slice(sep + 1)`;
+   the argv handed to commander is `argv.slice(0, sep)` (the
+   `--` itself is dropped, matching commander's own convention).
+3. If `sep` is not found: `cliClaudeArgs = []`.
+4. **Subcommand check:** if `sep` is found **and** the first
+   non-option token in `argv.slice(2, sep)` is a known
+   subcommand name (`list`, `recover`, `discard`, `doctor`,
+   `inspect`, `init`), exit 1 with:
+   ```
+   ccairgap: -- passthrough is only valid on the default launch command,
+     not on subcommand '<name>'
+   ```
+   before calling commander. Silent drop was considered and
+   rejected: users who typed `--` meant to forward something,
+   and silent no-ops violate the "present options, don't default
+   to easy fix" principle.
+5. Stash `cliClaudeArgs` in a module-scope variable the root
+   action reads (commander's per-action threading doesn't cross
+   cleanly through a pre-split). The merge layer reads
+   `cliClaudeArgs` and `fileCfg.claudeArgs`, concatenating
+   `[...(fileCfg.claudeArgs ?? []), ...cliClaudeArgs]` (config
+   first, CLI appended).
+6. The existing `preAction` guard is **preserved**: once
+   commander sees an argv with no `--`, the existing
+   unknown-positional check at `cli.ts:90-92` still catches
+   typos like `ccairgap lsit` normally. Test:
+   `ccairgap lsit -- --model opus` should error on `lsit`
+   (the pre-split removes `-- --model opus`, but `lsit` remains
+   in commander's input and the preAction fires).
+
+`program.parseAsync(argv)` is the commander entry; pass the
+pre-split argv to it.
 
 ### Config layer (`src/config.ts`)
 
@@ -341,61 +373,85 @@ const SHORT_TO_LONG: Record<string, string> = {
 };
 ```
 
-### Plumbing: CLI → entrypoint
+### Plumbing: CLI → entrypoint via docker CMD argv
 
-The merged + filtered args are serialized as a JSON array into a
-single env var `CCAIRGAP_CLAUDE_ARGS` (empty string when no args).
-JSON, not newline-sep, because values like `--agents '{...}'` or
-`--json-schema` contain JSON strings with arbitrary characters.
+The merged + filtered args are passed as positional arguments to
+`docker run`. Docker forwards the image's command args directly to
+the entrypoint as `"$@"` (execve-style — no shell parsing, no
+quoting, each element is a distinct argv entry). The entrypoint
+splices `"$@"` into the `exec claude` line.
 
-In `launch.ts`, after the existing `CCAIRGAP_PRINT` /
-`CCAIRGAP_NAME` / `CCAIRGAP_RESUME` push:
+Why argv, not a JSON env var: no serialization layer, no jq
+round-trip, no env var size cap (Linux `MAX_ARG_STRLEN` is
+typically 128 KiB per env var; argv total is bounded by
+`ARG_MAX` ~2 MiB, more than enough for realistic claude arg
+lists including big `--agents` / `--system-prompt` values).
+Values with newlines, quotes, or any binary survive unchanged
+because they never transit a shell or JSON layer.
+
+In `launch.ts`, `dockerArgs` today ends with `[image]`. New
+shape:
 
 ```ts
-if (claudeArgs.length > 0) {
-  dockerArgs.push("-e", `CCAIRGAP_CLAUDE_ARGS=${JSON.stringify(claudeArgs)}`);
-}
+const claudeArgs: string[] = /* merged + filtered passthrough */;
+// ... existing dockerArgs construction ...
+dockerArgs.push(imageTag);
+for (const a of claudeArgs) dockerArgs.push(a);
+await execa("docker", dockerArgs, { stdio: "inherit" });
 ```
+
+(In practice a single `dockerArgs.push(imageTag, ...claudeArgs)`.)
 
 ### Entrypoint changes (`docker/entrypoint.sh`)
 
-After the existing `NAME_ARGS` / `RESUME_ARGS` arrays, parse
-`CCAIRGAP_CLAUDE_ARGS` via `jq` into a bash array:
-
-```sh
-CLAUDE_EXTRA_ARGS=()
-if [ -n "${CCAIRGAP_CLAUDE_ARGS:-}" ]; then
-    # jq parses the JSON array; mapfile reads NUL-delimited output so
-    # args containing newlines survive.
-    mapfile -d '' -t CLAUDE_EXTRA_ARGS < <(jq -r '.[] | (. + "\u0000")' <<< "$CCAIRGAP_CLAUDE_ARGS")
-fi
-```
-
-Append to both `exec` branches:
+Entrypoint is currently fully env-driven and ignores `"$@"`.
+Change: forward `"$@"` to `exec claude`.
 
 ```sh
 if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "${CLAUDE_EXTRA_ARGS[@]}" -p "$CCAIRGAP_PRINT"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT"
 else
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "${CLAUDE_EXTRA_ARGS[@]}"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@"
 fi
 ```
 
-**Order:** `--dangerously-skip-permissions` → `-n` → `-r` →
-**passthrough** → `-p`. Passthrough goes before `-p` so the
-final positional-ish `$CCAIRGAP_PRINT` prompt stays last (matches
-`claude [options] [prompt]` parsing convention).
+**Arg order to `claude`:**
+`--dangerously-skip-permissions` → `-n` → `-r` → **passthrough**
+→ `-p`.
+
+- `--dangerously-skip-permissions` first: ccairgap-invariant,
+  must always apply.
+- `-n`, `-r`: ccairgap-owned; conflicting passthrough forms are
+  already denied host-side, so ordering is safe either way. Keep
+  first for readability / parity with current entrypoint.
+- **Passthrough before `-p`**: if user passes `--model opus`
+  via passthrough and `ccairgap --print "summarize"`, claude
+  sees `--model opus -p "summarize"`. Since claude treats `-p`
+  as boolean and the final positional as the prompt, the order
+  matters — keep `-p` last.
+- Claude's flag parser is last-wins for duplicates. Since every
+  ccairgap-owned flag (`-n`, `-r`, `-p`) is also in the
+  passthrough denylist, no legitimate duplicate can occur.
+  Future precedence rule if a passthrough-able flag moves into
+  the ccairgap-set list: passthrough ordering (after `-n`/`-r`)
+  means passthrough wins for user overrides. Documented
+  explicitly so future maintainers don't silently reorder.
 
 Entrypoint does **not** re-validate passthrough — the CLI already
-filtered it. The entrypoint is trusted host-built territory; no
-denylist in shell.
+filtered it. The entrypoint trusts the CLI's filtering. See
+CLAUDE.md invariant (added by this spec) for the threat-model
+caveat: a user running the image directly via `docker run`
+(bypassing the CLI) can set any args they want, but that path is
+already outside the ccairgap threat model (the CLI is the trust
+boundary, not the image).
 
 ### Image hash
 
-`CCAIRGAP_CLAUDE_ARGS` plumbing touches `entrypoint.sh`. Image
-tag includes `sha256(Dockerfile+entrypoint.sh)[:8]`, so the
-entrypoint change produces a fresh tag on first launch after
-upgrade. No manual rebuild needed.
+Passthrough plumbing touches `entrypoint.sh` (added `"$@"`
+forwarding). Image tag includes
+`sha256(Dockerfile+entrypoint.sh)[:8]`, so the entrypoint change
+produces a fresh tag on first launch after upgrade. No manual
+rebuild needed.
 
 ## Documentation updates
 
@@ -425,10 +481,13 @@ upgrade. No manual rebuild needed.
 
    ### Plumbing
 
-   CLI → docker run → entrypoint is a single env var:
-   `CCAIRGAP_CLAUDE_ARGS` carries the filtered list as a JSON array.
-   The entrypoint parses it with `jq` into a bash array and splices
-   it into the `exec claude` line between `-r` and `-p`.
+   CLI → docker run → entrypoint is argv passthrough: the CLI
+   appends the filtered flag list as positional args to
+   `docker run`, Docker forwards them to the entrypoint as `"$@"`,
+   and the entrypoint splices `"$@"` into the `exec claude` line
+   between `-r` and `-p`. No shell-quoting or serialization
+   layer; values with spaces, quotes, or newlines round-trip
+   unchanged.
 
    ### Forward compatibility
 
@@ -443,10 +502,10 @@ upgrade. No manual rebuild needed.
 4. **§"Entrypoint" step 9** — update the claude-args build:
 
    ```
-   9. Build the final `claude` args: always `--dangerously-skip-permissions`; then label, resume, and passthrough:
+   9. Build the final `claude` args: always `--dangerously-skip-permissions`; then label, resume, passthrough, and (optionally) print:
       - **Label (`-n`):** … (unchanged)
       - **Resume (`-r`):** … (unchanged)
-      - **Passthrough (`$CCAIRGAP_CLAUDE_ARGS`):** if set, parsed as a JSON array via `jq` and spliced in. Filtered host-side; entrypoint does not re-validate.
+      - **Passthrough (`"$@"`):** the CLI appends filtered claude args as positional args to `docker run`; they arrive at the entrypoint as `"$@"` and are spliced verbatim. Filtered host-side; entrypoint does not re-validate.
       - Then either `-p "$CCAIRGAP_PRINT"` … (unchanged)
    ```
 
@@ -482,15 +541,30 @@ Add to §"Non-obvious invariants":
 
 > - **Claude flag passthrough is denylist-gated, not allowlist-gated.**
 >   `src/claudeArgs.ts` owns the denylist (ccairgap-owned flags,
->   resume-family, sandbox-incompatible, soft-drop noise). Everything
->   else passes through unchanged so new Claude Code flags work the
->   day they ship. CLI `--` tail and `claude-args:` config key are
->   merged (config first, CLI appended) and filtered in one pass;
->   the filtered list is JSON-encoded into `CCAIRGAP_CLAUDE_ARGS`
->   and spliced into the entrypoint's `exec claude` line between
->   the resume args and `-p`. Do not re-validate in the entrypoint
->   — the entrypoint trusts the CLI's filtering. Denylist changes
->   live in one place.
+>   resume-family, sandbox-incompatible host paths / policy bypass,
+>   pointless-in-container, soft-drop no-ops). Everything else passes
+>   through unchanged so new Claude Code flags work the day they
+>   ship. CLI `--` tail and `claude-args:` config key are merged
+>   (config first, CLI appended) and filtered in one pass; the
+>   filtered list is appended as positional args to `docker run`,
+>   which forwards them to the entrypoint as `"$@"`, which splices
+>   `"$@"` into the `exec claude` line between the resume args and
+>   `-p`. Argv forwarding (not env-var JSON) avoids serialization
+>   layers and the per-env-var size cap. Entrypoint does **not**
+>   re-validate — the CLI is the trust boundary, not the image.
+>   Users who run the image directly via `docker run` can set any
+>   args (no claim otherwise; the image is not a security boundary).
+>   Denylist changes live in one place (`src/claudeArgs.ts`).
+> - **`--` passthrough is reserved for the default launch command.**
+>   `src/cli.ts` pre-splits `process.argv` at the first bare `--`
+>   before handing it to commander. When the leading positional is
+>   a known subcommand (`list`, `recover`, `discard`, `doctor`,
+>   `inspect`, `init`), the pre-split errors out ("`--` passthrough
+>   is only valid on the default launch command"). The existing
+>   `preAction` unknown-command guard still fires on real typos
+>   like `ccairgap lsit` because `lsit` stays in the pre-split
+>   argv. Changing this pre-split requires matching updates to
+>   the preAction guard and the subcommand enumeration.
 
 ## Edge cases
 
@@ -535,15 +609,30 @@ Add to §"Non-obvious invariants":
   `--fallback-model`, `--betas`, `--mcp-debug`, `--setting-sources`,
   `--output-format`, `--input-format`, `--max-budget-usd`,
   `--json-schema`, `--remote-control-session-name-prefix`,
-  `--file`, `--append-system-prompt`). The table is sourced
-  from `claude --help`. **Unknown flag tokens default to
-  "does not take a value"** — the more conservative choice
-  for flag-position tracking, since a false-negative just
-  lets an adjacent value be checked against the denylist
-  (a real flag name would not collide with a JSON fragment or
-  a model name). A false-positive in the other direction
-  (consuming the value) would risk masking a denied flag
-  sitting behind it.
+  `--file`). The table is sourced from `claude --help`.
+  **Unknown flag tokens default to "does not take a value."**
+
+  Worked example of the default choice:
+  - `--new-flag --add-dir /host` → if `--new-flag` is unknown
+    (default: no value), the tokenizer walks to `--add-dir` in
+    flag position and hard-denies it. ✓ correct (conservative
+    — false-positive on a denied flag errors visibly; the user
+    learns about the new-flag-needs-value case and asks
+    upstream).
+  - `--agent --add-dir` → `--agent` is in the known
+    value-taking table, so `--add-dir` is consumed as its
+    value. No denylist check. Claude runs with agent
+    name `--add-dir` (a nonsense agent name, claude errors).
+    **False-negative risk only materializes when the user
+    forgot to supply a real value for `--agent`.** The
+    denied flag doesn't "sneak in" because it's being passed
+    as a literal string to `--agent`, not as a flag to claude.
+  - Reverse: if we defaulted unknown to "takes a value", an
+    unknown denied-adjacent flag would consume the denied
+    token as its value, masking the policy check. Worse
+    failure mode.
+
+  Tests cover both scenarios (see §"Testing").
 - **Short flag with inline value where the short is denied.** e.g.
   `-nfoo` (meaning `--name foo`). Tokenizer splits `-n` off, looks
   up denylist, errors. Covers the obscure case where a user
@@ -568,8 +657,7 @@ Cases:
   - `-n foo`, `--name foo` → error + exit 1, message cites
     `ccairgap --name`.
   - `-r uuid`, `--resume uuid` → error + cite `ccairgap --resume`.
-  - `-p "prompt"`, `--print "prompt"` → error + cite
-    `ccairgap --print`.
+  - `-p`, `--print` → error + cite `ccairgap --print`.
   - `-c`, `--continue` → error + resume-family message.
   - `--from-pr 123` → error.
   - `--fork-session` → error.
@@ -578,19 +666,23 @@ Cases:
   - `--add-dir`, `--plugin-dir`, `--debug-file` → error.
   - `--mcp-config`, `--strict-mcp-config` → error.
   - `--settings` → error.
-- **Soft-drop per entry.** `--dangerously-skip-permissions`,
-  `--allow-dangerously-skip-permissions`, `-h`, `--help`, `-v`,
-  `--version` → stripped from filtered list + stderr warning.
+  - `-h`, `--help`, `-v`, `--version` → error (moved to
+    hard-deny per user decision).
+  - `--chrome`, `--no-chrome` → error.
+- **Soft-drop.** `--dangerously-skip-permissions`,
+  `--allow-dangerously-skip-permissions` → stripped from
+  filtered list + stderr warning; launch still proceeds
+  normally.
 - **Form variations.** `--flag=value` form, `-fval` short-inline
   form (for denied value-taking flags only):
   - `--name=foo`, `-nfoo` → both error.
   - `--model=opus` (allowed) → passes through as-is (not split).
 - **Config-only.** `claude-args: [--model, opus]` with no CLI tail
-  → env carries just config args.
-- **CLI-only.** No config, `ccairgap -- --model opus` → env
+  → argv carries just config args.
+- **CLI-only.** No config, `ccairgap -- --model opus` → argv
   carries just CLI args.
 - **Merge order.** `claude-args: [--model, opus]` +
-  `ccairgap -- --model sonnet` → env carries
+  `ccairgap -- --model sonnet` → argv carries
   `[--model, opus, --model, sonnet]` (config first).
 - **Source attribution in errors.** Deny from config:
   `config.yaml: claude-args contains a flag ccairgap manages: -n`.
@@ -598,14 +690,33 @@ Cases:
 - **Config type validation.** `claude-args: "model opus"` (string,
   not list) → hard error from `parseConfig`.
 - **Empty passthrough.** No `--` on CLI, no `claude-args` in
-  config → `CCAIRGAP_CLAUDE_ARGS` env not set (entrypoint falls
-  through to empty `CLAUDE_EXTRA_ARGS`).
-- **Entrypoint splice.** Integration-style test runs the
+  config → entrypoint sees empty `"$@"`; claude invocation
+  has no passthrough args.
+- **Commander interaction.**
+  - `ccairgap lsit -- --model opus` → errors on `lsit` (existing
+    preAction guard), does not consume `--model opus` as
+    passthrough.
+  - `ccairgap list -- --model opus` → errors with "`--`
+    passthrough is only valid on the default launch command".
+  - `ccairgap -- --model opus` (bare, no other flags, cwd as
+    repo) → works; argv after split is empty and commander runs
+    the default action normally.
+  - `ccairgap --repo . -- --help` → errors (hard-deny of
+    `--help`).
+  - `ccairgap --bare -- --bare` → ccairgap-bare activates;
+    claude-bare passes through in passthrough.
+- **Argv round-trip fidelity.** Values with spaces, quotes,
+  newlines, and 30 KiB+ JSON (e.g. big `--agents` schema)
+  arrive at `claude` unchanged. Validated by running the
   entrypoint in a throwaway shell with a fake `claude` binary
-  on PATH that echoes its args; assert the emitted arg order
-  is `--dangerously-skip-permissions -n <…> [-r <…>] <passthrough> [-p <…>]`.
-  Covers JSON round-trip of value containing spaces / quotes /
-  newlines.
+  on PATH that writes its argv to a file; assert the emitted
+  arg order is `--dangerously-skip-permissions -n <…> [-r <…>] <passthrough…> [-p <…>]`.
+- **Tokenizer false-negative bound.** `ccairgap -- --agent --add-dir`
+  → passes through as-is (`--add-dir` is consumed by `--agent`
+  as its value); does NOT error on `--add-dir`. Documents the
+  false-negative bound of the value-taking-flag table.
+- **Tokenizer conservative default.** `ccairgap -- --unknown-new-flag --add-dir /host`
+  → errors on `--add-dir` (unknown flag defaults to no value).
 
 ## Rollout
 
