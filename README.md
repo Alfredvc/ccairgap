@@ -2,7 +2,7 @@
 
 # ccairgap
 
-![ccairgap — walk away, work lands as a branch](docs/readme-banner.jpg)
+![ccairgap — walk away, work lands as branches](docs/readme-banner.jpg)
 
 [![CI](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml/badge.svg)](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/ccairgap.svg)](https://www.npmjs.com/package/ccairgap)
@@ -10,23 +10,20 @@
 
 </div>
 
-Running Claude with full permissions on your host is risky. Running it with permission prompts means babysitting every tool call — and rules are hard to get right. ccairgap gives you a third option: your Claude Code, running inside Docker with the same skills, config, hooks, and MCP servers, against a sandboxed clone of exactly what it needs. Full permissions. No babysitting. Work lands as a branch when the session ends.
+**A sandbox for Claude Code that just works.**
 
-- **Your Claude setup, unchanged.** Config, CLAUDE.md, skills, and slash commands come automatically. Hooks and MCP servers opt in with a single flag.
-- **Only what it needs.** Claude gets a clone of your repo(s) — not your host filesystem. Nothing outside that set is reachable or writable.
-- **Walk away.** No permission prompts. When the session ends, Claude's commits land as `ccairgap/<id>` in your repo.
-- **Docker underneath.** Custom images, extra mounts, port forwarding — full flexibility when you need it.
+Same config, skills, hooks, and MCP servers as on your host. Full permissions inside. Launches in seconds, even on huge repos. Work lands as new git branches in your repo on exit.
 
-> [!NOTE]
-> **Threat model.** ccairgap prevents Claude from mutating your host filesystem outside a small explicit set (session scratch, `output/`, transcript copy-back, and the `ccairgap/<id>` branch via `git fetch`). It does **not** prevent exfiltration — anything the container can read may be sent over the network. See [`SECURITY.md`](SECURITY.md) for the full threat model.
+## Security
 
-See [`docs/SPEC.md`](docs/SPEC.md) for the full design.
+ccairgap protects your host filesystem: Claude can only write to a small, explicit set of paths. It does **not** prevent exfiltration — anything the container can read may be sent over the network. See [`SECURITY.md`](SECURITY.md) for the threat model and [`docs/SPEC.md`](docs/SPEC.md) for the design.
 
 ## Contents
 
+- [Security](#security)
 - [Setup](#setup)
-- [Agent Skills](#agent-skills)
 - [Quick start](#quick-start)
+- [Agent Skills](#agent-skills)
 - [Why ccairgap?](#why-ccairgap)
 - [Launch flags](#launch-flags)
 - [Hooks](#hooks)
@@ -52,19 +49,13 @@ Or run directly with npx:
 npx ccairgap
 ```
 
-Requires Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS, Linux, Windows/WSL2.
+**Requirements.** Node ≥ 20, Docker, `git`, and `rsync` on PATH. Tested on macOS, Linux, Windows/WSL2.
 
-Log in on the host once with `claude` — ccairgap inherits those credentials automatically. First launch builds the container image (one-time; subsequent launches reuse it).
+**Login.** Run `claude` once on the host — ccairgap inherits the credentials.
 
-**Git identity.** ccairgap reads your `git config user.name` / `user.email` from the host at launch and passes them to the container so commits work. If no identity is configured, a placeholder `ccairgap <noreply@ccairgap.local>` is used and a warning is printed. GPG/SSH signing is not supported inside the container.
+**First launch.** Builds the container image (~1–2 min, one-time); every launch after is seconds.
 
-## Agent Skills
-
-Install skills for Claude Code:
-
-```bash
-npx skills add alfredvc/ccairgap
-```
+**Git identity.** ccairgap reads your `git config user.name` / `user.email` from the host and passes them to the container so commits work. If no identity is configured, a `ccairgap <noreply@ccairgap.local>` placeholder is used and a warning is printed. GPG/SSH signing is not supported inside the container.
 
 ## Quick start
 
@@ -74,7 +65,7 @@ Run with no args inside any git repo:
 ccairgap
 ```
 
-Claude opens at your repo's root with your full setup — config, CLAUDE.md, skills, slash commands. Hooks and MCP servers are available; see [Hooks](#hooks) and [MCP servers](#mcp-servers) for how to opt them in.
+Claude opens at your repo's root. Hooks and MCP servers are available but opt-in — see [Hooks](#hooks) and [MCP servers](#mcp-servers).
 
 ### Common setups
 
@@ -110,13 +101,21 @@ b4e2d8f Add login route
 - **No commits** → no branch created.
 - **Commits on a side branch only** → session dir preserved with a warning. Inspect, recover what you need, then `ccairgap discard <id>`.
 
+## Agent Skills
+
+Install skills for Claude Code:
+
+```bash
+npx skills add alfredvc/ccairgap
+```
+
 ## Why ccairgap?
 
-**vs. running `claude --dangerously-skip-permissions` on your host.** Full permissions on the host means Claude can read and write anything your user account can touch. One bad tool call — or one prompt-injected instruction — can modify or delete files outside your project. ccairgap physically constrains the writable surface: not by rules, but by not mounting those paths at all.
+**vs. running `claude --dangerously-skip-permissions` on your host.** One bad tool call — or one prompt-injected instruction — can touch any file your user account can. ccairgap constrains the writable surface physically: not by rules, but by not mounting those paths.
 
-**vs. using Claude with permission prompts.** Prompts work for interactive use but are tedious and easy to misconfigure. Blanket rules risk over-permissioning; precise rules are hard to express. ccairgap skips the permission layer entirely inside the sandbox because the sandbox itself is the permission layer.
+**vs. using Claude with permission prompts.** Prompts are tedious to babysit, blanket rules risk over-permissioning, and precise rules are hard to write. ccairgap skips the permission layer entirely — the sandbox itself is the layer.
 
-**vs. other Claude sandbox tools.** Most give you a stripped-down Claude — no skills, no custom hooks, no project config. ccairgap gives you your Claude: the same `~/.claude/` setup, the same CLAUDE.md, the same plugins. What runs in the container behaves the way you've configured Claude to behave on your host.
+**vs. other Claude sandbox tools.** Most give you a stripped-down Claude. ccairgap gives you yours — fully configured, exactly as it runs on your host.
 
 ## Launch flags
 
@@ -145,7 +144,10 @@ b4e2d8f Add login route
 
 ### Notes on `--name`
 
-Without `--name`, the session label is `ccairgap` and the TUI title is `[ccairgap]` — no `<id>` suffix. With `--name foo`, the label is `foo` and the title becomes `[ccairgap] foo`. The two-step rename (label → title) is intentional: the two strings still differ, so Claude Code's hook-dedup fires and the TUI rename effect still paints the top-border. `--name` supplies only the **prefix**; the hex suffix is always appended to form the final `<id>` (`<name>-<4hex>`), so two launches with the same `--name` never collide on branch, container, or session dir. The `<id>` still surfaces in `ccairgap list`, the container name, the branch, and the session directory — just not in the TUI label or title. To resume an existing session use `--resume <session-id>`; the original display name is preserved unless `--name` is also passed.
+- Without `--name`: TUI shows `[ccairgap]`. With `--name foo`: TUI shows `[ccairgap] foo`.
+- `--name` supplies only the **prefix**; a 4-hex suffix is always appended (`<name>-<4hex>`), so two launches with the same `--name` never collide on branch, container, or session dir.
+- The full `<id>` still surfaces in `ccairgap list`, the container name (`ccairgap-<id>`), the branch (`ccairgap/<id>`), and the session directory.
+- `--resume <session-id>` preserves the original display name unless `--name` is also passed.
 
 ## Hooks
 
@@ -282,7 +284,7 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 | `discard <id>` | Delete a session dir without running handoff. |
 | `doctor` | Preflight checks: Docker running, credentials present, image present/stale, state dir writable, `git` + `rsync` + `cp` on PATH. Hash-compares any sidecar `Dockerfile` / `entrypoint.sh` against the bundled copies and warns on drift — useful after a CLI upgrade. |
 | `init` | Scaffold `.ccairgap/{Dockerfile, entrypoint.sh, config.yaml}`. Fails if any file exists; `--force` overwrites. |
-| `inspect` | Dump the full config surface the container would see at launch: every hook entry, MCP server, `env` var, and marketplace mount. JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables. Accepts `--config`, `--repo`, `--extra-repo`. Read-only — useful for picking `--hook-enable` / `--mcp-enable` globs before launch. |
+| `inspect` | Dump every hook, MCP server, env var, and marketplace mount the container would see at launch. JSON to stdout; `--pretty` for tables. Read-only. |
 
 ## Environment variables
 
