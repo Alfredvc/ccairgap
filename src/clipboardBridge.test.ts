@@ -22,27 +22,15 @@ describe("detectClipboardMode", () => {
     expect(r.warning).toBeUndefined();
   });
 
-  it("returns macos when darwin + pngpaste present", () => {
+  it("returns macos on darwin (osascript is built-in, no hasCommand check)", () => {
     const r = detectClipboardMode({
       platform: "darwin",
       env: {},
       isWsl2: () => false,
-      hasCommand: (c) => c === "pngpaste",
+      hasCommand: () => false, // irrelevant for darwin
     });
     expect(r.mode).toBe("macos");
     expect(r.warning).toBeUndefined();
-  });
-
-  it("returns none on darwin without pngpaste AND emits a warning", () => {
-    const r = detectClipboardMode({
-      platform: "darwin",
-      env: {},
-      isWsl2: () => false,
-      hasCommand: () => false,
-    });
-    expect(r.mode).toBe("none");
-    expect(r.warning).toMatch(/pngpaste/);
-    expect(r.warning).toMatch(/brew install/);
   });
 
   it("returns wsl2 when WSLInterop exists + wl-paste present", () => {

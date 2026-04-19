@@ -367,19 +367,19 @@ ccairgap copies host image-clipboard contents into the container so Claude Code'
 
 - **Linux detection:** `xclip -selection clipboard -t TARGETS -o | grep image/… || wl-paste -l | grep image/…`. Because the image ships no `xclip`, the first call exits 127 and the `||` fallback hits our shim.
 - **Linux retrieval:** `xclip -t image/png -o || wl-paste --type image/png || xclip -t image/bmp -o || wl-paste --type image/bmp`. The second stage hits our shim. Claude Code's post-retrieval Sharp pipeline auto-converts BMP → PNG (line 209-217), so the bridge file can contain PNG or BMP — any image format the host clipboard exposes.
-- **macOS** uses `osascript` internally; the v2 host-side watcher uses `pngpaste` (faster, simpler) — these are independent choices.
+- **macOS** uses `osascript` (NSPasteboard via AppleScript). The host-side watcher also uses `osascript` — it is a macOS built-in, so no install is required.
 - **No environment-variable gating.** Claude Code does not examine `$WAYLAND_DISPLAY`. ccairgap does not set a `WAYLAND_DISPLAY` sentinel.
 
 ### Host-side watcher (per-platform)
 
 | Host | Tool | Strategy | Install hint on missing tool |
 |------|------|----------|------------------------------|
-| macOS | `pngpaste` | 1 s polling | `brew install pngpaste` |
+| macOS | `osascript` (built-in) | 1 s polling | none — always available |
 | Linux Wayland | `wl-paste` | event-driven (`wl-paste --watch`) | `sudo apt install wl-clipboard` |
 | Linux X11 | `xclip` | 1 s polling | `sudo apt install xclip` |
 | WSL2 | `wl-paste` (via WSLg) | event-driven | `sudo apt install wl-clipboard` |
 
-Detection order: macOS → WSL2 (`/proc/sys/fs/binfmt_misc/WSLInterop` exists) → Wayland (`WAYLAND_DISPLAY` set) → X11 (`DISPLAY` set). When the required tool is missing, the CLI prints a one-line install hint to stderr and runs the session without clipboard passthrough (equivalent to `--no-clipboard`).
+Detection order: macOS → WSL2 (`/proc/sys/fs/binfmt_misc/WSLInterop` exists) → Wayland (`WAYLAND_DISPLAY` set) → X11 (`DISPLAY` set). macOS always succeeds (osascript is built-in). On Linux/WSL2, when the required tool is missing, the CLI prints a one-line install hint to stderr and runs without clipboard passthrough (equivalent to `--no-clipboard`).
 
 The watcher writes atomically (tmp file → rename). It removes the bridge file when clipboard transitions to non-image content. If the watcher crashes mid-session, its `exit` handler removes the bridge file and logs a warning, so Claude Code never serves a stale image.
 

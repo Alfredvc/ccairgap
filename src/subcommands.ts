@@ -181,7 +181,7 @@ function checkClipboard(): DoctorCheck {
     hasCommand,
   });
   if (mode !== "none") {
-    const tool = mode === "macos" ? "pngpaste" : mode === "x11" ? "xclip" : "wl-paste";
+    const tool = mode === "macos" ? "osascript" : mode === "x11" ? "xclip" : "wl-paste";
     return { name: "clipboard passthrough", ok: true, detail: `${mode} via ${tool}` };
   }
   if (warning) {

@@ -27,11 +27,8 @@ export interface DetectResult {
  */
 export function detectClipboardMode(deps: DetectDeps): DetectResult {
   if (deps.platform === "darwin") {
-    if (deps.hasCommand("pngpaste")) return { mode: "macos" };
-    return {
-      mode: "none",
-      warning: "ccairgap: clipboard passthrough disabled — pngpaste not found. Install: brew install pngpaste",
-    };
+    // osascript is a macOS built-in — always present, no install required.
+    return { mode: "macos" };
   }
 
   if (deps.isWsl2()) {
@@ -114,9 +111,12 @@ export function hasCommand(cmd: string): boolean {
 }
 
 /**
- * macOS watcher: polls `pngpaste` every ~1 s. Writes atomically (tmp → rename);
- * removes the bridge file when pngpaste reports no image so the container-side
- * shim's `-f` check doubles as a "has image" signal.
+ * macOS watcher: polls `osascript` (NSPasteboard via AppleScript) every ~1 s.
+ * osascript is a macOS built-in — no install required. Writes atomically
+ * (tmp → rename); removes the bridge file when clipboard transitions away from
+ * an image so the container-side shim's `-f` check doubles as a "has image"
+ * signal. osascript exits non-zero when the clipboard holds no PNG, so the
+ * `else` branch handles both "no image" and "osascript error" uniformly.
  *
  * Invocation: `bash -c "$MACOS_WATCHER_SCRIPT" ccairgap-clipboard-watcher <bridge-path>`
  */
@@ -127,7 +127,7 @@ BRIDGE_DIR="$(dirname "$BRIDGE")"
 mkdir -p "$BRIDGE_DIR"
 while :; do
     TMP="$(mktemp "\${BRIDGE}.tmp.XXXXXX")"
-    if pngpaste "$TMP" 2>/dev/null && [ -s "$TMP" ]; then
+    if osascript -e 'set png_data to (the clipboard as \u00ABclass PNGf\u00BB)' -e "set fp to open for access POSIX file \\"$TMP\\" with write permission" -e 'write png_data to fp' -e 'close access fp' 2>/dev/null && [ -s "$TMP" ]; then
         mv "$TMP" "$BRIDGE"
     else
         rm -f "$TMP" "$BRIDGE" 2>/dev/null || true

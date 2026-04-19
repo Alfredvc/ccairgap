@@ -164,7 +164,7 @@ async function main() {
       [],
     )
     .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
-    .option("--no-clipboard", "disable image-clipboard passthrough (host-side watcher + bridge-dir RO mount). Passthrough is enabled by default on supported hosts (macOS with pngpaste; Linux Wayland/X11 with wl-clipboard/xclip; WSL2 with wl-clipboard). No-op under --print.")
+    .option("--no-clipboard", "disable image-clipboard passthrough (host-side watcher + bridge-dir RO mount). Passthrough is enabled by default on supported hosts (macOS via built-in osascript; Linux Wayland/X11 with wl-clipboard/xclip; WSL2 with wl-clipboard). No-op under --print.")
     .option(
       "-r, --resume <session-id>",
       "resume an existing Claude session by UUID. Looks up the transcript under " +
