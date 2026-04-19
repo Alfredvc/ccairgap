@@ -48,8 +48,9 @@ Run inside any git repo:
 ```bash
 ccairgap
 ```
+Claude opens at your repo root, work as normal. Then when you are done simply exit claude and any comitted changes will appear in your repository as a new branch `ccairgap/<id>`
 
-Claude opens at your repo root. Common setups:
+### Common setups:
 
 ```bash
 # Read-only sibling (e.g. node_modules)
@@ -61,25 +62,12 @@ ccairgap --repo ~/src/foo --extra-repo ~/src/bar
 # Hand it a task and walk away
 ccairgap -p "add login flow"
 
-# Inside tmux so the session outlives your terminal
-tmux new-session -d -s work 'ccairgap -p "add login flow"'
-
 # Resume a host-started session inside the sandbox
 ccairgap -r 01234567-89ab-cdef-0123-456789abcdef
+
+# Resume a ccairgap started session on host
+claude --resume 01234567-89ab-cdef-0123-456789abcdef
 ```
-
-On exit, Claude's commits land as `ccairgap/<id>` in each repo:
-
-```bash
-$ ccairgap -p "add login flow"
-# ... Claude works, commits, exits ...
-$ git log --oneline ccairgap/fuzzy-otter-a4f1
-a3f1b2c Wire auth middleware
-b4e2d8f Add login route
-```
-
-- **No commits** → no branch created.
-- **Commits on a side branch only** → session dir preserved with a warning. Inspect, recover what you need, then `ccairgap discard <id>`.
 
 ## Agent Skills
 
@@ -93,6 +81,7 @@ npx skills add alfredvc/ccairgap
 - [Setup](#setup)
 - [Quick start](#quick-start)
 - [Agent Skills](#agent-skills)
+- [How it works](#how-it-works)
 - [Launch flags](#launch-flags)
 - [Hooks](#hooks)
 - [MCP servers](#mcp-servers)
@@ -102,6 +91,18 @@ npx skills add alfredvc/ccairgap
 - [Environment variables](#environment-variables)
 - [Development](#development)
 - [Contributing](#contributing)
+
+## How it works
+
+Claude runs in a Docker container with `--dangerously-skip-permissions`. Your real repo never goes in. Instead, ccairgap makes a lightweight `git clone --shared` of it — the clone has its own working tree but borrows objects from the original read-only. The container writes commits to the clone; your real repo is mounted read-only and physically can't be touched.
+
+When Claude exits, the host (not the container) runs `git fetch` from the clone into your real repo, landing the work as a new `ccairgap/<id>` branch. If Claude didn't commit, nothing lands.
+
+Your host `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md, credentials — is mounted read-only and copied in at startup, so inside the container Claude looks and behaves like yours. Transcripts write to a session-scoped dir and get copied back to `~/.claude/projects/` on exit so `claude --resume` on the host just works.
+
+Hooks and MCP servers are off by default because most reference host binaries that aren't in the container. To add them back you opt in by glob, and likely need to extend the provided Dockerfile so the binaries they need are present. The filter happens host-side: patched configs are overlaid into the container read-only, your real settings are never edited.
+
+That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Launch flags
 
