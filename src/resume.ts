@@ -1,5 +1,5 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { execaSync } from "execa";
 import { encodeCwd } from "./paths.js";
 
@@ -159,11 +159,11 @@ export function copyResumeTranscript(args: CopyResumeTranscriptArgs): void {
   const dstDir = join(sessionDir, "transcripts", encoded);
   mkdirSync(dstDir, { recursive: true });
 
-  const uuidBase = srcJsonl.slice(srcJsonl.lastIndexOf("/") + 1); // `<uuid>.jsonl`
+  const uuidBase = basename(srcJsonl); // `<uuid>.jsonl`
   execaSync("cp", ["-a", srcJsonl, join(dstDir, uuidBase)]);
 
   if (srcSubagentsDir !== undefined) {
-    const subBasename = srcSubagentsDir.slice(srcSubagentsDir.lastIndexOf("/") + 1); // `<uuid>`
+    const subBasename = basename(srcSubagentsDir); // `<uuid>`
     execaSync("cp", ["-a", srcSubagentsDir, join(dstDir, subBasename)]);
   }
 }
