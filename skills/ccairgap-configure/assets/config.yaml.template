@@ -59,7 +59,7 @@
 # cp:
 #   - node_modules
 
-# Copy-in at launch, copy-out on exit to $CCAIRGAP_HOME/output/<ts>/.
+# Copy-in at launch, copy-out on exit to $CCAIRGAP_HOME/output/<id>/.
 # Host original never written. Use for build outputs you want after the session.
 # sync:
 #   - dist
@@ -75,10 +75,11 @@
 # Sandbox branch
 # ---------------------------------------------------------------------------
 
-# Base ref for the ccairgap/<ts> branch. Default: current HEAD of each repo.
+# Base ref for the ccairgap/<id> branch. Default: current HEAD of each repo.
 # base: main
 
-# Session name. Branch becomes ccairgap/<name>; also shown in `claude --resume`.
+# Session id prefix. CLI appends a 4-hex suffix; final id is <name>-<4hex>.
+# Drives the branch (ccairgap/<id>), container, session dir, and `claude --resume` label.
 # name: feature-foo
 
 # ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@
 # ---------------------------------------------------------------------------
 
 # Keep the container around after exit (omit `docker run --rm`).
-# Useful for postmortem; clean up with `docker rm ccairgap-<ts>`.
+# Useful for postmortem; clean up with `docker rm ccairgap-<id>`.
 # keep-container: false
 
 # Non-interactive prompt — makes ccairgap run once and exit.

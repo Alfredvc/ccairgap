@@ -14,16 +14,15 @@ export interface ManifestV1 {
     base_ref?: string;
   }>;
   /**
-   * Sandbox branch name used in the session clones (e.g. `ccairgap/<ts>` by
-   * default, or `ccairgap/<--name>` when the user passed `--name`). Optional for
-   * v1 back-compat: pre-existing sessions written by an older CLI (which used
-   * the `sandbox/` prefix) without this field fall back to `sandbox/<ts>` in
-   * handoff/orphan scanning so their work is not lost.
+   * Sandbox branch name used in the session clones (e.g. `ccairgap/<id>`).
+   * Optional for v1 back-compat: pre-existing sessions written by an older CLI
+   * (which used the `sandbox/` prefix) without this field fall back to
+   * `sandbox/<id>` in handoff/orphan scanning so their work is not lost.
    */
   branch?: string;
   /**
    * --sync entries recorded at launch so the exit-trap / recover handoff knows
-   * which in-session paths to rsync back out to $CCAIRGAP_HOME/output/<ts>/.
+   * which in-session paths to rsync back out to $CCAIRGAP_HOME/output/<id>/.
    * Additive field (optional): pre-existing v1 sessions without it recover fine.
    */
   sync?: Array<{ src_host: string; session_src: string }>;
