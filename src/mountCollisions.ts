@@ -29,6 +29,7 @@ export function reservedContainerPaths(
       "/host-claude-creds",
       "/host-claude-patched-settings.json",
       "/host-claude-patched-json",
+      "/host-claude-memory",
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
@@ -63,6 +64,7 @@ function label(src: MountSource): string {
     case "transcripts": return `transcripts RW mount`;
     case "output": return `/output RW mount`;
     case "clipboard-bridge": return `clipboard bridge`;
+    case "auto-memory": return `auto-memory RO mount`;
   }
 }
 

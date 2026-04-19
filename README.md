@@ -114,6 +114,14 @@ Your host `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md, crede
 
 Hooks and MCP servers are off by default because most reference host binaries that aren't in the container. To add them back you opt in by glob, and likely need to extend the provided Dockerfile so the binaries they need are present. The filter happens host-side: patched configs are overlaid into the container read-only, your real settings are never edited.
 
+#### Auto-memory
+
+Claude Code's workspace auto-memory directory (`MEMORY.md` and topic files — see `claude-code/src/memdir/paths.ts`) is surfaced into the sandbox **read-only**. Claude loads past memories normally; any in-session writes (`/remember`, extract-memories background worker, team sync) fail silently — they never reach the host.
+
+The effective host dir is resolved per Claude Code's own `autoMemoryDirectory` cascade (user settings, workspace-local settings, `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var; managed-policy settings join this list in a follow-up commit). Worktrees resolve to their canonical repo root so all worktrees of the same repo share memory. Project-committed settings (`.claude/settings.json`) are intentionally ignored, matching Claude Code's security carve-out.
+
+Opt out entirely with `--no-auto-memory` on the CLI or `no-auto-memory: true` in the config file.
+
 That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Launch flags

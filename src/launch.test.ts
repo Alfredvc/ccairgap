@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 import { launch, validateRepoRoOverlap } from "./launch.js";
 import { encodeCwd } from "./paths.js";
+import { sanitizePath } from "./autoMemory.js";
 
 const fakeRealpath = (map: Record<string, string>) => (p: string) => {
   if (!(p in map)) {
@@ -395,5 +396,52 @@ exit 0
     expect(run).toContain(`-e CCAIRGAP_RESUME=${uuid}`);
     expect(run).not.toContain("CCAIRGAP_RESUME_ORIG_NAME");
     expect(run).not.toContain("priorname");
+  });
+
+  it("mounts auto-memory dir at /host-claude-memory and sets CLAUDE_COWORK_MEMORY_PATH_OVERRIDE", async () => {
+    const repoReal = realpathSync(repoDir);
+    const memoryDir = join(fakeHome, ".claude", "projects", sanitizePath(repoReal), "memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# seed\n");
+
+    await launch({
+      repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false,
+    });
+
+    const run = dockerRunLine();
+    expect(run).toContain(`-v ${memoryDir}:/host-claude-memory:ro`);
+    expect(run).toContain("-e CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory");
+  });
+
+  it("skips auto-memory when --no-auto-memory is set", async () => {
+    const repoReal = realpathSync(repoDir);
+    const memoryDir = join(fakeHome, ".claude", "projects", sanitizePath(repoReal), "memory");
+    mkdirSync(memoryDir, { recursive: true });
+
+    await launch({
+      repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: true,
+    });
+
+    const run = dockerRunLine();
+    expect(run).not.toContain("/host-claude-memory");
+    expect(run).not.toContain("CLAUDE_COWORK_MEMORY_PATH_OVERRIDE");
+  });
+
+  it("does not emit the mount or env var when the host memory dir is absent", async () => {
+    await launch({
+      repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false,
+    });
+    const run = dockerRunLine();
+    expect(run).not.toContain("/host-claude-memory");
+    expect(run).not.toContain("CLAUDE_COWORK_MEMORY_PATH_OVERRIDE");
   });
 });

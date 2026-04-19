@@ -41,6 +41,7 @@ import {
 import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } from "./resume.js";
 import { resolveResumeArg, listProjectSessions } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
+import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -515,6 +516,22 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     })),
   });
 
+  // Auto-memory: mount host memory dir RO + redirect Claude Code to it via
+  // CLAUDE_COWORK_MEMORY_PATH_OVERRIDE. Skipped when --no-auto-memory was set
+  // or when the host has no memory dir yet (first-session-for-workspace).
+  // Uses the canonical repo root (not the worktree path) so all worktrees of
+  // the same repo share one memory dir — matches Claude Code's behavior.
+  let autoMemoryHostDir: string | undefined;
+  if (!opts.noAutoMemory && repoEntries[0] !== undefined) {
+    autoMemoryHostDir = resolveAutoMemoryHostDir({
+      hostClaudeDir: hostClaude,
+      workspaceHostPath: findCanonicalRepoRoot(repoEntries[0].hostPath),
+      managedPolicyDir: undefined, // populated in Task 5
+      homeDir: home,
+      env,
+    });
+  }
+
   // Clipboard passthrough (v2): host-side watcher writes
   // $SESSION/clipboard-bridge/current.png; container RO-mounts that directory
   // at /run/ccairgap-clipboard and reads via the entrypoint's fake wl-paste
@@ -538,6 +555,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       roPaths: roResolved,
       pluginMarketplaces: marketplaces,
       homeInContainer,
+      autoMemoryHostDir,
       // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
       // MCP-policy overrides are nested single-file overlays (RO) on top of the
       // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
@@ -585,6 +603,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // host runtime has no IANA zone (small-icu returns "UTC" — harmless).
   const hostTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (hostTz) dockerArgs.push("-e", `TZ=${hostTz}`);
+  if (autoMemoryHostDir !== undefined) {
+    dockerArgs.push("-e", "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory");
+  }
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }

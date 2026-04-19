@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMounts, type Mount } from "./mounts.js";
@@ -28,6 +28,7 @@ function baseInput(r: string) {
     pluginMarketplaces: [] as string[],
     homeInContainer: "/home/claude",
     extraMounts: [] as Mount[],
+    autoMemoryHostDir: undefined as string | undefined,
   };
 }
 
@@ -101,5 +102,40 @@ describe("buildMounts + collision resolver", () => {
       (m) => m.source.kind === "plugins-host-path",
     );
     expect(hostAbsCandidates).toHaveLength(0);
+  });
+
+  it("adds an RO auto-memory mount at /host-claude-memory when host dir exists", () => {
+    const memoryDir = join(root, "memory-src");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# seed\n");
+
+    const input = baseInput(root);
+    input.autoMemoryHostDir = memoryDir;
+
+    const mounts = buildMounts(input);
+    const mem = mounts.find((m) => m.source.kind === "auto-memory");
+    expect(mem).toBeDefined();
+    expect(mem?.src).toBe(memoryDir);
+    expect(mem?.dst).toBe("/host-claude-memory");
+    expect(mem?.mode).toBe("ro");
+  });
+
+  it("skips the auto-memory mount when the host dir is absent", () => {
+    const input = baseInput(root);
+    input.autoMemoryHostDir = join(root, "does-not-exist");
+    const mounts = buildMounts(input);
+    expect(mounts.find((m) => m.source.kind === "auto-memory")).toBeUndefined();
+  });
+
+  it("skips the auto-memory mount when autoMemoryHostDir is undefined", () => {
+    const input = baseInput(root);
+    const mounts = buildMounts(input);
+    expect(mounts.find((m) => m.source.kind === "auto-memory")).toBeUndefined();
+  });
+
+  it("rejects a user --ro colliding with /host-claude-memory", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/host-claude-memory"];
+    expect(() => buildMounts(input)).toThrow(/\/host-claude-memory.*reserved/);
   });
 });

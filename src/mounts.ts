@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -64,6 +64,14 @@ export interface BuildMountsInput {
   roPaths: string[];
   pluginMarketplaces: string[];
   homeInContainer: string;
+  /**
+   * Absolute host path of the resolved auto-memory directory (from
+   * `resolveAutoMemoryHostDir()`). When set and existing, RO-bind-mounted at
+   * the fixed container path `/host-claude-memory`. The caller is responsible
+   * for forwarding `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory`
+   * into the container so Claude Code's memory resolver uses the mount.
+   */
+  autoMemoryHostDir?: string;
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
 }
@@ -122,6 +130,15 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     mode: "rw",
     source: { kind: "transcripts" },
   });
+
+  if (i.autoMemoryHostDir && existsSync(i.autoMemoryHostDir)) {
+    mounts.push({
+      src: i.autoMemoryHostDir,
+      dst: "/host-claude-memory",
+      mode: "ro",
+      source: { kind: "auto-memory" },
+    });
+  }
 
   mounts.push({ src: i.outputDir, dst: "/output", mode: "rw", source: { kind: "output" } });
 

@@ -82,6 +82,8 @@ A session may cause writes to:
 
 No other host path is writable by the container. `~/.claude/`, `~/.claude.json`, plugin marketplace repos, `--ro` reference paths are all RO-mounted.
 
+The host auto-memory directory is mounted **read-only**. Writes from inside the container (extract-memories background worker, `/remember`, team sync) fail with EROFS and are swallowed by Claude Code's callers. The auto-memory path is not in the host-writable set.
+
 ## Command line interface
 
 ```
@@ -295,6 +297,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `~/.claude/plugins/` (resolved) | `<host-abs-path>/.claude/plugins/` | ro | Second RO mount of plugins tree at the original host absolute path. `known_marketplaces.json` (`installLocation`) and `installed_plugins.json` (`installPath`) store absolute host paths; without a mount at the real host path, Claude Code startup fails with "Plugin X not found in marketplace Y" for `github`/`git`/`npm`/`url`-sourced marketplaces. Skipped when host `~/.claude` coincides with container `$HOME/.claude` (no new path). |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
+| `<effective-host-memory-dir>` (resolved per Claude Code's `autoMemoryDirectory` cascade — see §"Auto-memory") | `/host-claude-memory` | ro | Host auto-memory dir surfaced to Claude Code via `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory` env var. Skipped when the host dir is absent, when no workspace repo is present, or when `--no-auto-memory` is set. Writes fail EROFS; reads (`MEMORY.md`, topic files) succeed. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` | `<original-host-path>` | rw | Session clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. |
 | `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/objects/` | ro | Alternates target for `--shared` clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
@@ -314,7 +317,7 @@ Before invoking `docker run`, ccairgap resolves mount conflicts in two passes:
 1. **Marketplace pre-filter (`filterSubsumedMarketplaces`).** If a plugin marketplace path from `extraKnownMarketplaces` equals or is nested inside any `--repo`/`--extra-repo` `hostPath`, the marketplace mount is dropped. The repo's session-clone RW mount serves those files at the same container path. A stderr warning notes the drop and reminds users that the container sees HEAD-only content (uncommitted files in the marketplace tree are not visible).
 2. **Collision resolver (`resolveMountCollisions`).** Defense-in-depth at the end of `buildMounts`:
    - Any two surviving mounts sharing a container `dst` throw with both source labels (`--repo/--extra-repo`, `--ro`, `--mount`, `plugin marketplace`, etc.).
-   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`.
+   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`.
 
 Nested mounts with distinct `dst` strings (hook/MCP single-file overlays on top of a repo, `--mount` paths inside a repo) are **allowed** — they're the intended overlay mechanism.
 
@@ -542,6 +545,23 @@ Runs at container start. Steps:
    - **Resume (`-r`):** if `CCAIRGAP_RESUME` is set, append `-r "$CCAIRGAP_RESUME"`.
    - The `-n` value (`"ccairgap <id>"`) is intentionally **not** the same as the UserPromptSubmit hook's `sessionTitle` output (`"[ccairgap] <id>"`): Claude Code's hook layer dedups against the current title, so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire.
    - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+
+## Auto-memory
+
+Claude Code's auto-memory feature persists rolling per-workspace notes to `<autoMemPath>/MEMORY.md` plus a set of topic files. ccairgap surfaces the host's existing memory dir into the sandbox read-only.
+
+**Host-side resolution** (matches `claude-code/src/memdir/paths.ts:161-235`):
+
+1. `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var (absolute path, no tilde expansion) — wins outright.
+2. `autoMemoryDirectory` in `<workspaceHostPath>/.claude/settings.local.json`.
+3. `autoMemoryDirectory` in `<hostClaudeDir>/settings.json`.
+4. Fallback: `<hostClaudeDir>/projects/<sanitizePath(canonical-repo-root)>/memory/` where `canonical-repo-root` is the main repo's working directory (worktrees resolve to the canonical root, matching Claude Code's `findCanonicalGitRoot`), and `sanitizePath` replaces every non-alphanumeric character with `-` (truncating to 200 chars + appending a djb2 hash for longer inputs).
+
+The managed-policy source is added to this cascade in Task 5 once the managed-policy mount resolution is wired through `launch.ts`. `<workspaceHostPath>/.claude/settings.json` (the repo-committed project settings) is **not** consulted — matches Claude Code's security carve-out against a malicious repo setting `autoMemoryDirectory: "~/.ssh"`.
+
+**Container-side:** the resolved host dir is RO-bind-mounted at `/host-claude-memory`, and `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory` is injected via `-e` so Claude Code treats it as the full-path override (highest priority in its own chain). No nested bind mounts, no symlinks, no entrypoint participation.
+
+**Skip triggers:** `--no-auto-memory` flag, `no-auto-memory: true` config key, no workspace repo, resolved path does not exist, or path does not pass Claude Code's validation (bare tilde forms, relative paths, sub-3-character paths).
 
 ## Authentication flow
 
