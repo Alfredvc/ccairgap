@@ -151,10 +151,20 @@ export function resolveArtifacts(i: ResolveArtifactsInput): ResolveArtifactsResu
   const syncRecords: ResolveArtifactsResult["syncRecords"] = [];
   for (const e of entries) {
     if (e.kind === "mount") {
-      extraMounts.push({ src: e.srcHost, dst: e.containerPath, mode: "rw" });
+      extraMounts.push({
+        src: e.srcHost,
+        dst: e.containerPath,
+        mode: "rw",
+        source: { kind: "artifact", flag: "mount", raw: e.raw },
+      });
     } else if (!e.insideRepoClone && e.sessionSrc) {
       // cp/sync outside any repo: mount the pre-copied session scratch RW.
-      extraMounts.push({ src: e.sessionSrc, dst: e.containerPath, mode: "rw" });
+      extraMounts.push({
+        src: e.sessionSrc,
+        dst: e.containerPath,
+        mode: "rw",
+        source: { kind: "artifact", flag: e.kind, raw: e.raw },
+      });
     }
     if (e.kind === "sync" && e.sessionSrc) {
       syncRecords.push({ src_host: e.srcHost, session_src: e.sessionSrc });

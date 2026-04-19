@@ -422,6 +422,7 @@ export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult
         src: outPath,
         dst: join(p.containerDir, fname),
         mode: "ro",
+        source: { kind: "mcp-override", description: `plugin ${p.marketplace}/${p.plugin}@${p.version} ${fname}` },
       });
     }
   }
@@ -445,6 +446,7 @@ export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult
         src: outPath,
         dst: srcPath,
         mode: "ro",
+        source: { kind: "mcp-override", description: `dir-plugin ${dp.marketplace}/${dp.plugin} ${fname}` },
       });
     }
   }
@@ -501,6 +503,7 @@ export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult
       src: outPath,
       dst: join(r.hostPath, ".mcp.json"),
       mode: "ro",
+      source: { kind: "mcp-override", description: `project ${r.basename} .mcp.json` },
     });
   }
 

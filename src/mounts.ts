@@ -1,10 +1,26 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+/**
+ * Tagged origin of a mount. Carried on every `Mount` so the collision resolver
+ * can emit source-aware error messages and the reserved-dst guard can
+ * distinguish ccairgap-owned mounts from user-supplied ones.
+ */
+export type MountSource =
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "transcripts" | "output" }
+  | { kind: "repo"; hostPath: string }
+  | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
+  | { kind: "ro"; path: string }
+  | { kind: "marketplace"; path: string }
+  | { kind: "artifact"; flag: "cp" | "sync" | "mount"; raw: string }
+  | { kind: "hook-override"; description: string }
+  | { kind: "mcp-override"; description: string };
+
 export type Mount = {
   src: string;
   dst: string;
   mode: "ro" | "rw";
+  source: MountSource;
 };
 
 export function mountArg(m: Mount): string[] {
@@ -52,22 +68,14 @@ export interface BuildMountsInput {
 export function buildMounts(i: BuildMountsInput): Mount[] {
   const mounts: Mount[] = [];
 
-  mounts.push({ src: i.hostClaudeDir, dst: "/host-claude", mode: "ro" });
-  mounts.push({ src: i.hostClaudeJson, dst: "/host-claude-json", mode: "ro" });
-  mounts.push({ src: i.hostCredsFile, dst: "/host-claude-creds", mode: "ro" });
+  mounts.push({ src: i.hostClaudeDir, dst: "/host-claude", mode: "ro", source: { kind: "host-claude" } });
+  mounts.push({ src: i.hostClaudeJson, dst: "/host-claude-json", mode: "ro", source: { kind: "host-claude-json" } });
+  mounts.push({ src: i.hostCredsFile, dst: "/host-claude-creds", mode: "ro", source: { kind: "host-creds" } });
   if (i.hostPatchedUserSettings) {
-    mounts.push({
-      src: i.hostPatchedUserSettings,
-      dst: "/host-claude-patched-settings.json",
-      mode: "ro",
-    });
+    mounts.push({ src: i.hostPatchedUserSettings, dst: "/host-claude-patched-settings.json", mode: "ro", source: { kind: "patched-settings" } });
   }
   if (i.hostPatchedClaudeJson) {
-    mounts.push({
-      src: i.hostPatchedClaudeJson,
-      dst: "/host-claude-patched-json",
-      mode: "ro",
-    });
+    mounts.push({ src: i.hostPatchedClaudeJson, dst: "/host-claude-patched-json", mode: "ro", source: { kind: "patched-claude-json" } });
   }
 
   if (existsSync(i.pluginsCacheDir)) {
@@ -75,6 +83,7 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       src: i.pluginsCacheDir,
       dst: join(i.homeInContainer, ".claude", "plugins", "cache"),
       mode: "ro",
+      source: { kind: "plugins-cache" },
     });
   }
 
@@ -82,12 +91,13 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     src: i.sessionTranscriptsDir,
     dst: join(i.homeInContainer, ".claude", "projects"),
     mode: "rw",
+    source: { kind: "transcripts" },
   });
 
-  mounts.push({ src: i.outputDir, dst: "/output", mode: "rw" });
+  mounts.push({ src: i.outputDir, dst: "/output", mode: "rw", source: { kind: "output" } });
 
   for (const r of i.repos) {
-    mounts.push({ src: r.sessionClonePath, dst: r.hostPath, mode: "rw" });
+    mounts.push({ src: r.sessionClonePath, dst: r.hostPath, mode: "rw", source: { kind: "repo", hostPath: r.hostPath } });
 
     // Host objects are mounted at a NEUTRAL container path so they don't overlay
     // the session clone's own (RW) .git/objects/. The alternates file in the
@@ -99,6 +109,7 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
         src: objDir,
         dst: `/host-git-alternates/${r.basename}/objects`,
         mode: "ro",
+        source: { kind: "alternates", repoHostPath: r.hostPath, category: "objects" },
       });
     }
 
@@ -108,16 +119,17 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
         src: lfsDir,
         dst: `/host-git-alternates/${r.basename}/lfs/objects`,
         mode: "ro",
+        source: { kind: "alternates", repoHostPath: r.hostPath, category: "lfs" },
       });
     }
   }
 
   for (const p of i.roPaths) {
-    mounts.push({ src: p, dst: p, mode: "ro" });
+    mounts.push({ src: p, dst: p, mode: "ro", source: { kind: "ro", path: p } });
   }
 
   for (const p of i.pluginMarketplaces) {
-    mounts.push({ src: p, dst: p, mode: "ro" });
+    mounts.push({ src: p, dst: p, mode: "ro", source: { kind: "marketplace", path: p } });
   }
 
   if (i.extraMounts) {

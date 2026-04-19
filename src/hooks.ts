@@ -452,6 +452,7 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
       src: outPath,
       dst: join(p.containerDir, "hooks", "hooks.json"),
       mode: "ro",
+      source: { kind: "hook-override", description: `plugin ${p.marketplace}/${p.plugin}@${p.version} hooks.json` },
     });
   }
 
@@ -479,6 +480,7 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
       src: outPath,
       dst: dp.hooksJsonPath,
       mode: "ro",
+      source: { kind: "hook-override", description: `dir-plugin ${dp.marketplace}/${dp.plugin} hooks.json` },
     });
   }
 
@@ -501,6 +503,7 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
         src: outPath,
         dst: join(r.hostPath, ".claude", fname),
         mode: "ro",
+        source: { kind: "hook-override", description: `project ${r.basename} .claude/${fname}` },
       });
     }
   }

@@ -67,7 +67,7 @@ describe("resolveArtifacts", () => {
     expect(e.insideRepoClone).toBe(false);
     // $SESSION/artifacts/<abs-src-stripped-of-leading-slash>
     expect(e.sessionSrc).toBe(join(sessionDir, "artifacts", outside.replace(/^\//, "")));
-    expect(r.extraMounts).toEqual([
+    expect(r.extraMounts).toMatchObject([
       { src: e.sessionSrc!, dst: outside, mode: "rw" },
     ]);
     expect(r.warnings.some((w) => w.includes("outside all"))).toBe(true);
@@ -162,7 +162,7 @@ describe("resolveArtifacts", () => {
     });
     expect(r.entries).toHaveLength(1);
     expect(r.entries[0]!.sessionSrc).toBeUndefined();
-    expect(r.extraMounts).toEqual([
+    expect(r.extraMounts).toMatchObject([
       { src: join(repoPath, "node_modules"), dst: join(repoPath, "node_modules"), mode: "rw" },
     ]);
   });
