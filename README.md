@@ -136,7 +136,7 @@ b4e2d8f Add login route
 | `--docker-build-arg KEY=VAL` | — | yes | Forwarded to `docker build --build-arg`. Use `CLAUDE_CODE_VERSION=<semver>` to pin Claude Code. |
 | `--rebuild` | off | no | Force image rebuild. |
 | `-p, --print <prompt>` | — | no | `claude -p "<prompt>"` instead of the REPL. |
-| `-n, --name <name>` | random `<adj>-<noun>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix; the final id is `<name>-<4hex>`. Drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label (`[ccairgap] <id>`). Must be a valid git ref component. See notes below. |
+| `-n, --name <name>` | random `<adj>-<noun>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix; the final id is `<name>-<4hex>`. Drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label (`ccairgap <id>`, rewritten to `[ccairgap] <id>` by the rename hook). Must be a valid git ref component. See notes below. |
 | `-r, --resume <session-id>` | — | no | Resume an existing Claude session by UUID inside the sandbox. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` into the session before `docker run`. Works with both host-born and ccairgap-born sessions. Requires a workspace repo. |
 | `--hook-enable <glob>` | all disabled | yes | Opt-in a hook by matching its raw `command` string. Wildcard `*`. |
 | `--mcp-enable <glob>` | all disabled | yes | Opt-in an MCP server by `name`. Wildcard `*`. |
@@ -146,7 +146,7 @@ b4e2d8f Add login route
 
 ### Notes on `--name`
 
-Without `--name`, the session label is `ccairgap` and the TUI title is `[ccairgap]` — no `<id>` suffix. With `--name foo`, the label is `foo` and the title becomes `[ccairgap] foo`. The two-step rename (label → title) is intentional: the two strings still differ, so Claude Code's hook-dedup fires and the TUI rename effect still paints the top-border. `--name` supplies only the **prefix**; the hex suffix is always appended to form the final `<id>` (`<name>-<4hex>`), so two launches with the same `--name` never collide on branch, container, or session dir. The `<id>` still surfaces in `ccairgap list`, the container name, the branch, and the session directory — just not in the TUI label or title. To resume an existing session use `--resume <session-id>`; the original display name is preserved unless `--name` is also passed.
+The session label is always `ccairgap <id>` and the TUI title is `[ccairgap] <id>` — `<id>` = the full session id. Without `--name`, `<id>` is `<adj>-<noun>-<4hex>` (random). With `--name foo`, `<id>` is `foo-<4hex>`. The two-step rename (label → title) is intentional: the two strings still differ, so Claude Code's hook-dedup fires and the TUI rename effect still paints the top-border. `--name` supplies only the **prefix**; the hex suffix is always appended to form the final `<id>` (`<name>-<4hex>`), so two launches with the same `--name` never collide on branch, container, or session dir. To resume an existing session use `--resume <session-id>`; the resumed session uses the new `<id>` as its label — the prior display name is not preserved.
 
 ## Hooks
 

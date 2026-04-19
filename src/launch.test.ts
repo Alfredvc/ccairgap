@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -206,5 +207,181 @@ describe("launch --resume validation runs before any session-dir creation", () =
     if (existsSync(sessionsRoot)) {
       expect(readdirSync(sessionsRoot)).toEqual([]);
     }
+  });
+});
+
+/**
+ * Locks in the unified-id naming contract:
+ *   - `CCAIRGAP_NAME` is always set on `docker run`, and its value equals the
+ *     session id (NOT the raw --name prefix).
+ *   - `CCAIRGAP_RESUME_ORIG_NAME` is never emitted.
+ * Entrypoint-level behavior (`-n "ccairgap $CCAIRGAP_NAME"` / hook title
+ * `[ccairgap] $CCAIRGAP_NAME`) is covered by the entrypoint test below; this
+ * suite only asserts what the CLI hands to docker.
+ */
+describe("launch emits CCAIRGAP_NAME=<id> on docker run", () => {
+  let root: string;
+  let ccairgapHome: string;
+  let fakeHome: string;
+  let repoDir: string;
+  let fakeBinDir: string;
+  let dockerLog: string;
+  let savedEnv: Record<string, string | undefined>;
+  let stderrSpy: MockInstance<(...args: unknown[]) => void>;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "airgap-name-emit-")));
+    ccairgapHome = join(root, "state");
+    fakeHome = join(root, "home");
+    repoDir = join(root, "repo");
+    fakeBinDir = join(root, "bin");
+    dockerLog = join(root, "docker.log");
+    mkdirSync(ccairgapHome, { recursive: true });
+    mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    execaSync("git", ["init", "-q"], { cwd: repoDir });
+    execaSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"], { cwd: repoDir });
+
+    // Fake docker: logs each invocation's argv (space-joined) to $dockerLog,
+    // exits 0 so `image inspect` says "exists" and `docker run` says "container
+    // exited cleanly". Keeps the launch pipeline advancing through arg-assembly
+    // without a real daemon.
+    mkdirSync(fakeBinDir, { recursive: true });
+    const dockerStub = join(fakeBinDir, "docker");
+    writeFileSync(
+      dockerStub,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${dockerLog}"
+exit 0
+`,
+    );
+    chmodSync(dockerStub, 0o755);
+
+    // Credentials: stub macOS `security` to emit a minimal valid JSON blob;
+    // also create ~/.claude/.credentials.json so Linux code path works.
+    const securityStub = join(fakeBinDir, "security");
+    writeFileSync(
+      securityStub,
+      `#!/bin/sh
+printf '%s' '{"claudeAiOauth":{"accessToken":"fake"}}'
+exit 0
+`,
+    );
+    chmodSync(securityStub, 0o755);
+    writeFileSync(join(fakeHome, ".claude", ".credentials.json"), '{"claudeAiOauth":{"accessToken":"fake"}}');
+    // Minimal host `~/.claude.json` — launch.ts realpath()s it unconditionally.
+    writeFileSync(join(fakeHome, ".claude.json"), "{}");
+
+    savedEnv = {
+      CCAIRGAP_HOME: process.env.CCAIRGAP_HOME,
+      HOME: process.env.HOME,
+      PATH: process.env.PATH,
+    };
+    process.env.CCAIRGAP_HOME = ccairgapHome;
+    process.env.HOME = fakeHome;
+    process.env.PATH = `${fakeBinDir}:${savedEnv.PATH ?? ""}`;
+
+    stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    stderrSpy.mockRestore();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Return the one `docker run …` line logged by the stub. Fails the test if absent. */
+  function dockerRunLine(): string {
+    const lines = readFileSync(dockerLog, "utf8").split("\n").filter(Boolean);
+    const run = lines.find((l) => l.startsWith("run "));
+    if (run === undefined) {
+      throw new Error(`no 'docker run …' invocation recorded. Log:\n${lines.join("\n")}`);
+    }
+    return run;
+  }
+
+  it("fresh session (no --name): CCAIRGAP_NAME = <adj>-<noun>-<4hex>", async () => {
+    const result = await launch({
+      repos: [repoDir],
+      ros: [],
+      cp: [],
+      sync: [],
+      mount: [],
+      keepContainer: false,
+      dockerBuildArgs: {},
+      rebuild: false,
+      hookEnable: [],
+      mcpEnable: [],
+      dockerRunArgs: [],
+      warnDockerArgs: false,
+      bare: false,
+    });
+    expect(result.id).toMatch(/^[a-z]+-[a-z]+-[0-9a-f]{4}$/);
+    const run = dockerRunLine();
+    expect(run).toContain(`-e CCAIRGAP_NAME=${result.id}`);
+    expect(run).not.toContain("CCAIRGAP_RESUME_ORIG_NAME");
+  });
+
+  it("explicit --name: CCAIRGAP_NAME = <name>-<4hex> (never the raw prefix)", async () => {
+    const result = await launch({
+      repos: [repoDir],
+      ros: [],
+      cp: [],
+      sync: [],
+      mount: [],
+      keepContainer: false,
+      dockerBuildArgs: {},
+      rebuild: false,
+      hookEnable: [],
+      mcpEnable: [],
+      dockerRunArgs: [],
+      warnDockerArgs: false,
+      bare: false,
+      name: "myfeature",
+    });
+    expect(result.id).toMatch(/^myfeature-[0-9a-f]{4}$/);
+    const run = dockerRunLine();
+    expect(run).toContain(`-e CCAIRGAP_NAME=${result.id}`);
+    expect(run).not.toContain("-e CCAIRGAP_NAME=myfeature ");
+    expect(run).not.toContain("CCAIRGAP_RESUME_ORIG_NAME");
+  });
+
+  it("resume: CCAIRGAP_NAME = new id; no CCAIRGAP_RESUME_ORIG_NAME even when source jsonl has agent-name", async () => {
+    const uuid = "00000000-0000-0000-0000-000000000001";
+    const encoded = encodeCwd(repoDir);
+    mkdirSync(join(fakeHome, ".claude", "projects", encoded), { recursive: true });
+    writeFileSync(
+      join(fakeHome, ".claude", "projects", encoded, `${uuid}.jsonl`),
+      [
+        '{"type":"user","message":{"content":"hi"}}',
+        '{"type":"agent-name","agentName":"priorname"}',
+      ].join("\n") + "\n",
+    );
+
+    const result = await launch({
+      repos: [repoDir],
+      ros: [],
+      cp: [],
+      sync: [],
+      mount: [],
+      keepContainer: false,
+      dockerBuildArgs: {},
+      rebuild: false,
+      hookEnable: [],
+      mcpEnable: [],
+      dockerRunArgs: [],
+      warnDockerArgs: false,
+      bare: false,
+      resume: uuid,
+    });
+    const run = dockerRunLine();
+    expect(run).toContain(`-e CCAIRGAP_NAME=${result.id}`);
+    expect(run).toContain(`-e CCAIRGAP_RESUME=${uuid}`);
+    expect(run).not.toContain("CCAIRGAP_RESUME_ORIG_NAME");
+    expect(run).not.toContain("priorname");
   });
 });

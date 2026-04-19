@@ -91,18 +91,16 @@ fi
 TITLE_HOOK="/tmp/ccairgap-session-title.sh"
 cat > "$TITLE_HOOK" << 'HOOK_EOF'
 #!/bin/sh
-# Explicit --name wins. Else, on resume without --name, surface the latest
-# agent-name entry from the source jsonl (CLI pre-extracted). Else bare tag.
+# CCAIRGAP_NAME carries the session id (CLI always sets it). Fallback branch
+# only runs when the image is launched directly without the CLI env.
 if [ -n "${CCAIRGAP_NAME:-}" ]; then
     TITLE="[ccairgap] $CCAIRGAP_NAME"
-elif [ -n "${CCAIRGAP_RESUME_ORIG_NAME:-}" ]; then
-    TITLE="[ccairgap] $CCAIRGAP_RESUME_ORIG_NAME"
 else
     TITLE="[ccairgap]"
 fi
-# Use jq for JSON-safe emission — raw printf would break if TITLE contains
-# a double-quote or backslash, which is possible when $CCAIRGAP_RESUME_ORIG_NAME
-# is extracted from an untrusted transcript (e.g. a user /rename'd to `"cool"`).
+# jq for JSON-safe emission — raw printf would break if TITLE ever contained
+# a double-quote or backslash. Id shape is [a-z0-9-]+ today so it's safe, but
+# keep jq so future id-shape changes don't silently produce invalid JSON.
 jq -nc --arg title "$TITLE" \
   '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}'
 HOOK_EOF
@@ -136,16 +134,14 @@ CWD="${CCAIRGAP_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
-# Session label → `claude -n "<name>"` seeds /resume label + terminal title.
-# Intentionally differs from the UserPromptSubmit hook's sessionTitle
-# ("[ccairgap] <name>") so Claude's hook dedup fires and the TUI rename effect
-# paints. Precedence: explicit --name (CCAIRGAP_NAME), then on resume skip -n
-# so claude picks up the stored name from the transcript, then the default
-# "ccairgap" label for fresh sessions without --name.
+# Session label → `claude -n "ccairgap <id>"` seeds /resume label + terminal
+# title. Intentionally differs from the UserPromptSubmit hook's sessionTitle
+# output "[ccairgap] <id>": if the two strings matched, Claude's hook dedup
+# would skip the rename and the TUI TextInput border would never recolor.
+# CCAIRGAP_NAME carries the full session id from the CLI; the fallback branch
+# only runs when the entrypoint is executed directly without the CLI env.
 if [ -n "${CCAIRGAP_NAME:-}" ]; then
-    NAME_ARGS=(-n "$CCAIRGAP_NAME")
-elif [ -n "${CCAIRGAP_RESUME:-}" ]; then
-    NAME_ARGS=()
+    NAME_ARGS=(-n "ccairgap $CCAIRGAP_NAME")
 else
     NAME_ARGS=(-n "ccairgap")
 fi
