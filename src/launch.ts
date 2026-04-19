@@ -22,7 +22,7 @@ import {
 } from "./git.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
 import { filterSubsumedMarketplaces } from "./marketplaces.js";
-import { buildMounts, mountArg } from "./mounts.js";
+import { buildMounts, mountArg, type Mount } from "./mounts.js";
 import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
 import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
@@ -424,29 +424,34 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     })),
   });
 
-  const mounts = buildMounts({
-    hostClaudeDir: hostClaude,
-    hostClaudeJson: resolvedClaudeJson,
-    hostCredsFile: creds.hostPath,
-    hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
-    hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
-    pluginsCacheDir: pluginsCache,
-    sessionTranscriptsDir: transcriptsDir,
-    outputDir: outputDirPath(env),
-    repos: repoEntries,
-    roPaths: roResolved,
-    pluginMarketplaces: marketplaces,
-    homeInContainer,
-    // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
-    // MCP-policy overrides are nested single-file overlays (RO) on top of the
-    // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
-    // so overlapping paths win — the overlay is the later mount.
-    extraMounts: [
-      ...artifacts.extraMounts,
-      ...hookPolicyResult.overrideMounts,
-      ...mcpPolicyResult.overrideMounts,
-    ],
-  });
+  let mounts: Mount[];
+  try {
+    mounts = buildMounts({
+      hostClaudeDir: hostClaude,
+      hostClaudeJson: resolvedClaudeJson,
+      hostCredsFile: creds.hostPath,
+      hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
+      hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      sessionTranscriptsDir: transcriptsDir,
+      outputDir: outputDirPath(env),
+      repos: repoEntries,
+      roPaths: roResolved,
+      pluginMarketplaces: marketplaces,
+      homeInContainer,
+      // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
+      // MCP-policy overrides are nested single-file overlays (RO) on top of the
+      // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
+      // so overlapping paths win — the overlay is the later mount.
+      extraMounts: [
+        ...artifacts.extraMounts,
+        ...hookPolicyResult.overrideMounts,
+        ...mcpPolicyResult.overrideMounts,
+      ],
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
 
   // Step 10: docker run args
   const containerCwd =

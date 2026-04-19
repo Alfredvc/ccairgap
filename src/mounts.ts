@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { resolveMountCollisions } from "./mountCollisions.js";
 
 /**
  * Tagged origin of a mount. Carried on every `Mount` so the collision resolver
@@ -142,5 +143,6 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     for (const m of i.extraMounts) mounts.push(m);
   }
 
-  return mounts;
+  const resolved = resolveMountCollisions(mounts, { homeInContainer: i.homeInContainer });
+  return resolved.mounts;
 }
