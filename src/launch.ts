@@ -37,6 +37,7 @@ import {
   parseDockerRunArgs,
   scanDangerousArgs,
 } from "./dockerRunArgs.js";
+import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } from "./resume.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -88,6 +89,14 @@ export interface LaunchOptions {
    * process.cwd() instead of repos[0].hostPath.
    */
   bare: boolean;
+  /**
+   * If set, resume Claude session `<uuid>` inside the sandbox. The CLI
+   * locates `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` and
+   * copies it (plus the optional `<uuid>/` subagents dir) into
+   * `$SESSION/transcripts/<encoded>/` before docker runs. Requires a
+   * workspace repo; incompatible with `--bare` or ro-only launches.
+   */
+  resume?: string;
 }
 
 export interface LaunchResult {
@@ -188,6 +197,18 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     die((e as Error).message);
   }
 
+  // Resume requires a workspace repo: the source transcript lives under
+  // ~/.claude/projects/<encoded-cwd>/ and the cwd is the workspace.
+  // --bare with no --repo, or ro-only launches, have no cwd anchor.
+  if (opts.resume !== undefined && opts.repos.length === 0) {
+    die("--resume requires a workspace repo (--repo or cwd git repo); got --bare or ro-only");
+  }
+
+  // Resolved up-front (was previously computed alongside marketplace discovery)
+  // so the resume validation step below can reference it without re-resolving.
+  // Both `hostClaudeDir(env)` and `realpath()` are pure — relocation is safe.
+  const hostClaude = realpath(hostClaudeDir(env));
+
   // Session id is computed below after repoPlans is built — generateId reuses
   // the workspace repo's realpath result rather than re-running realpath here.
   let id: string;
@@ -221,6 +242,26 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       alternatesName: alternatesName(bn, hostPath),
       baseRef: opts.base,
     });
+  }
+
+  // Resolve resume source in the validation phase: if the transcript is
+  // missing, die() now so exit 1 happens before any session-dir creation.
+  let resumeSource: ResolvedResumeSource | undefined;
+  if (opts.resume !== undefined) {
+    const workspace = pendingRepos[0]?.hostPath;
+    if (workspace === undefined) {
+      // Unreachable: guard above already die'd when repos.length === 0.
+      die("--resume requires a workspace repo");
+    }
+    try {
+      resumeSource = resolveResumeSource({
+        hostClaudeDir: hostClaude,
+        workspaceHostPath: workspace,
+        uuid: opts.resume,
+      });
+    } catch (e) {
+      die((e as Error).message);
+    }
   }
 
   // Session id = `<prefix>-<4hex>`. Prefix is `opts.name` if set, else random
@@ -263,7 +304,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // critical — resolveArtifacts's overlap check would otherwise fatal on the
   // marketplace-equals-workspace-repo case instead of letting it pass through
   // as a warn-and-drop.
-  const hostClaude = realpath(hostClaudeDir(env));
   const rawMarketplaces = discoverLocalMarketplaces(hostClaude, home);
   const marketplaceFilter = filterSubsumedMarketplaces(
     rawMarketplaces,
@@ -314,7 +354,25 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   let setupOk = false;
   let creds: Awaited<ReturnType<typeof resolveCredentials>>;
   const repoEntries: RepoPlan[] = [];
+  // Captured here so Task 7's env-var emission block can read it without
+  // re-deriving from `resumeSource`.
+  const resumeOrigName: string | undefined = resumeSource?.origName;
   try {
+    // Resume: pre-populate $SESSION/transcripts/<encoded>/<uuid>.jsonl (plus
+    // optional subagents dir) from the host's ~/.claude/projects/ so
+    // `claude -r <uuid>` inside the container finds the transcript. The
+    // source existence check ran in the validation phase above — any I/O
+    // failure here is a filesystem-level problem worth aborting on, and the
+    // setupOk/finally block will rm-rf $SESSION.
+    if (resumeSource !== undefined) {
+      const workspace = pendingRepos[0]!.hostPath;
+      copyResumeTranscript({
+        sessionDir: sessionPath,
+        workspaceHostPath: workspace,
+        source: resumeSource,
+      });
+    }
+
     creds = await resolveCredentials(sessionPath);
 
     for (const plan of repoPlans) {
