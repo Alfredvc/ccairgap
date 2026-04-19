@@ -17,7 +17,7 @@ Full design: [`docs/SPEC.md`](docs/SPEC.md). Summary below.
 
 Any write to the host filesystem outside the paths enumerated in [`docs/SPEC.md` §"Host writable paths"](docs/SPEC.md). Specifically, the container must **not** be able to mutate:
 
-- Real git repositories passed via `--repo` / `--extra-repo` (only `ccairgap/<ts>` ref creation via host-side `git fetch` on exit is permitted).
+- Real git repositories passed via `--repo` / `--extra-repo` (only `ccairgap/<id>` ref creation via host-side `git fetch` on exit is permitted).
 - Host `~/.claude/`, `~/.claude.json`, plugin marketplace repos.
 - Any `--ro` reference path.
 - Any host path not explicitly opted-in via `--mount`.

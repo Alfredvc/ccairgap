@@ -43,7 +43,7 @@ All paths follow XDG Base Directory convention.
 ```
 ${XDG_STATE_HOME:-$HOME/.local/state}/ccairgap/
 ├── sessions/
-│   └── <ts>/                      # per-session state, ephemeral
+│   └── <id>/                      # per-session state, ephemeral
 │       ├── repos/
 │       │   └── <repo-name>/       # git clone --shared of host repo
 │       ├── transcripts/           # bind-mounted at container ~/.claude/projects/
@@ -51,17 +51,29 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/ccairgap/
 └── output/                        # single reused dir, bind-mounted at /output
 ```
 
-- `<ts>` is ISO 8601 compact, e.g. `20260417T143022Z`.
+- `<id>` is the session identifier. Generated as `<prefix>-<4hex>` where:
+  - **prefix** is `--name <name>` if the user passed one, otherwise a random
+    `<adj>-<noun>` pair drawn from the bundled word list in `src/sessionId.ts`.
+  - **4hex** is always appended (via `crypto.randomBytes`) so collisions are
+    rare even for fixed prefixes (65536 combos per prefix).
+- The id drives four things uniformly: session dir (`$XDG_STATE_HOME/ccairgap/sessions/<id>`),
+  docker container (`ccairgap-<id>`), sandbox branch (`ccairgap/<id>`), and
+  Claude's session label (`-n "ccairgap <id>"`, rewritten to `[ccairgap] <id>`
+  by the rename hook on first prompt).
+- On collision with any of session dir / running-or-stopped container / workspace
+  branch, the hex suffix is re-rolled up to 8 times before aborting.
+- Validated once via `git check-ref-format refs/heads/ccairgap/<id>`; a bad
+  `--name` surfaces before any filesystem side effects.
 - Host `~/.claude/` is the source of credentials, settings, plugins, skills, commands, CLAUDE.md. It is RO-mounted into the container; there is no separate profile volume.
 
 ## Host writable paths (the only ones)
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/ccairgap/sessions/<ts>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
-2. `$XDG_STATE_HOME/ccairgap/output/` — `/output` mount inside container, plus `output/<ts>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
+1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
+2. `$XDG_STATE_HOME/ccairgap/output/` — `/output` mount inside container, plus `output/<id>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
-4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `ccairgap/<ts>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
+4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `ccairgap/<id>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
 5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This class of write can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
 6. Anything a user adds via `--docker-run-arg` (see §"Raw docker run args"). Raw docker args are pass-through: a `-v <host>:<ctr>:rw`, `--mount`, `--pid=host`, etc. supplied this way can make host writes or weaken isolation beyond `--mount`'s narrow per-path semantics. Treated as user-declared opt-out.
 
@@ -79,19 +91,19 @@ Default (no subcommand): start a new session.
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
-| `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `ccairgap/<ts>` created. If omitted, defaults to the current working directory (must be a git repo). |
-| `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `ccairgap/<ts>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
+| `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `ccairgap/<id>` created. If omitted, defaults to the current working directory (must be a git repo). |
+| `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `ccairgap/<id>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
 | `--cp <path>` | yes | Copy host path into the session at launch; container sees it RW at the same absolute path. Changes are discarded on exit (never reach host). Relative paths resolve against the workspace repo root. See §"Build artifact paths". |
-| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<ts>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
+| `--sync <path>` | yes | Same pre-launch copy as `--cp`, plus: on exit the container-written copy is rsynced to `$CCAIRGAP_HOME/output/<id>/<abs-source-path>/`. The original host path is never written to. See §"Build artifact paths". |
 | `--mount <path>` | yes | RW bind-mount host path directly into the container at the same absolute path. Live host writes; no copy. Relative paths resolve against the workspace repo root. Breaks the "container never writes host repo directly" invariant for the declared path only — opt-in. See §"Build artifact paths". |
-| `--base <ref>` | no | Base ref for `ccairgap/<ts>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
-| `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm ccairgap-<ts>`. |
+| `--base <ref>` | no | Base ref for `ccairgap/<id>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
+| `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm ccairgap-<id>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
 | `-p, --print <prompt>` | no | Run Claude Code in non-interactive print mode: `claude -p "<prompt>"` instead of the REPL. The container still runs with full permissions and all mounts; it just does a single prompt and exits. Useful for smoke tests and scripted runs. |
-| `-n, --name <name>` | no | Session name. Replaces `<ts>` in the sandbox branch (so the branch becomes `ccairgap/<name>`) and is forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Validated with `git check-ref-format refs/heads/ccairgap/<name>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref or if `ccairgap/<name>` already exists in `--repo`'s host repo. Collision is checked only against the workspace repo (`--repo`); `--extra-repo` entries are not pre-checked, so a stale branch in one of them will surface at fetch time on exit. |
+| `-n, --name <name>` | no | Session name. Replaces `<id>` in the sandbox branch (so the branch becomes `ccairgap/<name>`) and is forwarded to `claude -n <name>` so the session shows up with that label in `/resume` and the terminal title. Validated with `git check-ref-format refs/heads/ccairgap/<name>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref or if `ccairgap/<name>` already exists in `--repo`'s host repo. Collision is checked only against the workspace repo (`--repo`); `--extra-repo` entries are not pre-checked, so a stale branch in one of them will surface at fetch time on exit. |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
 | `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--network`, `--cap-drop`, etc.). Repeatable. See §"Raw docker run args". |
 | `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
@@ -103,9 +115,9 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 
 | Subcommand | Description |
 |------------|-------------|
-| `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<ts>`. |
-| `recover [<ts>]` | Run the handoff routine against `$SESSION/<ts>/`. Idempotent. With no `<ts>` argument, equivalent to `list`. |
-| `discard <ts>` | Delete `$SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
+| `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<id>`. |
+| `recover [<id>]` | Run the handoff routine against `$SESSION/<id>/`. Idempotent. With no `<id>` argument, equivalent to `list`. |
+| `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
 | `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
 | `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
 | `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
@@ -144,16 +156,16 @@ In order:
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
 2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, `inspect`, or `init`, run that handler per §Recovery / §Doctor / §"Container image customization" / §"Hook policy" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
 3. Host-binary preflight: verify `docker`, `git`, `rsync`, and `cp` are all resolvable via PATH (POSIX `command -v`). On failure, error with the list of missing binaries and exit 1 before any session-dir side effects. This catches the ENOENT-during-launch failure mode; `ccairgap doctor` performs the same check plus a `docker version` probe for the daemon.
-4. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<ts>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <ts>` / `ccairgap discard <ts>` commands. Do not auto-recover; continue to new session setup.
+4. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<id>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <id>` / `ccairgap discard <id>` commands. Do not auto-recover; continue to new session setup.
 5. Resolve host credentials (see §"Authentication flow"):
    - macOS: run `security find-generic-password -w -s "Claude Code-credentials"`. If the command errors, print "run `claude` on the host to log in, then unlock the keychain" and exit. Otherwise write stdout to `$SESSION/creds/.credentials.json` with mode 0600.
    - Non-macOS: verify host `~/.claude/.credentials.json` exists. If missing, print "run `claude` on the host to log in" and exit.
-6. Compute `<ts>`, create `$SESSION = $XDG_STATE_HOME/ccairgap/sessions/<ts>/`.
+6. Compute `<id>`, create `$SESSION = $XDG_STATE_HOME/ccairgap/sessions/<id>/`.
 7. For each repo in the set (`--repo` plus every `--extra-repo`):
    - `git clone --shared <path> $SESSION/repos/<basename>`
    - `cd $SESSION/repos/<basename> && git checkout -b <branch> [<base>]`
-   - `<branch>` is `ccairgap/<ts>` by default, or `ccairgap/<--name>` when `--name` was passed. The name is validated (`git check-ref-format refs/heads/<branch>`) and checked for collision on the workspace repo (`--repo`) before side effects.
-8. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; those builds used the `sandbox/` prefix, so the handoff routine falls back to `sandbox/<ts>` in that case to keep recover working on pre-existing on-disk sessions.
+   - `<branch>` is always `ccairgap/<id>` where `<id>` is `<prefix>-<4hex>` per §"Session identifier". `--name` supplies the prefix; omitted, a random `<adj>-<noun>` prefix is used. The full ref (`refs/heads/ccairgap/<prefix>-<4hex>`) is validated once via `git check-ref-format`; on collision with an existing session dir, container, or branch in the workspace repo (`--repo`), the hex suffix is re-rolled (up to 8 attempts) before aborting.
+8. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; those builds used the `sandbox/` prefix, so the handoff routine falls back to `sandbox/<id>` in that case to keep recover working on pre-existing on-disk sessions.
 9. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/ccairgap/output/` (idempotent).
 10. Resolve symlinks (`readlink -f`) for all host paths being mounted: `~/.claude/`, `~/.claude.json`, `~/.claude/CLAUDE.md`, plugin marketplace paths, `--repo` / `--extra-repo` / `--ro` targets.
 11. Auto-discover plugin marketplace paths referenced by host `~/.claude/settings.json` (absolute paths outside `~/.claude/`). Add each as a RO mount at its original absolute path.
@@ -162,11 +174,11 @@ In order:
     - `--cap-drop=ALL`
     - `--security-opt=no-new-privileges`
     - `-it` (interactive)
-    - `--name ccairgap-<ts>`
+    - `--name ccairgap-<id>`
     - Mount list per §"Container mount manifest"
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
     - Image: `ccairgap:<cli-version>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
-13. Install exit trap: run §"Handoff routine" against `$SESSION/<ts>/`.
+13. Install exit trap: run §"Handoff routine" against `$SESSION/<id>/`.
 14. Exec the `docker run` command.
 
 ## Config file
@@ -307,9 +319,9 @@ Absolute paths are preserved between host and container so `settings.json` refer
 **`--sync` (copy-in, copy-out-on-exit):**
 
 - Identical setup to `--cp`.
-- On container exit, the handoff routine rsyncs `<session-target>/` → `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Session-scoped (`<ts>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
+- On container exit, the handoff routine rsyncs `<session-target>/` → `$CCAIRGAP_HOME/output/<id>/<abs-src>/`. Session-scoped (`<id>`) so concurrent sessions don't collide. Absolute-source-preserving so two syncs from different hosts paths (`/a/x`, `/b/x`) both survive.
 - The original host path is **never** written. Users who want to promote results back manually `cp -a` from the output tree.
-- Recorded in `manifest.json` under `sync` so `ccairgap recover <ts>` performs the same copy-out.
+- Recorded in `manifest.json` under `sync` so `ccairgap recover <id>` performs the same copy-out.
 
 **`--mount` (live RW bind):**
 
@@ -427,7 +439,7 @@ Runs at container start. Steps:
    }
    ```
 8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-9. Build the final `claude` args: always `--dangerously-skip-permissions`; `-n "ccairgap"` by default, or `-n "$CCAIRGAP_NAME"` when the env var is set, to seed the `/resume` label and terminal title. Note the `-n` value is intentionally *not* prefixed with `[ccairgap]`: a UserPromptSubmit hook injected by the entrypoint emits `sessionTitle: "[ccairgap]"` (or `"[ccairgap] $CCAIRGAP_NAME"`) on first prompt, and Claude Code's hook layer dedups against the current title — so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire. Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; `-n "ccairgap $CCAIRGAP_NAME"` (CCAIRGAP_NAME carries the session id `<prefix>-<4hex>` from the CLI and is always set; the fallback `-n "ccairgap"` only runs when the entrypoint is executed directly outside the CLI). The `-n` value is intentionally **not** prefixed with `[ccairgap]`: a UserPromptSubmit hook injected by the entrypoint emits `sessionTitle: "[ccairgap] $CCAIRGAP_NAME"` on first prompt, and Claude Code's hook layer dedups against the current title — so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire. Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
 
 ## Authentication flow
 
@@ -483,9 +495,9 @@ If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fat
 - Commits by the container go into the session clone's own `.git/objects/` (at `<hostPath>/.git/objects/` inside the container) — never touch host.
 
 **Exit handoff:**
-- On container exit, the CLI runs `git -C <real-host-path> fetch $SESSION/repos/<name> ccairgap/<ts>:ccairgap/<ts>` — but only if the sandbox branch has commits the host doesn't already have (see §"Handoff routine" for the empty-branch skip and orphan-branch preservation).
+- On container exit, the CLI runs `git -C <real-host-path> fetch $SESSION/repos/<name> ccairgap/<id>:ccairgap/<id>` — but only if the sandbox branch has commits the host doesn't already have (see §"Handoff routine" for the empty-branch skip and orphan-branch preservation).
 - This happens on the host, not in the container. Container never has write access to the real repo.
-- Result: a new branch `ccairgap/<ts>` in the host repo containing Claude's commits. If the session made no commits, no branch is created. Host user reviews / merges / discards.
+- Result: a new branch `ccairgap/<id>` in the host repo containing Claude's commits. If the session made no commits, no branch is created. Host user reviews / merges / discards.
 
 **Host constraints during session:**
 - Do not run `git gc --prune=now` or `git prune` on the real repo — would delete objects the session clone references via alternates.
@@ -707,7 +719,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 | `CCAIRGAP_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
 | `CCAIRGAP_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
 | `CCAIRGAP_PRINT` | `--print` | Non-interactive prompt. |
-| `CCAIRGAP_NAME` | `--name` | Session display name; forwarded to `claude -n <name>` in the entrypoint. Unset when `--name` was not passed. |
+| `CCAIRGAP_NAME` | session id | Always set. Carries `<prefix>-<4hex>` from the CLI. Used by the entrypoint to build `-n "ccairgap $CCAIRGAP_NAME"` and by the UserPromptSubmit rename hook to emit `[ccairgap] $CCAIRGAP_NAME`. |
 | `CCAIRGAP_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `ccairgap` if host has none. |
 | `CCAIRGAP_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@ccairgap.local` if host has none. |
 | `COLORTERM` | hardcoded `truecolor` | Enables 24-bit color output in the container terminal. |
@@ -723,41 +735,41 @@ Other XDG env vars (`XDG_STATE_HOME`, etc.) are respected per the XDG Base Direc
 
 ## Handoff routine
 
-Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<ts>/` dir as input. Must be idempotent — safe to run multiple times on the same dir.
+Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir as input. Must be idempotent — safe to run multiple times on the same dir.
 
-1. Read `$SESSION/<ts>/manifest.json`. Check the top-level `"version"` field; if it is unknown to the current CLI, abort with a clear message (`"manifest v<N> requires ccairgap ≥ <X.Y.Z>"`). Otherwise extract the repo→host-path mapping.
+1. Read `$SESSION/<id>/manifest.json`. Check the top-level `"version"` field; if it is unknown to the current CLI, abort with a clear message (`"manifest v<N> requires ccairgap ≥ <X.Y.Z>"`). Otherwise extract the repo→host-path mapping.
 2. For each entry in the manifest:
    - Rewrite the session clone's `.git/objects/info/alternates` back to `<real-host-path>/.git/objects/` so host `git` can traverse history (the container-side path `/host-git-alternates/...` is meaningless on the host).
-   - Count commits on `ccairgap/<ts>` not reachable from any `origin/*` ref in the session clone: `git -C <session-clone> rev-list --count ccairgap/<ts> --not --remotes=origin`.
+   - Count commits on `ccairgap/<id>` not reachable from any `origin/*` ref in the session clone: `git -C <session-clone> rev-list --count ccairgap/<id> --not --remotes=origin`.
      - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
-     - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<ts>/repos/<basename> ccairgap/<ts>:ccairgap/<ts>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
+     - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<id>/repos/<basename> ccairgap/<id>:ccairgap/<id>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
    - If fetch fails (branch doesn't exist, host path gone), log and continue — not fatal.
-3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CCAIRGAP_HOME/output/<ts>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
-4. For each `<path-encoded-cwd>` dir in `$SESSION/<ts>/transcripts/`:
+3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CCAIRGAP_HOME/output/<id>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
+4. For each `<path-encoded-cwd>` dir in `$SESSION/<id>/transcripts/`:
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
-5. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 6) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `ccairgap/<ts>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `ccairgap discard <ts>` to drop it — or re-run `ccairgap recover <ts>` (the same warning repeats until discard).
-6. `rm -rf $SESSION/<ts>` unless step 5 preserved it.
+5. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 6) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `ccairgap/<id>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `ccairgap discard <id>` to drop it — or re-run `ccairgap recover <id>` (the same warning repeats until discard).
+6. `rm -rf $SESSION/<id>` unless step 5 preserved it.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
 
 ## Exit trap
 
-On container exit (any reason — normal, error, signal), the CLI runs the handoff routine against the current session's `$SESSION/<ts>/`.
+On container exit (any reason — normal, error, signal), the CLI runs the handoff routine against the current session's `$SESSION/<id>/`.
 
-Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairgap recover <ts>` to finish it manually.
+Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairgap recover <id>` to finish it manually.
 
 ## Recovery
 
 `ccairgap list` — list orphaned sessions:
 - Scan `$XDG_STATE_HOME/ccairgap/sessions/` (or `$CCAIRGAP_HOME/sessions/` if overridden).
-- For each entry: if a container named `ccairgap-<ts>` is currently running (`docker ps`), skip (live session in another terminal). Otherwise classify as orphan.
-- Print timestamp, repos involved (from manifest), and commit counts on `ccairgap/<ts>` in each session clone.
+- For each entry: if a container named `ccairgap-<id>` is currently running (`docker ps`), skip (live session in another terminal). Otherwise classify as orphan.
+- Print timestamp, repos involved (from manifest), and commit counts on `ccairgap/<id>` in each session clone.
 
-`ccairgap recover [<ts>]` — with `<ts>`, run the handoff routine against `$SESSION/<ts>/` (idempotent; safe to re-run). Without `<ts>`, equivalent to `list`.
+`ccairgap recover [<id>]` — with `<id>`, run the handoff routine against `$SESSION/<id>/` (idempotent; safe to re-run). Without `<id>`, equivalent to `list`.
 
-`ccairgap discard <ts>` — `rm -rf $SESSION/<ts>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
+`ccairgap discard <id>` — `rm -rf $SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
 
 On every normal `ccairgap` startup, orphaned sessions are detected and a warning banner is printed with the suggested `recover` / `discard` commands. They are not auto-recovered.
 
@@ -767,7 +779,7 @@ On every normal `ccairgap` startup, orphaned sessions are detected and a warning
 - **Submodules not supported.** `.gitmodules` is copied into the session clone but submodule `.git/` dirs are not RO-mounted. `git submodule update --init` inside the container falls back to fetching from each submodule's remote URL (works for public submodules, fails for private). Work inside the container proceeds without initialized submodules.
 - **macOS only tested.** Linux should work; Windows / WSL2 may need path adjustments.
 - **Docker required.** No Podman-specific handling.
-- **Single concurrent session per host recommended.** Multiple simultaneous sessions work but share `$XDG_STATE_HOME/ccairgap/output/`. Sessions don't overlap on `<ts>` so repo clones are fine.
+- **Single concurrent session per host recommended.** Multiple simultaneous sessions work but share `$XDG_STATE_HOME/ccairgap/output/`. Ids are `<prefix>-<4hex>`; per §"Session identifier" the hex suffix is randomized so concurrent sessions with the same prefix have a 1/65536 collision probability per pair. On collision, the second `docker run` fails cleanly and the CLI aborts with a message; no half-created state remains beyond the session dir, which `ccairgap discard <id>` clears.
 - **MCP servers that require host resources (docker.sock, local sockets, host binaries) will not work** unless the user extends the Dockerfile. Intentional.
 
 ## Out of scope

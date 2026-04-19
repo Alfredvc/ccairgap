@@ -8,7 +8,7 @@ This skill's default stance on host directories: the least permissive surface th
 | 1 | `ro` | no | n/a | **yes, for gitignored large build/cache dirs that exist on host** — and for reference material outside the repo |
 | 2 | `extra-repo` | no (sandbox branch) | yes, via fetch | when the user is editing a sibling repo alongside |
 | 3 | `cp` | no | no (discarded) | opt-in (user wants writes but not preservation) |
-| 4 | `sync` | no | yes, in `output/<ts>/` | opt-in (user wants writes + result preserved) |
+| 4 | `sync` | no | yes, in `output/<id>/` | opt-in (user wants writes + result preserved) |
 | 5 | `mount` | **yes, live** | yes (in place) | opt-in, with explicit user consent (writes land on host) |
 
 ## The gitignore rule
@@ -50,7 +50,7 @@ When a user asks for writes to a `ro:` dir — "run `npm install`", "run the tes
    - No → keep going.
 2. **Do they want to keep the result anywhere?**
    - No → `cp`. Session gets a full mutable copy at launch; discarded on exit. Host original untouched.
-   - Yes → `sync`. Result lands in `$CCAIRGAP_HOME/output/<ts>/<abs-src>/`. Host original untouched.
+   - Yes → `sync`. Result lands in `$CCAIRGAP_HOME/output/<id>/<abs-src>/`. Host original untouched.
 
 All of `cp` / `sync` / `mount` resolve relative paths against the **workspace repo root** (not the config file dir). All fail if the host path doesn't exist at launch. A given host path can appear in only one of `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`.
 
@@ -124,7 +124,7 @@ sync:
   - dist
 ```
 
-On exit, `dist/` copy lands at `$CCAIRGAP_HOME/output/<ts>/<abs-repo>/dist/`. Host original untouched.
+On exit, `dist/` copy lands at `$CCAIRGAP_HOME/output/<id>/<abs-repo>/dist/`. Host original untouched.
 
 ## Absolute vs relative paths
 
@@ -145,4 +145,4 @@ ro:
 
 ## Recovery implication
 
-`sync` paths are recorded in the session manifest. If the session is orphaned and recovered via `ccairgap recover <ts>`, the sync copy-out runs again — safe and idempotent. `cp` is session-local; discarded if the session is discarded. `mount` has no recovery semantics since writes already landed during the session.
+`sync` paths are recorded in the session manifest. If the session is orphaned and recovered via `ccairgap recover <id>`, the sync copy-out runs again — safe and idempotent. `cp` is session-local; discarded if the session is discarded. `mount` has no recovery semantics since writes already landed during the session.

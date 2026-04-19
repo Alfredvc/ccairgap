@@ -23,7 +23,7 @@ If none of those applies, close this file and don't add a `docker-run-arg` entry
 Built-in `docker run` looks like:
 
 ```
-docker run --rm -it --cap-drop=ALL --name ccairgap-<ts> \
+docker run --rm -it --cap-drop=ALL --name ccairgap-<id> \
   -e CCAIRGAP_CWD=... -e CCAIRGAP_TRUSTED_CWDS=... [-e CCAIRGAP_PRINT=...] \
   -v <host-claude>:/host-claude:ro  ...  [all the other built-in mounts] \
   <your --docker-run-arg tokens here>  \
@@ -32,7 +32,7 @@ docker run --rm -it --cap-drop=ALL --name ccairgap-<ts> \
 
 Because your tokens land last, you can override:
 - `--network my-net` overrides the default bridge.
-- `--name <custom>` overrides `ccairgap-<ts>` — almost always a bad idea; breaks `ccairgap list` and orphan detection.
+- `--name <custom>` overrides `ccairgap-<id>` — almost always a bad idea; breaks `ccairgap list` and orphan detection.
 - `--cap-drop NET_RAW` narrows the initial `--cap-drop=ALL`.
 - Additional `-e FOO=bar` values stack with built-in envs, last-wins per key.
 

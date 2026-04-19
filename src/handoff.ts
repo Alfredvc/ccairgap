@@ -40,7 +40,7 @@ async function sandboxCommitCount(sessionClone: string, branch: string): Promise
 /**
  * Local branches (other than `excludeBranch`) that carry commits not present on
  * any `origin/*` ref. Used to detect work the user made on side branches when
- * the sandbox branch itself is empty — handoff only fetches ccairgap/<ts>, so
+ * the sandbox branch itself is empty — handoff only fetches ccairgap/<id>, so
  * those commits would be lost on rm -rf.
  */
 async function orphanBranches(
@@ -142,7 +142,7 @@ export async function handoff(
   }
 
   // Manifests from older CLI builds lack `branch`; those builds wrote the
-  // branch as `sandbox/<ts>`, so fall back to that name to keep recover working
+  // branch as `sandbox/<id>`, so fall back to that name to keep recover working
   // on pre-existing sessions on disk.
   const branch = manifest.branch ?? `sandbox/${id}`;
 
@@ -173,7 +173,7 @@ export async function handoff(
 
     const sandboxCount = await sandboxCommitCount(sessionClone, branch);
     if (sandboxCount === 0) {
-      // No new commits on ccairgap/<ts>. Don't pollute the host repo with an
+      // No new commits on ccairgap/<id>. Don't pollute the host repo with an
       // empty branch ref. But if the user made commits on some other local
       // branch, those would be lost on rm -rf — preserve the session dir so
       // they can recover manually.
@@ -198,7 +198,7 @@ export async function handoff(
     fetched.push({ hostPath: repo.host_path, branch, status: ok ? "fetched" : "failed" });
   }
 
-  // --sync copy-out: mirror each session_src → $output/<ts>/<abs_src>/.
+  // --sync copy-out: mirror each session_src → $output/<id>/<abs_src>/.
   // Idempotent (rsync -a). Best-effort: log on failure, keep going.
   if (manifest.sync && manifest.sync.length > 0) {
     const outRoot = join(outputDir(), id);
