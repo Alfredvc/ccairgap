@@ -1,9 +1,20 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { describe, expect, it, beforeEach, afterEach, vi, type MockInstance } from "vitest";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateRepoRoOverlap } from "./launch.js";
+import { execaSync } from "execa";
+import { launch, validateRepoRoOverlap } from "./launch.js";
+import { encodeCwd } from "./paths.js";
 
 const fakeRealpath = (map: Record<string, string>) => (p: string) => {
   if (!(p in map)) {
@@ -88,5 +99,112 @@ describe("validateRepoRoOverlap (integration with real fs)", () => {
     expect(() => validateRepoRoOverlap([real, sym], [], realpathSync)).toThrow(
       /duplicate repo path/,
     );
+  });
+});
+
+/**
+ * Locks in the load-bearing invariant from CLAUDE.md: `--resume` validation
+ * runs in the validation phase before `mkdirSync($SESSION)`. A bogus uuid
+ * with no matching transcript on the host must exit 1 with no session dir
+ * left on disk.
+ */
+describe("launch --resume validation runs before any session-dir creation", () => {
+  let root: string;
+  let ccairgapHome: string;
+  let fakeHome: string;
+  let repoDir: string;
+  let fakeBinDir: string;
+  let savedEnv: Record<string, string | undefined>;
+  let exitSpy: MockInstance<(code?: string | number | null | undefined) => never>;
+  let stderrSpy: MockInstance<(...args: unknown[]) => void>;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "airgap-resume-validate-")));
+    ccairgapHome = join(root, "state");
+    fakeHome = join(root, "home");
+    repoDir = join(root, "repo");
+    fakeBinDir = join(root, "bin");
+    mkdirSync(ccairgapHome, { recursive: true });
+    mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+    // Empty projects/<encoded>/ — no <uuid>.jsonl present.
+    const encoded = encodeCwd(repoDir);
+    mkdirSync(join(fakeHome, ".claude", "projects", encoded), { recursive: true });
+    // Fake host repo with a real .git so resolveGitDir succeeds.
+    mkdirSync(repoDir, { recursive: true });
+    execaSync("git", ["init", "-q"], { cwd: repoDir });
+    // Stub `docker` (and re-stub git/rsync/cp via the real PATH) so
+    // requireHostBinaries' `command -v docker` succeeds without a real daemon.
+    // Resume validation aborts long before the docker run ever happens.
+    mkdirSync(fakeBinDir, { recursive: true });
+    const dockerStub = join(fakeBinDir, "docker");
+    writeFileSync(dockerStub, "#!/bin/sh\nexit 0\n");
+    chmodSync(dockerStub, 0o755);
+
+    savedEnv = {
+      CCAIRGAP_HOME: process.env.CCAIRGAP_HOME,
+      HOME: process.env.HOME,
+      PATH: process.env.PATH,
+    };
+    process.env.CCAIRGAP_HOME = ccairgapHome;
+    process.env.HOME = fakeHome;
+    process.env.PATH = `${fakeBinDir}:${savedEnv.PATH ?? ""}`;
+
+    // launch() calls die() which calls process.exit(1). Convert to a throw so
+    // the test can assert on it without killing the vitest process.
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+    stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    stderrSpy.mockRestore();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("errors with the spec message and creates no $SESSION dir", async () => {
+    const bogusUuid = "00000000-0000-0000-0000-000000000000";
+    const expectedJsonl = join(
+      fakeHome,
+      ".claude",
+      "projects",
+      encodeCwd(repoDir),
+      `${bogusUuid}.jsonl`,
+    );
+
+    await expect(
+      launch({
+        repos: [repoDir],
+        ros: [],
+        cp: [],
+        sync: [],
+        mount: [],
+        keepContainer: false,
+        dockerBuildArgs: {},
+        rebuild: false,
+        hookEnable: [],
+        mcpEnable: [],
+        dockerRunArgs: [],
+        warnDockerArgs: false,
+        bare: false,
+        resume: bogusUuid,
+      }),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+
+    // The exact spec error message landed in stderr (via die()).
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines.some((l) => l.includes(`--resume ${bogusUuid}: transcript not found at ${expectedJsonl}`))).toBe(true);
+
+    // No session dir was created — sessions/ should be empty (or not exist).
+    const sessionsRoot = join(ccairgapHome, "sessions");
+    if (existsSync(sessionsRoot)) {
+      expect(readdirSync(sessionsRoot)).toEqual([]);
+    }
   });
 });

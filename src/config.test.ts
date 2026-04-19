@@ -163,6 +163,25 @@ mount:
     expect(() => parseConfig("print: 42\n", SRC)).toThrow(/config\.print: expected string/);
   });
 
+  it("parses resume as scalar string", () => {
+    expect(parseConfig("resume: 01234567-89ab-cdef-0123-456789abcdef\n", SRC)).toEqual({
+      resume: "01234567-89ab-cdef-0123-456789abcdef",
+    });
+  });
+
+  it("rejects non-string resume", () => {
+    expect(() => parseConfig("resume: 42\n", SRC)).toThrow(/config\.resume: expected string/);
+  });
+
+  it("rejects array resume", () => {
+    expect(() => parseConfig("resume:\n  - a\n  - b\n", SRC)).toThrow(/config\.resume: expected string/);
+  });
+
+  it("leaves resume untouched in resolveConfigPaths", () => {
+    const cfg = { resume: "01234567-89ab-cdef-0123-456789abcdef" };
+    expect(resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml")).toEqual(cfg);
+  });
+
   it("rejects non-string-map docker-build-arg", () => {
     expect(() => parseConfig("docker-build-arg:\n  K: 1\n", SRC)).toThrow(
       /config\.docker-build-arg\.K: expected string value/,

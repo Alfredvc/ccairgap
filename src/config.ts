@@ -29,6 +29,7 @@ export interface ConfigFile {
   mcp?: { enable?: string[] };
   dockerRunArg?: string[];
   warnDockerArgs?: boolean;
+  resume?: string;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -48,6 +49,7 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "dockerBuildArg": "dockerBuildArg",
   "rebuild": "rebuild",
   "print": "print",
+  "resume": "resume",
   "name": "name",
   "hooks": "hooks",
   "mcp": "mcp",
@@ -200,6 +202,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "print":
         cfg.print = assertString(val, "print");
+        break;
+      case "resume":
+        cfg.resume = assertString(val, "resume");
         break;
       case "name":
         cfg.name = assertString(val, "name");

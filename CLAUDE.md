@@ -28,6 +28,7 @@ src/
   launch.ts       main launch pipeline: clone, mounts, docker run, exit trap
   subcommands.ts  list / recover / discard / doctor / inspect / init
   handoff.ts      exit trap + recover logic (git fetch sandbox branch, copy transcripts, rm session)
+  resume.ts       --resume <uuid>: pre-launch copy of host `~/.claude/projects/<encoded>/<uuid>.jsonl` into $SESSION/transcripts/, + latest-agent-name extraction.
   manifest.ts     $SESSION/manifest.json read/write; carries "version": 1
   orphans.ts      scan $XDG_STATE_HOME for sessions without live container
   git.ts          resolve real git dir (dir / file-worktree), clone --shared, branch
@@ -69,6 +70,8 @@ docs/SPEC.md      authoritative design
 - **Mount list is deduped before `docker run`.** `buildMounts` ends with a `resolveMountCollisions` pass that errors on any exact `dst` collision and on any user-sourced mount using a reserved container path (`/output`, `/host-claude*`, `<home>/.claude/projects|plugins/cache`, under `/host-git-alternates/`). The earlier `filterSubsumedMarketplaces` pre-filter drops plugin marketplaces that the workspace repo already covers — kept separate so resolveArtifacts's overlap check never sees the marketplace==repo case.
 - **Per-repo scratch paths use `alternatesName = <basename>-<sha256(hostPath)[:8]>`**, not bare `<basename>`. Required for multi-repo sessions with same-basename paths. Applies to `$SESSION/repos/`, `/host-git-alternates/`, and `$SESSION/policy/…/projects/`. Keep `launch.ts` (RepoPlan construction), `mounts.ts` (alternates mount), and `hooks.ts`/`mcp.ts` (policy scratch dir) in sync via the shared `alternatesName` field.
 - **Symlinks in `--repo`/`--extra-repo`/`--ro` resolve via `realpath()` before the overlap check** (`validateRepoRoOverlap` in `launch.ts`). `resolve()` is insufficient — it does not follow symlinks, which was how two instances of the same real repo (one symlinked, one direct) used to bypass the duplicate guard.
+- **`CCAIRGAP_NAME` is set only when `--name` is explicit**, not to the session id. Resume flows need the three-way branch (`--name` > `CCAIRGAP_RESUME_ORIG_NAME` > default) in both the title hook and the exec-block `-n` logic; if CCAIRGAP_NAME were always the id, the orig-name branch would be unreachable and resume-without-rename would overwrite the display name. The title hook emits via `jq -nc --arg title …` — raw `printf` would produce invalid JSON when the extracted name contains quotes or backslashes.
+- **`--resume` validation runs before `mkdirSync($SESSION)`.** `resolveResumeSource` is called in the validation phase so a missing `<uuid>.jsonl` exits 1 with no session dir created. The side-effect phase then calls `copyResumeTranscript` with the pre-resolved source. Do not fold these back into one helper — the split is what preserves the "exit 1 before side effects" spec guarantee.
 
 ## Config file
 

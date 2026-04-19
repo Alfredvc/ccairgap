@@ -91,9 +91,20 @@ fi
 TITLE_HOOK="/tmp/ccairgap-session-title.sh"
 cat > "$TITLE_HOOK" << 'HOOK_EOF'
 #!/bin/sh
-TITLE="${CCAIRGAP_NAME:+[ccairgap] $CCAIRGAP_NAME}"
-TITLE="${TITLE:-[ccairgap]}"
-printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","sessionTitle":"%s"}}\n' "$TITLE"
+# Explicit --name wins. Else, on resume without --name, surface the latest
+# agent-name entry from the source jsonl (CLI pre-extracted). Else bare tag.
+if [ -n "${CCAIRGAP_NAME:-}" ]; then
+    TITLE="[ccairgap] $CCAIRGAP_NAME"
+elif [ -n "${CCAIRGAP_RESUME_ORIG_NAME:-}" ]; then
+    TITLE="[ccairgap] $CCAIRGAP_RESUME_ORIG_NAME"
+else
+    TITLE="[ccairgap]"
+fi
+# Use jq for JSON-safe emission — raw printf would break if TITLE contains
+# a double-quote or backslash, which is possible when $CCAIRGAP_RESUME_ORIG_NAME
+# is extracted from an untrusted transcript (e.g. a user /rename'd to `"cool"`).
+jq -nc --arg title "$TITLE" \
+  '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}'
 HOOK_EOF
 chmod +x "$TITLE_HOOK"
 
@@ -125,20 +136,28 @@ CWD="${CCAIRGAP_CWD:-/workspace}"
 mkdir -p "$CWD"
 cd "$CWD"
 
-# Session label → `claude -n "ccairgap <id>"` (seeds /resume label + terminal
-# title). Intentionally differs from the UserPromptSubmit hook's sessionTitle
-# output "[ccairgap] <id>": if the two strings matched, Claude's hook dedup
-# would skip the rename and the TUI TextInput border would never recolor.
-# CCAIRGAP_NAME carries the full session id from the CLI; the fallback branch
-# only runs when the entrypoint is executed directly without the CLI env.
+# Session label → `claude -n "<name>"` seeds /resume label + terminal title.
+# Intentionally differs from the UserPromptSubmit hook's sessionTitle
+# ("[ccairgap] <name>") so Claude's hook dedup fires and the TUI rename effect
+# paints. Precedence: explicit --name (CCAIRGAP_NAME), then on resume skip -n
+# so claude picks up the stored name from the transcript, then the default
+# "ccairgap" label for fresh sessions without --name.
 if [ -n "${CCAIRGAP_NAME:-}" ]; then
-    NAME_ARGS=(-n "ccairgap $CCAIRGAP_NAME")
+    NAME_ARGS=(-n "$CCAIRGAP_NAME")
+elif [ -n "${CCAIRGAP_RESUME:-}" ]; then
+    NAME_ARGS=()
 else
     NAME_ARGS=(-n "ccairgap")
 fi
 
+# Resume: append `-r <uuid>` so claude continues the pre-copied transcript.
+RESUME_ARGS=()
+if [ -n "${CCAIRGAP_RESUME:-}" ]; then
+    RESUME_ARGS=(-r "$CCAIRGAP_RESUME")
+fi
+
 if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" -p "$CCAIRGAP_PRINT"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" -p "$CCAIRGAP_PRINT"
 else
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}"
 fi
