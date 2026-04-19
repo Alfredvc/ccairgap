@@ -3,13 +3,19 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { sessionsDir } from "./paths.js";
 import { readManifest } from "./manifest.js";
-import { countCommitsAhead } from "./git.js";
+import { countCommitsAhead, dirtyTree } from "./git.js";
 
 export interface Orphan {
   id: string;
   sessionDir: string;
   repos: string[];
   commits: Record<string, number>;
+  /**
+   * Per-repo dirty-tree scan counts, keyed by `repos[].basename`. Only populated
+   * for repos whose scan returned dirty (count > 0 for either field). Clean and
+   * scan-failed repos are absent from the map.
+   */
+  dirty: Record<string, { modified: number; untracked: number }>;
 }
 
 async function runningContainers(): Promise<Set<string>> {
@@ -36,6 +42,7 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
 
     let repos: string[] = [];
     const commits: Record<string, number> = {};
+    const dirty: Record<string, { modified: number; untracked: number }> = {};
     try {
       const m = readManifest(sd, cliVer);
       repos = m.repos.map((r) => r.host_path);
@@ -52,13 +59,20 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
             branch,
             r.base_ref ?? "HEAD",
           );
+          const status = await dirtyTree(sessionClone);
+          if (status.kind === "dirty") {
+            dirty[r.basename] = {
+              modified: status.modified,
+              untracked: status.untracked,
+            };
+          }
         }
       }
     } catch {
       // unreadable manifest: still list as orphan
     }
 
-    out.push({ id, sessionDir: sd, repos, commits });
+    out.push({ id, sessionDir: sd, repos, commits, dirty });
   }
 
   return out;

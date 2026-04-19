@@ -46,7 +46,13 @@ export async function listOrphans(): Promise<void> {
     const commits = Object.entries(o.commits)
       .map(([k, v]) => `${k}+${v}`)
       .join(" ");
-    console.log(`${o.id}  repos=${o.repos.join(",") || "(none)"}  ${commits}`);
+    const dirty = Object.entries(o.dirty)
+      .map(([k, v]) => `${k}+${v.modified}M/${v.untracked}U`)
+      .join(" ");
+    const parts = [`${o.id}`, `repos=${o.repos.join(",") || "(none)"}`];
+    if (commits) parts.push(`commits=${commits}`);
+    if (dirty) parts.push(`dirty=${dirty}`);
+    console.log(parts.join("  "));
   }
 }
 
