@@ -253,6 +253,41 @@ describe("handoff — dirty tree preservation", () => {
     expect(joined).not.toContain("To drop the work: ccairgap discard");
   });
 
+  it("noPreserveDirty: true skips the dirty check → session removed", async () => {
+    const sc = seedSession({ sessionDir, hostRepo, altName, branch });
+    writeFileSync(join(sc, "seed.txt"), "edited\n");
+
+    const r = await handoff(sessionDir, "test", () => {}, { noPreserveDirty: true });
+
+    expect(r.preserved).toBe(false);
+    expect(r.removed).toBe(true);
+    expect(existsSync(sessionDir)).toBe(false);
+  });
+
+  it("noPreserveDirty: true still preserves on orphan branch", async () => {
+    const sc = seedSession({ sessionDir, hostRepo, altName, branch });
+    git(["checkout", "-q", "-b", "side"], sc);
+    writeFileSync(join(sc, "side.txt"), "side\n");
+    git(["add", "side.txt"], sc);
+    git(["commit", "-qm", "side"], sc);
+    git(["checkout", "-q", branch], sc);
+
+    const r = await handoff(sessionDir, "test", () => {}, { noPreserveDirty: true });
+
+    expect(r.preserved).toBe(true);
+    expect(r.removed).toBe(false);
+  });
+
+  it("noPreserveDirty: true still preserves on scan failure", async () => {
+    const sc = seedSession({ sessionDir, hostRepo, altName, branch });
+    rmSync(join(sc, ".git"), { recursive: true, force: true });
+
+    const r = await handoff(sessionDir, "test", () => {}, { noPreserveDirty: true });
+
+    expect(r.preserved).toBe(true);
+    expect(r.warnings.join("\n")).toContain("could not scan session clone");
+  });
+
   it("multi-repo: one dirty → whole session preserved, warning names the dirty repo", async () => {
     const hostA = join(root, "repo-a");
     const hostB = join(root, "repo-b");

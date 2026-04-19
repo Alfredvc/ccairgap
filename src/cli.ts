@@ -49,6 +49,7 @@ function mergeRun(cli: {
   warnDockerArgs?: boolean;
   resume?: string;
   clipboard?: boolean;
+  noPreserveDirty?: boolean;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -70,6 +71,7 @@ function mergeRun(cli: {
     warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
     resume: cli.resume ?? cfg.resume,
     clipboard: cli.clipboard ?? cfg.clipboard ?? true,
+    noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
   };
 }
 
@@ -166,6 +168,12 @@ async function main() {
     .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
     .option("--no-clipboard", "disable image-clipboard passthrough (host-side watcher + bridge-dir RO mount). Passthrough is enabled by default on supported hosts (macOS with pngpaste; Linux Wayland/X11 with wl-clipboard/xclip; WSL2 with wl-clipboard). No-op under --print.")
     .option(
+      "--no-preserve-dirty",
+      "skip the dirty-working-tree preservation check on exit. Intended for " +
+        "scripted / CI use where uncommitted container-side edits are disposable. " +
+        "Orphan-branch and scan-failure preservation still fire.",
+    )
+    .option(
       "-r, --resume <session-id>",
       "resume an existing Claude session by UUID. Looks up the transcript under " +
         "~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl on the host and " +
@@ -213,6 +221,10 @@ async function main() {
       const cliClipboard: boolean | undefined =
         clipboardSource === "cli" ? (opts.clipboard as boolean) : undefined;
 
+      const preserveDirtySource = cmd.getOptionValueSource("preserveDirty");
+      const cliNoPreserveDirty: boolean | undefined =
+        preserveDirtySource === "cli" ? !(opts.preserveDirty as boolean) : undefined;
+
       const merged = mergeRun(
         {
           repo: opts.repo as string | undefined,
@@ -234,6 +246,7 @@ async function main() {
           warnDockerArgs: cliWarnDockerArgs,
           resume: opts.resume as string | undefined,
           clipboard: cliClipboard,
+          noPreserveDirty: cliNoPreserveDirty,
         },
         fileCfg,
       );
@@ -316,6 +329,7 @@ async function main() {
         clipboard: merged.clipboard,
         bare,
         resume: merged.resume,
+        noPreserveDirty: merged.noPreserveDirty,
       });
       process.exit(result.exitCode);
     });

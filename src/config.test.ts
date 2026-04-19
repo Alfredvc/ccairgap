@@ -210,6 +210,19 @@ mount:
   it("rejects non-boolean clipboard", () => {
     expect(() => parseConfig("clipboard: yes-please\n", "/fake/path.yaml")).toThrow(/expected boolean/);
   });
+
+  it("accepts no-preserve-dirty (kebab) and noPreserveDirty (camel)", () => {
+    const a = parseConfig("no-preserve-dirty: true\n", "test");
+    const b = parseConfig("noPreserveDirty: true\n", "test");
+    expect(a.noPreserveDirty).toBe(true);
+    expect(b.noPreserveDirty).toBe(true);
+  });
+
+  it("rejects non-bool no-preserve-dirty", () => {
+    expect(() => parseConfig("no-preserve-dirty: yes\n", "test")).toThrow(
+      /no-preserve-dirty/,
+    );
+  });
 });
 
 describe("resolveConfigPaths", () => {
