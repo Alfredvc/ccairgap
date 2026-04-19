@@ -41,6 +41,7 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos,
       roPaths: [],
+      marketplaces: [],
       sessionDir,
     });
     expect(r.entries).toHaveLength(1);
@@ -61,13 +62,14 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos,
       roPaths: [],
+      marketplaces: [],
       sessionDir,
     });
     const e = r.entries[0]!;
     expect(e.insideRepoClone).toBe(false);
     // $SESSION/artifacts/<abs-src-stripped-of-leading-slash>
     expect(e.sessionSrc).toBe(join(sessionDir, "artifacts", outside.replace(/^\//, "")));
-    expect(r.extraMounts).toEqual([
+    expect(r.extraMounts).toMatchObject([
       { src: e.sessionSrc!, dst: outside, mode: "rw" },
     ]);
     expect(r.warnings.some((w) => w.includes("outside all"))).toBe(true);
@@ -81,6 +83,7 @@ describe("resolveArtifacts", () => {
         mount: [],
         repos: [],
         roPaths: [],
+        marketplaces: [],
         sessionDir,
       }),
     ).toThrow(/requires --repo/);
@@ -94,6 +97,7 @@ describe("resolveArtifacts", () => {
         mount: [],
         repos,
         roPaths: [],
+        marketplaces: [],
         sessionDir,
       }),
     ).toThrow(/host path does not exist/);
@@ -107,6 +111,7 @@ describe("resolveArtifacts", () => {
         mount: [],
         repos,
         roPaths: [join(repoPath, "node_modules")],
+        marketplaces: [],
         sessionDir,
       }),
     ).toThrow(/used by both/);
@@ -120,6 +125,7 @@ describe("resolveArtifacts", () => {
         mount: ["node_modules"],
         repos,
         roPaths: [],
+        marketplaces: [],
         sessionDir,
       }),
     ).toThrow(/used by both/);
@@ -133,6 +139,7 @@ describe("resolveArtifacts", () => {
         mount: [],
         repos,
         roPaths: [],
+        marketplaces: [],
         sessionDir,
       }),
     ).toThrow(/used by both/);
@@ -146,6 +153,7 @@ describe("resolveArtifacts", () => {
         mount: [],
         repos,
         roPaths: [],
+        marketplaces: [],
         sessionDir,
       }),
     ).toThrow(/used by both/);
@@ -158,11 +166,12 @@ describe("resolveArtifacts", () => {
       mount: ["node_modules"],
       repos,
       roPaths: [],
+      marketplaces: [],
       sessionDir,
     });
     expect(r.entries).toHaveLength(1);
     expect(r.entries[0]!.sessionSrc).toBeUndefined();
-    expect(r.extraMounts).toEqual([
+    expect(r.extraMounts).toMatchObject([
       { src: join(repoPath, "node_modules"), dst: join(repoPath, "node_modules"), mode: "rw" },
     ]);
   });
@@ -174,6 +183,7 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos,
       roPaths: [],
+      marketplaces: [],
       sessionDir,
     });
     expect(r.syncRecords).toEqual([
@@ -191,6 +201,7 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos,
       roPaths: [],
+      marketplaces: [],
       sessionDir,
     });
     expect(r.entries[0]!.srcHost).toBe(join(repoPath, "one_file.txt"));
@@ -206,6 +217,7 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos, // workspace exists but must be ignored
       roPaths: [],
+      marketplaces: [],
       sessionDir,
       relativeAnchor: anchor,
     });
@@ -223,6 +235,7 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos: [],
       roPaths: [],
+      marketplaces: [],
       sessionDir,
       relativeAnchor: anchor,
     });
@@ -239,9 +252,58 @@ describe("resolveArtifacts", () => {
       mount: [],
       repos: [],
       roPaths: [],
+      marketplaces: [],
       sessionDir,
       relativeAnchor: anchor,
     });
     expect(r.entries[0]!.srcHost).toBe(outside);
+  });
+
+  it("errors when --mount path overlaps a plugin marketplace", () => {
+    const mkt = join(root, "mkt");
+    mkdirSync(mkt, { recursive: true });
+    expect(() =>
+      resolveArtifacts({
+        cp: [],
+        sync: [],
+        mount: [mkt],
+        repos,
+        roPaths: [],
+        marketplaces: [mkt],
+        sessionDir,
+      }),
+    ).toThrow(/used by both.*marketplace.*--mount/);
+  });
+
+  it("errors when --ro path overlaps a plugin marketplace", () => {
+    const mkt = join(root, "mkt2");
+    mkdirSync(mkt, { recursive: true });
+    expect(() =>
+      resolveArtifacts({
+        cp: [],
+        sync: [],
+        mount: [],
+        repos,
+        roPaths: [mkt],
+        marketplaces: [mkt],
+        sessionDir,
+      }),
+    ).toThrow(/used by both.*--ro.*marketplace/);
+  });
+
+  it("accepts pre-filtered marketplaces that don't overlap with anything", () => {
+    const mkt = join(root, "mkt3");
+    mkdirSync(mkt, { recursive: true });
+    const r = resolveArtifacts({
+      cp: [],
+      sync: [],
+      mount: [],
+      repos,
+      roPaths: [],
+      marketplaces: [mkt],
+      sessionDir,
+    });
+    expect(r.entries).toEqual([]);
+    expect(r.extraMounts).toEqual([]);
   });
 });

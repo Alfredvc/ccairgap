@@ -33,6 +33,8 @@ export interface HookPolicyRepo {
   basename: string;
   sessionClonePath: string;
   hostPath: string;
+  /** Unique per-repo segment for policy scratch dirs. Produced by `alternatesName()`. */
+  alternatesName: string;
 }
 
 export interface ApplyHookPolicyInput {
@@ -452,6 +454,7 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
       src: outPath,
       dst: join(p.containerDir, "hooks", "hooks.json"),
       mode: "ro",
+      source: { kind: "hook-override", description: `plugin ${p.marketplace}/${p.plugin}@${p.version} hooks.json` },
     });
   }
 
@@ -479,6 +482,7 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
       src: outPath,
       dst: dp.hooksJsonPath,
       mode: "ro",
+      source: { kind: "hook-override", description: `dir-plugin ${dp.marketplace}/${dp.plugin} hooks.json` },
     });
   }
 
@@ -495,12 +499,13 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
       const filtered = filterHooksField(rawHooks, globs);
       const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
       patched.hooks = filtered;
-      const outPath = join(policyDir, "projects", r.basename, fname);
+      const outPath = join(policyDir, "projects", r.alternatesName, fname);
       writeJsonAtomic(outPath, patched);
       overrideMounts.push({
         src: outPath,
         dst: join(r.hostPath, ".claude", fname),
         mode: "ro",
+        source: { kind: "hook-override", description: `project ${r.basename} .claude/${fname}` },
       });
     }
   }

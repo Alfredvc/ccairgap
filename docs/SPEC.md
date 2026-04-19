@@ -162,8 +162,8 @@ In order:
    - Non-macOS: verify host `~/.claude/.credentials.json` exists. If missing, print "run `claude` on the host to log in" and exit.
 6. Compute `<id>`, create `$SESSION = $XDG_STATE_HOME/ccairgap/sessions/<id>/`.
 7. For each repo in the set (`--repo` plus every `--extra-repo`):
-   - `git clone --shared <path> $SESSION/repos/<basename>`
-   - `cd $SESSION/repos/<basename> && git checkout -b <branch> [<base>]`
+   - `git clone --shared <path> $SESSION/repos/<basename>-<sha256(hostPath)[:8]>`
+   - `cd $SESSION/repos/<basename>-<sha256(hostPath)[:8]> && git checkout -b <branch> [<base>]`
    - `<branch>` is always `ccairgap/<id>` where `<id>` is `<prefix>-<4hex>` per §"Session identifier". `--name` supplies the prefix; omitted, a random `<adj>-<noun>` prefix is used. The full ref (`refs/heads/ccairgap/<prefix>-<4hex>`) is validated once via `git check-ref-format`; on collision with an existing session dir, container, or branch in the workspace repo (`--repo`), the hex suffix is re-rolled (up to 8 attempts) before aborting.
 8. Record a `$SESSION/manifest.json` capturing the repo→host-path mapping and the chosen `<branch>`, so `ccairgap recover` can reconstruct the fetch targets without re-parsing argv. The manifest **must** start with `"version": 1` (see §"Versioning"). Also record `cli_version`, `image_tag`, and (best-effort) the Claude Code versions on host and in the image for postmortem. Manifests written by older CLI builds omit `branch`; those builds used the `sandbox/` prefix, so the handoff routine falls back to `sandbox/<id>` in that case to keep recover working on pre-existing on-disk sessions.
 9. Create `$SESSION/transcripts/` and `$XDG_STATE_HOME/ccairgap/output/` (idempotent).
@@ -288,15 +288,28 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
-| `$SESSION/repos/<repo>/` | `<original-host-path>` | rw | Session clone. |
-| `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>/objects/` | ro | Alternates target for `--shared` clone. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
-| `<resolved-git-dir>/lfs/objects/` | `/host-git-alternates/<basename>/lfs/objects/` | ro | LFS content. Session clone's `.git/lfs/objects/` is replaced with a symlink to this path. Mount is optional — skipped if source dir doesn't exist. |
+| `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` | `<original-host-path>` | rw | Session clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. |
+| `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/objects/` | ro | Alternates target for `--shared` clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
+| `<resolved-git-dir>/lfs/objects/` | `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/lfs/objects/` | ro | LFS content. Session clone's `.git/lfs/objects/` is replaced with a symlink to this path. Mount is optional — skipped if source dir doesn't exist. |
 | `<--ro path>` | `<original-host-path>` | ro | Reference material. |
 | `<plugin-marketplace-path>` | `<original-host-path>` | ro | Auto-discovered from settings.json. |
-| `$SESSION/artifacts/<abs-src>/` (pre-copied from host) | `<original-host-path>` | rw | `--cp` / `--sync` with an absolute source **outside** any repo. Source outside any repo has no covering mount, so the pre-launch copy needs its own bind. For `--cp`/`--sync` sources **inside** a repo, the copy lands inside the session clone and rides on the existing `$SESSION/repos/<repo>/` mount — no extra entry here. Appended after repo mounts. |
+| `$SESSION/artifacts/<abs-src>/` (pre-copied from host) | `<original-host-path>` | rw | `--cp` / `--sync` with an absolute source **outside** any repo. Source outside any repo has no covering mount, so the pre-launch copy needs its own bind. For `--cp`/`--sync` sources **inside** a repo, the copy lands inside the session clone and rides on the existing `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` mount — no extra entry here. Appended after repo mounts. |
 | `<--mount path>` | `<original-host-path>` | rw | User-declared RW bind. Appended after repo mounts so it overrides any session-clone or `--cp`/`--sync` copy at the same path. |
 
 Absolute paths are preserved between host and container so `settings.json` references resolve identically.
+
+### Mount-collision policy
+
+Before invoking `docker run`, ccairgap resolves mount conflicts in two passes:
+
+1. **Marketplace pre-filter (`filterSubsumedMarketplaces`).** If a plugin marketplace path from `extraKnownMarketplaces` equals or is nested inside any `--repo`/`--extra-repo` `hostPath`, the marketplace mount is dropped. The repo's session-clone RW mount serves those files at the same container path. A stderr warning notes the drop and reminds users that the container sees HEAD-only content (uncommitted files in the marketplace tree are not visible).
+2. **Collision resolver (`resolveMountCollisions`).** Defense-in-depth at the end of `buildMounts`:
+   - Any two surviving mounts sharing a container `dst` throw with both source labels (`--repo/--extra-repo`, `--ro`, `--mount`, `plugin marketplace`, etc.).
+   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`.
+
+Nested mounts with distinct `dst` strings (hook/MCP single-file overlays on top of a repo, `--mount` paths inside a repo) are **allowed** — they're the intended overlay mechanism.
+
+Symlinks in `--repo`/`--extra-repo`/`--ro` paths are resolved via `realpath()` before the overlap check, so `--repo /sym --ro /real` (where `/sym → /real`) is correctly caught.
 
 ## Build artifact paths
 
@@ -312,7 +325,7 @@ Absolute paths are preserved between host and container so `settings.json` refer
 **`--cp` (copy-in-discard):**
 
 - Pre-launch: `rsync -a --delete <host-src>/ <session-target>/`.
-- Target location: if the source is inside a cloned repo, `$SESSION/repos/<basename>/<rel>` — the copy rides on the repo's existing RW mount. Otherwise `$SESSION/artifacts/<abs-src>/` with its own RW bind-mount at `<abs-src>`.
+- Target location: if the source is inside a cloned repo, `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/<rel>` — the copy rides on the repo's existing RW mount. Otherwise `$SESSION/artifacts/<abs-src>/` with its own RW bind-mount at `<abs-src>`.
 - Container writes stay in the session dir. On exit, the session dir is `rm -rf`'d — nothing leaks back to the host.
 - Host source is read once at launch and never written.
 
@@ -467,11 +480,14 @@ Uses `git clone --shared`: session clone stores only refs + new commits; existin
 
 `git clone --shared` writes an `alternates` file containing the host's real `.git/objects/` path. That path is not meaningful inside the container, and mounting the host's `objects/` at `<hostPath>/.git/objects/` would shadow the session clone's own (RW) `objects/` directory — blocking all new commits. Instead:
 
-1. The host's `.git/objects/` is RO-mounted at a neutral container path: `/host-git-alternates/<basename>/objects/`.
-2. The CLI rewrites the session clone's `.git/objects/info/alternates` (host-side, post-clone) to contain `/host-git-alternates/<basename>/objects`.
+1. The host's `.git/objects/` is RO-mounted at a neutral container path: `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/objects/`.
+2. The CLI rewrites the session clone's `.git/objects/info/alternates` (host-side, post-clone) to contain `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/objects`.
+
+   The `<sha256(hostPath)[:8]>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename (e.g. `/a/myrepo` and `/b/myrepo` both named `myrepo`). Without this suffix, both would mount at `/host-git-alternates/myrepo/objects`, which Docker rejects as a duplicate mount point.
+
 3. Inside the container, `<hostPath>/.git/objects/` is the session clone's own RW `objects/`. New commits write there; git resolves historical objects via the alternates file.
 
-LFS gets the same pattern: host `lfs/objects/` at `/host-git-alternates/<basename>/lfs/objects/`, and the session clone's `.git/lfs/objects/` is replaced with a symlink to that path.
+LFS gets the same pattern: host `lfs/objects/` at `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/lfs/objects/`, and the session clone's `.git/lfs/objects/` is replaced with a symlink to that path.
 
 **Resolving the real git dir:**
 
@@ -485,7 +501,7 @@ The resolved git dir's `objects/` subdir becomes the RO mount source. `--shared`
 
 **LFS:**
 
-If `<resolved-git-dir>/lfs/objects/` exists on the host, it is additionally RO-mounted at `/host-git-alternates/<basename>/lfs/objects/` in the container, and the session clone's `.git/lfs/objects/` is replaced with a symlink to that mount path (same pattern as the alternates `objects/` mount — neutral container path keeps the session clone's own RW space uncovered). `git-lfs` binary is installed in the container. Checkout/smudge in the session clone resolves LFS content from the mount without network fetches.
+If `<resolved-git-dir>/lfs/objects/` exists on the host, it is additionally RO-mounted at `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/lfs/objects/` in the container, and the session clone's `.git/lfs/objects/` is replaced with a symlink to that mount path (same pattern as the alternates `objects/` mount — neutral container path keeps the session clone's own RW space uncovered). `git-lfs` binary is installed in the container. Checkout/smudge in the session clone resolves LFS content from the mount without network fetches.
 
 If the dir doesn't exist (repo doesn't use LFS), the mount is skipped. Never fatal.
 
@@ -647,7 +663,7 @@ Host files are never mutated; all patched copies live under `$SESSION/mcp-policy
 **Plugin marketplace discovery:**
 - The CLI extracts absolute paths from `extraKnownMarketplaces` entries in host `~/.claude/settings.json` whose `source.source` is `"directory"` or `"file"`. These reference plugin marketplaces living outside `~/.claude/` (e.g. `~/src/agentfiles`, `~/src/claude-meta`).
 - `github`/`git`/`npm`/`url` marketplaces resolve via the RO-mounted `~/.claude/plugins/cache/` — no extra mount needed.
-- Each extracted path is RO bind-mounted at its original absolute path so `settings.json` references resolve inside the container.
+- Each extracted path is RO bind-mounted at its original absolute path so `settings.json` references resolve inside the container — UNLESS the path equals or is nested inside a `--repo`/`--extra-repo` tree, in which case the mount is dropped (the repo's session clone already serves those files at the same container path). A stderr warning names the affected marketplace.
 
 Exact jq query:
 ```bash
@@ -742,7 +758,7 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
    - Rewrite the session clone's `.git/objects/info/alternates` back to `<real-host-path>/.git/objects/` so host `git` can traverse history (the container-side path `/host-git-alternates/...` is meaningless on the host).
    - Count commits on `ccairgap/<id>` not reachable from any `origin/*` ref in the session clone: `git -C <session-clone> rev-list --count ccairgap/<id> --not --remotes=origin`.
      - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
-     - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<id>/repos/<basename> ccairgap/<id>:ccairgap/<id>`. `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
+     - If the count is > 0, run `git -C <real-host-path> fetch $SESSION/<id>/repos/<alternates_name> ccairgap/<id>:ccairgap/<id>` (where `<alternates_name>` is the manifest field — falling back to `<basename>` for manifests written by older CLI builds). `git fetch` with an explicit ref is idempotent — running it a second time with the branch already present is a no-op.
    - If fetch fails (branch doesn't exist, host path gone), log and continue — not fatal.
 3. For each entry in the manifest's `sync` list (absent in old manifests — treat as empty): rsync `session_src/` → `$CCAIRGAP_HOME/output/<id>/<src_host>/`. `rsync -a` for directories, `cp -a` for files. Missing `session_src` logs and continues — not fatal. Idempotent (safe to re-run).
 4. For each `<path-encoded-cwd>` dir in `$SESSION/<id>/transcripts/`:
@@ -772,6 +788,14 @@ Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM,
 `ccairgap discard <id>` — `rm -rf $SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
 
 On every normal `ccairgap` startup, orphaned sessions are detected and a warning banner is printed with the suggested `recover` / `discard` commands. They are not auto-recovered.
+
+### Manifest fields
+
+`$SESSION/manifest.json` carries a top-level `"version": 1` field plus a `repos` array with one entry per cloned repo. Fields consumed by the handoff routine, `recover`, and orphan-scan include:
+
+- `repos[].basename` (string, required): the raw basename of the host repo path.
+- `repos[].host_path` (string, required): the absolute host path of the real repo.
+- `repos[].alternates_name` (string, optional, additive v1): unique per-repo scratch segment `<basename>-<sha256(host_path)[:8]>`. Handoff/recover/orphan-scan use this to locate `$SESSION/repos/<alternates_name>` on disk. Omitted in sessions written by older CLI builds; consumers MUST fall back to `basename` when absent.
 
 ## Known constraints
 

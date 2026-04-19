@@ -37,6 +37,12 @@ export interface ResolveArtifactsInput {
   repos: RepoForArtifacts[];
   /** Resolved --ro paths; used for overlap detection. */
   roPaths: string[];
+  /**
+   * Plugin marketplace host paths AFTER the subsumed-by-repo pre-filter.
+   * Callers must run `filterSubsumedMarketplaces` first — this function errors
+   * unconditionally on any overlap, including the marketplace-equals-repo case.
+   */
+  marketplaces: string[];
   sessionDir: string;
   /**
    * If set, relative --cp/--sync/--mount paths resolve against this anchor
@@ -144,6 +150,7 @@ export function resolveArtifacts(i: ResolveArtifactsInput): ResolveArtifactsResu
   };
   for (const r of i.repos) mark(r.hostPath, `--repo/--extra-repo ${r.hostPath}`);
   for (const p of i.roPaths) mark(p, `--ro ${p}`);
+  for (const p of i.marketplaces) mark(p, `plugin marketplace ${p}`);
   for (const e of entries) mark(e.srcHost, `--${e.kind} ${e.raw}`);
 
   // Build extra mounts: abs-source cp/sync (need their own bind), and all --mount.
@@ -151,10 +158,20 @@ export function resolveArtifacts(i: ResolveArtifactsInput): ResolveArtifactsResu
   const syncRecords: ResolveArtifactsResult["syncRecords"] = [];
   for (const e of entries) {
     if (e.kind === "mount") {
-      extraMounts.push({ src: e.srcHost, dst: e.containerPath, mode: "rw" });
+      extraMounts.push({
+        src: e.srcHost,
+        dst: e.containerPath,
+        mode: "rw",
+        source: { kind: "artifact", flag: "mount", raw: e.raw },
+      });
     } else if (!e.insideRepoClone && e.sessionSrc) {
       // cp/sync outside any repo: mount the pre-copied session scratch RW.
-      extraMounts.push({ src: e.sessionSrc, dst: e.containerPath, mode: "rw" });
+      extraMounts.push({
+        src: e.sessionSrc,
+        dst: e.containerPath,
+        mode: "rw",
+        source: { kind: "artifact", flag: e.kind, raw: e.raw },
+      });
     }
     if (e.kind === "sync" && e.sessionSrc) {
       syncRecords.push({ src_host: e.srcHost, session_src: e.sessionSrc });

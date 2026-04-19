@@ -12,6 +12,13 @@ export interface ManifestV1 {
     basename: string;
     host_path: string;
     base_ref?: string;
+    /**
+     * Unique per-repo scratch segment (`<basename>-<sha256(host_path)[:8]>`).
+     * Additive v1 field: sessions written by older CLI builds omit this and
+     * handoff/orphans fall back to `basename`. Kept optional so pre-existing
+     * sessions on disk recover without a version bump.
+     */
+    alternates_name?: string;
   }>;
   /**
    * Sandbox branch name used in the session clones (e.g. `ccairgap/<id>`).

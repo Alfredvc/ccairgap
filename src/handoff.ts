@@ -147,7 +147,7 @@ export async function handoff(
   const branch = manifest.branch ?? `sandbox/${id}`;
 
   for (const repo of manifest.repos) {
-    const sessionClone = join(sessionDirPath, "repos", repo.basename);
+    const sessionClone = join(sessionDirPath, "repos", repo.alternates_name ?? repo.basename);
     if (!existsSync(repo.host_path)) {
       warnings.push(`host repo path gone, skipping fetch: ${repo.host_path}`);
       fetched.push({ hostPath: repo.host_path, branch, status: "failed" });

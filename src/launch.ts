@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { execa } from "execa";
 import {
   hostClaudeDir,
@@ -19,13 +19,15 @@ import {
 } from "./git.js";
 import { generateId, listAllContainerNames } from "./sessionId.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
-import { buildMounts, mountArg } from "./mounts.js";
+import { filterSubsumedMarketplaces } from "./marketplaces.js";
+import { buildMounts, mountArg, type Mount } from "./mounts.js";
 import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
 import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
 import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
+import { alternatesName } from "./alternatesName.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { applyHookPolicy } from "./hooks.js";
 import { applyMcpPolicy } from "./mcp.js";
@@ -118,6 +120,52 @@ function dedupeResolved(paths: string[]): string[] {
   return out;
 }
 
+/**
+ * Validates that `opts.repos` entries resolve to distinct real paths and that
+ * no `opts.ros` entry resolves to the same real path as any repo. Uses
+ * `realpath()` so a symlinked form of a real path is caught.
+ *
+ * Preserves the existing UX: if a path does not exist, `realpath()` throws
+ * ENOENT — we catch that and rethrow with the same "path does not exist"
+ * message the downstream existence checks (`resolveGitDir`, `--ro` existsSync)
+ * would produce. The validation order is therefore: existence → real-path
+ * equality, not the other way around.
+ */
+export function validateRepoRoOverlap(
+  repos: string[],
+  ros: string[],
+  resolveRealpath: (p: string) => string,
+): void {
+  const resolveOr = (label: string, p: string): string => {
+    try {
+      return resolveRealpath(p);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        throw new Error(`${label} path does not exist: ${p}`);
+      }
+      throw e;
+    }
+  };
+
+  const repoSet = new Set<string>();
+  for (const r of repos) {
+    const real = resolveOr("--repo/--extra-repo", r);
+    if (repoSet.has(real)) {
+      throw new Error(`duplicate repo path in --repo/--extra-repo: ${r} (resolves to ${real})`);
+    }
+    repoSet.add(real);
+  }
+  for (const ro of ros) {
+    const real = resolveOr("--ro", ro);
+    if (repoSet.has(real)) {
+      throw new Error(
+        `path appears in both repo (--repo/--extra-repo) and --ro: ${ro} (resolves to ${real})`,
+      );
+    }
+  }
+}
+
 export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const env = process.env;
   const home = env.HOME ?? homedir();
@@ -134,18 +182,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
 
   // repos must be unique; repos + ros may not overlap
-  const repoSet = new Set<string>();
-  for (const r of opts.repos) {
-    const abs = resolve(r);
-    if (repoSet.has(abs)) {
-      die(`duplicate repo path in --repo/--extra-repo: ${r}`);
-    }
-    repoSet.add(abs);
-  }
-  for (const ro of opts.ros) {
-    if (repoSet.has(resolve(ro))) {
-      die(`path appears in both repo (--repo/--extra-repo) and --ro: ${ro}`);
-    }
+  try {
+    validateRepoRoOverlap(opts.repos, opts.ros, realpath);
+  } catch (e) {
+    die((e as Error).message);
   }
 
   // Session id is computed below after repoPlans is built — generateId reuses
@@ -161,6 +201,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     basename: string;
     hostPath: string;
     realGitDir: string;
+    alternatesName: string;
     baseRef?: string;
   };
   const pendingRepos: PendingRepo[] = [];
@@ -172,10 +213,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     } catch (e) {
       die((e as Error).message);
     }
+    const bn = basename(hostPath);
     pendingRepos.push({
-      basename: basename(hostPath),
+      basename: bn,
       hostPath,
       realGitDir,
+      alternatesName: alternatesName(bn, hostPath),
       baseRef: opts.base,
     });
   }
@@ -201,10 +244,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   branch = `ccairgap/${id}`;
 
   // Phase 2: attach session clone paths now that `id` (and so `sessionPath`) exists.
+  // Uses `alternatesName` (not raw basename) so two repos sharing a basename
+  // do not overwrite each other's clone under $SESSION/repos/.
   type RepoPlan = PendingRepo & { sessionClonePath: string };
   const repoPlans: RepoPlan[] = pendingRepos.map((r) => ({
     ...r,
-    sessionClonePath: join(sessionPath, "repos", r.basename),
+    sessionClonePath: join(sessionPath, "repos", r.alternatesName),
   }));
 
   // --ro paths must exist.
@@ -212,6 +257,20 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   for (const r of roResolved) {
     if (!existsSync(r)) die(`--ro path does not exist: ${r}`);
   }
+
+  // Discover and pre-filter plugin marketplaces.
+  // Filtering subsumed-by-repo marketplaces BEFORE resolveArtifacts is
+  // critical — resolveArtifacts's overlap check would otherwise fatal on the
+  // marketplace-equals-workspace-repo case instead of letting it pass through
+  // as a warn-and-drop.
+  const hostClaude = realpath(hostClaudeDir(env));
+  const rawMarketplaces = discoverLocalMarketplaces(hostClaude, home);
+  const marketplaceFilter = filterSubsumedMarketplaces(
+    rawMarketplaces,
+    repoPlans.map((r) => r.hostPath),
+  );
+  for (const w of marketplaceFilter.warnings) console.error(`ccairgap: ${w}`);
+  const marketplaces = marketplaceFilter.marketplaces;
 
   // Resolve cp/sync/mount: validate, detect overlaps, plan copies & mounts.
   let artifacts;
@@ -226,6 +285,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         sessionClonePath: r.sessionClonePath,
       })),
       roPaths: roResolved,
+      marketplaces,
       sessionDir: sessionPath,
       relativeAnchor: opts.bare ? process.cwd() : undefined,
     });
@@ -233,9 +293,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     die((e as Error).message);
   }
   for (const w of artifacts.warnings) console.error(`ccairgap: ${w}`);
-
-  const hostClaude = realpath(hostClaudeDir(env));
-  const marketplaces = discoverLocalMarketplaces(hostClaude, home);
 
   // ---- Orphan scan (advisory only) ----
   const orphans = await scanOrphans(cliVersion());
@@ -268,10 +325,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       // Point alternates at the container-side mount so the container can
       // commit into its own objects dir without colliding with the RO host
       // mount.
-      writeAlternates(clonePath, `/host-git-alternates/${plan.basename}/objects`);
+      writeAlternates(clonePath, `/host-git-alternates/${plan.alternatesName}/objects`);
 
       if (existsSync(join(plan.realGitDir, "lfs", "objects"))) {
-        pointLfsAtHost(clonePath, `/host-git-alternates/${plan.basename}/lfs/objects`);
+        pointLfsAtHost(clonePath, `/host-git-alternates/${plan.alternatesName}/lfs/objects`);
       }
 
       repoEntries.push(plan);
@@ -317,6 +374,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       basename: r.basename,
       host_path: r.hostPath,
       base_ref: r.baseRef,
+      alternates_name: r.alternatesName,
     })),
     branch,
     sync: artifacts.syncRecords,
@@ -347,6 +405,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       basename: r.basename,
       sessionClonePath: r.sessionClonePath,
       hostPath: r.hostPath,
+      alternatesName: r.alternatesName,
     })),
   });
 
@@ -369,32 +428,38 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       basename: r.basename,
       sessionClonePath: r.sessionClonePath,
       hostPath: r.hostPath,
+      alternatesName: r.alternatesName,
     })),
   });
 
-  const mounts = buildMounts({
-    hostClaudeDir: hostClaude,
-    hostClaudeJson: resolvedClaudeJson,
-    hostCredsFile: creds.hostPath,
-    hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
-    hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
-    pluginsCacheDir: pluginsCache,
-    sessionTranscriptsDir: transcriptsDir,
-    outputDir: outputDirPath(env),
-    repos: repoEntries,
-    roPaths: roResolved,
-    pluginMarketplaces: marketplaces,
-    homeInContainer,
-    // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
-    // MCP-policy overrides are nested single-file overlays (RO) on top of the
-    // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
-    // so overlapping paths win — the overlay is the later mount.
-    extraMounts: [
-      ...artifacts.extraMounts,
-      ...hookPolicyResult.overrideMounts,
-      ...mcpPolicyResult.overrideMounts,
-    ],
-  });
+  let mounts: Mount[];
+  try {
+    mounts = buildMounts({
+      hostClaudeDir: hostClaude,
+      hostClaudeJson: resolvedClaudeJson,
+      hostCredsFile: creds.hostPath,
+      hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
+      hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
+      pluginsCacheDir: pluginsCache,
+      sessionTranscriptsDir: transcriptsDir,
+      outputDir: outputDirPath(env),
+      repos: repoEntries,
+      roPaths: roResolved,
+      pluginMarketplaces: marketplaces,
+      homeInContainer,
+      // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
+      // MCP-policy overrides are nested single-file overlays (RO) on top of the
+      // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
+      // so overlapping paths win — the overlay is the later mount.
+      extraMounts: [
+        ...artifacts.extraMounts,
+        ...hookPolicyResult.overrideMounts,
+        ...mcpPolicyResult.overrideMounts,
+      ],
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
 
   // Step 10: docker run args
   const containerCwd =

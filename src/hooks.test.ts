@@ -378,6 +378,7 @@ describe("applyHookPolicy", () => {
           basename: "myrepo",
           sessionClonePath: sessionClone,
           hostPath: "/Users/x/src/myrepo",
+          alternatesName: "myrepo-aaaaaaaa",
         },
       ],
     });

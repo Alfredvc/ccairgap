@@ -560,6 +560,7 @@ describe("applyMcpPolicy", () => {
           basename: "repo",
           sessionClonePath: sessionClone,
           hostPath: hostRepo,
+          alternatesName: "repo-aaaaaaaa",
         },
       ],
     });
@@ -601,6 +602,7 @@ describe("applyMcpPolicy", () => {
           basename: "repo",
           sessionClonePath: sessionClone,
           hostPath: hostRepo,
+          alternatesName: "repo-aaaaaaaa",
         },
       ],
     });
@@ -642,6 +644,7 @@ describe("applyMcpPolicy", () => {
           basename: "repo",
           sessionClonePath: sessionClone,
           hostPath: hostRepo,
+          alternatesName: "repo-aaaaaaaa",
         },
       ],
     });
@@ -692,6 +695,7 @@ describe("applyMcpPolicy", () => {
           basename: "repo",
           sessionClonePath: sessionClone,
           hostPath: hostRepo,
+          alternatesName: "repo-aaaaaaaa",
         },
       ],
     });
