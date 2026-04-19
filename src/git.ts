@@ -151,6 +151,16 @@ export type DirtyStatus =
  * (modifications, staged hunks, untracked non-ignored entries). Respects
  * `.gitignore`. A scan failure (git crashes, `.git/` missing) is returned
  * as a distinct `scan-failed` kind — callers err on preserve.
+ *
+ * Paths excluded from the scan via pathspec:
+ *   .claude/ | .mcp.json | CLAUDE.md
+ *
+ * These are populated at launch by `overlayProjectClaudeConfig` — the session
+ * clone receives the host working tree's version of each path, which would
+ * otherwise flag every session as dirty and preserve it by default. The trade:
+ * container-side edits to any of these paths are also invisible to the scan
+ * and therefore lost on exit (acceptable — sandbox shouldn't evolve Claude
+ * config across sessions).
  */
 export async function dirtyTree(dir: string): Promise<DirtyStatus> {
   try {
@@ -159,6 +169,11 @@ export async function dirtyTree(dir: string): Promise<DirtyStatus> {
       dir,
       "status",
       "--porcelain",
+      "--",
+      ".",
+      ":(exclude).claude",
+      ":(exclude).mcp.json",
+      ":(exclude)CLAUDE.md",
     ]);
     const lines = stdout.split("\n").filter((l) => l.length > 0);
     if (lines.length === 0) return { kind: "clean" };

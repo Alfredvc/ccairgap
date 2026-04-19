@@ -747,6 +747,17 @@ Host files are never mutated; all patched copies live under `$SESSION/mcp-policy
 - Entrypoint `rsync -rL` from `/host-claude` into container `~/.claude/`. `-L` materializes host symlinks as plain files/dirs in container RW.
 - Applies to: `settings.json`, `CLAUDE.md`, `statusline.sh`, `plugins/` (minus `cache/`), `skills/`, `commands/`, anything else in `~/.claude/` except session-specific dirs (`projects/`, `sessions/`, `todos/`, `shell-snapshots/`, `history.jsonl`), `plugins/cache/` (RO-mounted separately), and `.credentials.json` (handled via `/host-claude-creds`).
 
+**Project-scope working-tree overlay:**
+- After `git clone --shared` + `git checkout -b ccairgap/<id>`, the CLI `rsync -rL`s three host-working-tree paths into each session clone (per `--repo` / `--extra-repo`):
+  - `<hostPath>/.claude/`  → `<clonePath>/.claude/` (merge; host files overwrite clone files on conflict)
+  - `<hostPath>/.mcp.json` → `<clonePath>/.mcp.json`
+  - `<hostPath>/CLAUDE.md` → `<clonePath>/CLAUDE.md`
+- Rationale: `git clone --shared` checks out HEAD, so uncommitted / `.gitignore`'d project-scope config is invisible to the container. Notably, `.claude/settings.local.json` is gitignored by Claude Code convention and carries MCP approvals + permission allow-lists; without the overlay every session starts with those reset.
+- Symlink handling: `rsync -L` follows symlinks and materializes targets as real files. Handles the common `CLAUDE.md → AGENTS.md` swap and out-of-repo skill targets uniformly — the container only ever sees real files.
+- Scope is closed and minimal: these three paths only. Other repo-root paths (e.g. `.env.local`, generated configs) are out of scope — use `--cp` / `--sync` as today.
+- Interaction with `dirtyTree`: these three paths are excluded from the exit-time scan via pathspec (`:(exclude).claude :(exclude).mcp.json :(exclude)CLAUDE.md`), so overlay-introduced "uncommitted" state doesn't trigger preservation. Consequence: container-side edits to any of these paths are also lost on exit (by design — sandbox shouldn't mutate Claude config across sessions).
+- Ordering: overlay runs AFTER `writeAlternates`, BEFORE `applyHookPolicy` / `applyMcpPolicy` / `executeCopies`. Hook + MCP policy filters then see host working-tree content. Explicit `--cp` / `--sync` still wins (runs last).
+
 **Plugin marketplace discovery:**
 - The CLI extracts absolute paths from `extraKnownMarketplaces` entries in host `~/.claude/settings.json` whose `source.source` is `"directory"` or `"file"`. These reference plugin marketplaces living outside `~/.claude/` (e.g. `~/src/agentfiles`, `~/src/claude-meta`).
 - `github`/`git`/`npm`/`url` marketplaces resolve via `known_marketplaces.json` whose `installLocation` points at `~/.claude/plugins/marketplaces/<name>`, and `installed_plugins.json` whose `installPath` points at `~/.claude/plugins/cache/<market>/<plugin>/<ver>`. Both fields store absolute host paths, so ccairgap RO-mounts `~/.claude/plugins/` at its host absolute path (in addition to the container-$HOME cache mount). No extra per-marketplace mount needed.
@@ -856,7 +867,7 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
 5. **Preserve session dir** (skip step 6) if **any** of the following holds for **any** repo in the manifest:
-   - The session clone's working tree is dirty (`git status --porcelain` non-empty, `.gitignore` respected). The scan runs after step 2's alternates rewrite — ordering must be preserved. When the caller passes `--no-preserve-dirty` / config `no-preserve-dirty: true`, the scan still runs but a dirty result no longer triggers preservation (the scan stays on so scan-failure can still fire, see next bullet).
+   - The session clone's working tree is dirty (`git status --porcelain` non-empty, `.gitignore` respected, plus pathspec excludes `:(exclude).claude :(exclude).mcp.json :(exclude)CLAUDE.md` — see §"Project-scope working-tree overlay"). The scan runs after step 2's alternates rewrite — ordering must be preserved. When the caller passes `--no-preserve-dirty` / config `no-preserve-dirty: true`, the scan still runs but a dirty result no longer triggers preservation (the scan stays on so scan-failure can still fire, see next bullet).
    - The dirty-tree scan failed (uncertainty → err on preserve). Fires regardless of `--no-preserve-dirty`.
    - The sandbox branch is empty **and** another local branch carries commits not reachable from `origin/*`. Fires regardless of `--no-preserve-dirty`.
 

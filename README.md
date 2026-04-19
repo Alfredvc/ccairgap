@@ -112,6 +112,8 @@ When Claude exits, the host (not the container) runs `git fetch` from the clone 
 
 Your host `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md, credentials — is mounted read-only and copied in at startup, so inside the container Claude looks and behaves like yours. Transcripts write to a session-scoped dir and get copied back to `~/.claude/projects/` on exit so `claude --resume` on the host just works.
 
+Project-scope Claude config travels in too, even when uncommitted: the host working-tree copies of `<repo>/.claude/`, `<repo>/.mcp.json`, and `<repo>/CLAUDE.md` are overlaid into each session clone. This covers `settings.local.json` (gitignored by default → carries your MCP approvals and permission allow-lists), plus any skills / commands / agents you haven't yet committed. Symlinks materialize as real files, so the `CLAUDE.md → AGENTS.md` pattern and out-of-repo skill symlinks both work. Container-side edits to those three paths are discarded on exit — the sandbox doesn't evolve Claude config across sessions.
+
 Hooks and MCP servers are off by default because most reference host binaries that aren't in the container. To add them back you opt in by glob, and likely need to extend the provided Dockerfile so the binaries they need are present. The filter happens host-side: patched configs are overlaid into the container read-only, your real settings are never edited.
 
 That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).

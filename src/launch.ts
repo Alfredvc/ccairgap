@@ -30,6 +30,7 @@ import { resolveCredentials } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { alternatesName } from "./alternatesName.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
+import { overlayProjectClaudeConfig } from "./projectClaudeOverlay.js";
 import { applyHookPolicy } from "./hooks.js";
 import { applyMcpPolicy } from "./mcp.js";
 import { requireHostBinaries } from "./binaries.js";
@@ -406,6 +407,17 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       if (existsSync(join(plan.realGitDir, "lfs", "objects"))) {
         pointLfsAtHost(clonePath, `/host-git-alternates/${plan.alternatesName}/lfs/objects`);
       }
+
+      // Project-scope Claude config overlay: copy host working-tree
+      // .claude/, .mcp.json, CLAUDE.md into the session clone so
+      // uncommitted / gitignored settings, skills, commands, agents, and
+      // MCP config reach the container. These three paths are excluded from
+      // the exit-time dirty-tree scan (see `dirtyTree`); overlay noise must
+      // not trigger preserve.
+      await overlayProjectClaudeConfig({
+        hostPath: plan.hostPath,
+        clonePath,
+      });
 
       repoEntries.push(plan);
     }

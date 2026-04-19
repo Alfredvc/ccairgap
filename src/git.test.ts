@@ -67,6 +67,50 @@ describe("dirtyTree", () => {
     expect(r).toEqual({ kind: "clean" });
   });
 
+  it("ignores uncommitted .claude/ tree (overlay path)", async () => {
+    mkdirSync(join(clone, ".claude", "skills"), { recursive: true });
+    writeFileSync(join(clone, ".claude", "settings.local.json"), "{}\n");
+    writeFileSync(join(clone, ".claude", "skills", "foo.md"), "skill\n");
+    const r = await dirtyTree(clone);
+    expect(r).toEqual({ kind: "clean" });
+  });
+
+  it("ignores uncommitted .mcp.json (overlay path)", async () => {
+    writeFileSync(join(clone, ".mcp.json"), '{"mcpServers":{}}\n');
+    const r = await dirtyTree(clone);
+    expect(r).toEqual({ kind: "clean" });
+  });
+
+  it("ignores uncommitted CLAUDE.md (overlay path)", async () => {
+    writeFileSync(join(clone, "CLAUDE.md"), "project memory\n");
+    const r = await dirtyTree(clone);
+    expect(r).toEqual({ kind: "clean" });
+  });
+
+  it("ignores modifications to committed overlay paths", async () => {
+    writeFileSync(join(clone, "CLAUDE.md"), "original\n");
+    git(["add", "CLAUDE.md"], clone);
+    git(["commit", "-qm", "add claude.md"], clone);
+    writeFileSync(join(clone, "CLAUDE.md"), "edited\n");
+    const r = await dirtyTree(clone);
+    expect(r).toEqual({ kind: "clean" });
+  });
+
+  it("still flags non-overlay dirty paths even when overlay paths are dirty", async () => {
+    mkdirSync(join(clone, ".claude"));
+    writeFileSync(join(clone, ".claude", "x.md"), "skill\n");
+    writeFileSync(join(clone, "real.txt"), "work\n");
+    const r = await dirtyTree(clone);
+    expect(r).toEqual({ kind: "dirty", modified: 0, untracked: 1 });
+  });
+
+  it("does not exclude nested CLAUDE.md (only top-level)", async () => {
+    mkdirSync(join(clone, "sub"));
+    writeFileSync(join(clone, "sub", "CLAUDE.md"), "nested\n");
+    const r = await dirtyTree(clone);
+    expect(r).toEqual({ kind: "dirty", modified: 0, untracked: 1 });
+  });
+
   it("returns scan-failed when .git is removed", async () => {
     rmSync(join(clone, ".git"), { recursive: true, force: true });
     const r = await dirtyTree(clone);
