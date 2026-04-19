@@ -248,15 +248,16 @@ new module.
   merge layer; `mergeRun` concatenates `[...cfg.claudeArgs,
   ...cliClaudeArgs]` (config first).
 - Subcommands (`list`, `recover`, `discard`, `doctor`, `inspect`,
-  `init`) do **not** accept passthrough. If `--` appears before the
-  subcommand in argv, the subcommand claims the tail — this is OK
-  (those subcommands ignore extra args today and continue to).
-  If `--` appears after the subcommand, it errors with
-  `unknown option '--'`.
+  `init`) do **not** accept passthrough. The `--` split in
+  `process.argv` runs before commander's subcommand dispatch;
+  when the first post-program-name token is a subcommand, the
+  passthrough tail is silently dropped (no-op — the subcommand
+  wouldn't forward it anywhere). Documented as such; not a
+  failure mode worth erroring on.
 
 ### Config layer (`src/config.ts`)
 
-New key: `claimArgs` → internal field `claudeArgs?: string[]`.
+New key: `claude-args` → internal field `claudeArgs?: string[]`.
 Aliases: `claude-args` (kebab, matches CLI mental model) and
 `claudeArgs` (camel). Validated via `assertStringArray`. Schema
 update:
@@ -312,13 +313,17 @@ print warnings to stderr, continue with `filtered`.
 
 **Token tokenization:** `--flag=value` is split on the first `=`
 into `--flag` (lookup target) and `value` (passed through if
-flag is allowed). `-fval` is split into `-f` + `val` only for
-flags we know take a value (lookup set: union of short forms
-for value-taking denied flags — `-n`, `-r`, `-p`). For allowed
-flags, we don't attempt to split `-fval` — the entire token
-passes through and `claude` parses it. Rationale: we only need
-precise parsing for denied flags; everything else is claude's
-job.
+flag is allowed). For short-inline form `-fval`, splitting is
+only needed to catch denied-short-inline variants like `-nfoo`
+(→ `--name foo`). Denied short forms with inline values:
+`-n` (required value → `-nfoo` is always `--name foo`), `-r`
+(optional value → `-rfoo` is `--resume foo`; bare `-r` is
+allowed syntax but denied anyway), `-w` (optional value →
+same pattern). `-p`, `-c`, `-h`, `-v` are boolean in claude and
+don't take inline values. For allowed flags, we don't attempt
+to split `-fval` — the entire token passes through and
+`claude` parses it. Rationale: we only need precise parsing
+for denied flags; everything else is claude's job.
 
 **Denylist as canonical long-form strings**; the lookup
 normalizes short forms first:
@@ -518,16 +523,27 @@ Add to §"Non-obvious invariants":
   e.g. `--agents '{"foo": "--not-a-flag"}'`. The value belongs to
   `--agents`, not a new flag. The denylist check only runs on
   tokens in flag position (either at the start or after a
-  previous flag that doesn't take a value). Since we only need
-  precision for **denied** flags, and our denied value-taking
-  flags (`-n`, `-r`, `-p`, `--from-pr`, `--session-id`,
+  previous flag that doesn't take a value). Value-taking-flag
+  table enumerates **both** denied value-taking flags (`-n`,
+  `--name`, `-r`, `--resume`, `--from-pr`, `--session-id`,
   `--debug-file`, `--add-dir`, `--plugin-dir`, `--mcp-config`,
-  `--settings`) are all enumerated, we can implement flag-position
-  tracking using a small value-taking-flag table sourced from
-  `claude --help` (the allowed + denied value-taking flags).
-  Unknown flag tokens default to "takes a value" — conservative
-  under the assumption that consuming an extra token is less
-  harmful than flagging a value as a denied flag.
+  `--settings`, `-w`, `--worktree`) and known allowed
+  value-taking flags (`--model`, `--effort`, `--agent`,
+  `--agents`, `--permission-mode`, `--append-system-prompt`,
+  `--system-prompt`, `--allowed-tools`/`--allowedTools`,
+  `--disallowed-tools`/`--disallowedTools`, `--tools`,
+  `--fallback-model`, `--betas`, `--mcp-debug`, `--setting-sources`,
+  `--output-format`, `--input-format`, `--max-budget-usd`,
+  `--json-schema`, `--remote-control-session-name-prefix`,
+  `--file`, `--append-system-prompt`). The table is sourced
+  from `claude --help`. **Unknown flag tokens default to
+  "does not take a value"** — the more conservative choice
+  for flag-position tracking, since a false-negative just
+  lets an adjacent value be checked against the denylist
+  (a real flag name would not collide with a JSON fragment or
+  a model name). A false-positive in the other direction
+  (consuming the value) would risk masking a denied flag
+  sitting behind it.
 - **Short flag with inline value where the short is denied.** e.g.
   `-nfoo` (meaning `--name foo`). Tokenizer splits `-n` off, looks
   up denylist, errors. Covers the obscure case where a user
@@ -624,8 +640,3 @@ Cases:
   two tokens because we don't know about the value. Since
   `--debug` is allowed, claude parses it either way. No
   action needed.
-- **Config key name:** `claude-args` or `passthrough` or
-  `claude-cli-args`? Spec uses `claude-args`. Alternative
-  `passthrough` is shorter but loses "claude" specificity
-  (users might conflate with `--docker-run-arg`). Vote:
-  `claude-args`.
