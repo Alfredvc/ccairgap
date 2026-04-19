@@ -76,6 +76,7 @@ A session may cause writes to:
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `ccairgap/<id>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
 5. User-declared `--mount <path>` targets — live RW bind-mount from container to host. Opt-in per path. This class of write can mutate arbitrary host state during a running session and exists to support artifact caches (e.g. `node_modules`) the user explicitly trusts the container with.
 6. Anything a user adds via `--docker-run-arg` (see §"Raw docker run args"). Raw docker args are pass-through: a `-v <host>:<ctr>:rw`, `--mount`, `--pid=host`, etc. supplied this way can make host writes or weaken isolation beyond `--mount`'s narrow per-path semantics. Treated as user-declared opt-out.
+7. `$SESSION/clipboard-bridge/current.png` — image bytes written by the host-side clipboard watcher. Created on launch when clipboard passthrough is active; removed on handoff.
 
 No other host path is writable by the container. `~/.claude/`, `~/.claude.json`, plugin marketplace repos, `--ro` reference paths are all RO-mounted.
 
@@ -295,6 +296,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `<plugin-marketplace-path>` | `<original-host-path>` | ro | Auto-discovered from settings.json. |
 | `$SESSION/artifacts/<abs-src>/` (pre-copied from host) | `<original-host-path>` | rw | `--cp` / `--sync` with an absolute source **outside** any repo. Source outside any repo has no covering mount, so the pre-launch copy needs its own bind. For `--cp`/`--sync` sources **inside** a repo, the copy lands inside the session clone and rides on the existing `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` mount — no extra entry here. Appended after repo mounts. |
 | `<--mount path>` | `<original-host-path>` | rw | User-declared RW bind. Appended after repo mounts so it overrides any session-clone or `--cp`/`--sync` copy at the same path. |
+| `$SESSION/clipboard-bridge/` (directory) | `/run/ccairgap-clipboard/` | ro | Host clipboard bridge dir. Omitted when `--no-clipboard` or unsupported host. |
 
 Absolute paths are preserved between host and container so `settings.json` references resolve identically.
 
@@ -348,6 +350,83 @@ Symlinks in `--repo`/`--extra-repo`/`--ro` paths are resolved via `realpath()` b
 - `--cp` when you want a throwaway seed (e.g. test a build starting from a populated `node_modules`).
 - `--sync` when you want to keep the result but not let the container poke at the original copy (safer default for "rebuild then hand it back").
 - `--mount` when you want live, incremental writes to a persistent host cache (fastest; weakens isolation for that path).
+
+## Clipboard passthrough
+
+ccairgap copies host image-clipboard contents into the container so Claude Code's paste flow works. Unified across host OSes: a host-side watcher process uses the host's native tool to read the clipboard and writes image bytes to `$SESSION/clipboard-bridge/current.png`; that directory is RO-mounted into the container at `/run/ccairgap-clipboard/`; a fake `wl-paste` shim placed by the entrypoint at `$HOME/.local/bin/wl-paste` (ahead of PATH) translates Claude Code's `wl-paste -l` and `wl-paste --type image/png` calls into reads of the bridge file.
+
+**No compositor sockets are mounted into the container.** The container never becomes a Wayland client, gets no X11 display access, and has no way to write back to the host clipboard.
+
+### Verified Claude Code command chain
+
+(From `../claude-code/src/utils/imagePaste.ts`, 2026-04-19.)
+
+- **Linux detection:** `xclip -selection clipboard -t TARGETS -o | grep image/… || wl-paste -l | grep image/…`. Because the image ships no `xclip`, the first call exits 127 and the `||` fallback hits our shim.
+- **Linux retrieval:** `xclip -t image/png -o || wl-paste --type image/png || xclip -t image/bmp -o || wl-paste --type image/bmp`. The second stage hits our shim. Claude Code's post-retrieval Sharp pipeline auto-converts BMP → PNG (line 209-217), so the bridge file can contain PNG or BMP — any image format the host clipboard exposes.
+- **macOS** uses `osascript` internally; the v2 host-side watcher uses `pngpaste` (faster, simpler) — these are independent choices.
+- **No environment-variable gating.** Claude Code does not examine `$WAYLAND_DISPLAY`. ccairgap does not set a `WAYLAND_DISPLAY` sentinel.
+
+### Host-side watcher (per-platform)
+
+| Host | Tool | Strategy | Install hint on missing tool |
+|------|------|----------|------------------------------|
+| macOS | `pngpaste` | 1 s polling | `brew install pngpaste` |
+| Linux Wayland | `wl-paste` | event-driven (`wl-paste --watch`) | `sudo apt install wl-clipboard` |
+| Linux X11 | `xclip` | 1 s polling | `sudo apt install xclip` |
+| WSL2 | `wl-paste` (via WSLg) | event-driven | `sudo apt install wl-clipboard` |
+
+Detection order: macOS → WSL2 (`/proc/sys/fs/binfmt_misc/WSLInterop` exists) → Wayland (`WAYLAND_DISPLAY` set) → X11 (`DISPLAY` set). When the required tool is missing, the CLI prints a one-line install hint to stderr and runs the session without clipboard passthrough (equivalent to `--no-clipboard`).
+
+The watcher writes atomically (tmp file → rename). It removes the bridge file when clipboard transitions to non-image content. If the watcher crashes mid-session, its `exit` handler removes the bridge file and logs a warning, so Claude Code never serves a stale image.
+
+### Container plumbing
+
+- `CCAIRGAP_CLIPBOARD_MODE=host-bridge` env — triggers the entrypoint's shim install.
+- Mount: `$SESSION/clipboard-bridge/` (directory) → `/run/ccairgap-clipboard/` (RO). Directory mount (not single-file) so `docker run` never hits ENOENT when the clipboard has no image at launch time.
+- Shim: `$HOME/.local/bin/wl-paste` — POSIX sh, `case`-based matcher, handles `-l`/`--list-types` and `--type image/png`. Serves bridge bytes regardless of underlying format (PNG/BMP/etc.); Claude Code handles conversion.
+
+### Hard invariant: no `xclip`, no `wl-clipboard` in the image
+
+If `xclip` ends up in the container, Claude Code calls it first (per the verified chain) and clipboard passthrough silently breaks. Enforcement:
+
+- **Static test** (`src/dockerfileInvariants.test.ts`) asserts `xclip` and `wl-clipboard` do not appear as strings in `docker/Dockerfile`.
+- **Runtime warning** — the entrypoint emits a stderr warning if `command -v xclip` succeeds when `CCAIRGAP_CLIPBOARD_MODE=host-bridge` is set.
+
+### CLI / config control
+
+- `--no-clipboard` (CLI flag, default: clipboard on) — kill switch.
+- `clipboard: false` (config key) — same.
+- No-op under `--print`.
+
+### Lifecycle
+
+1. `ccairgap` detects host clipboard mode + tool availability.
+2. Before `docker run`, host-side watcher is spawned with a 200 ms start probe.
+3. If the watcher fails to start or crashes mid-session, clipboard is disabled with a stderr message; the session continues.
+4. `docker run` includes the bridge-dir mount + `CCAIRGAP_CLIPBOARD_MODE` env.
+5. On container exit / SIGINT / crash, `launch.ts`'s `finally` block `await`s `clipboard.cleanup()` (SIGTERM → 500 ms grace → SIGKILL) BEFORE handoff. Handoff's session-scratch removal then clears the bridge file.
+
+### Known limitations
+
+- **SSH passthrough depends on topology:**
+
+  | Topology | Works? |
+  |----------|--------|
+  | Local terminal → local ccairgap | ✓ |
+  | Local → SSH → remote Linux (Wayland/X11) | ✗ (watcher reads *remote's* clipboard) |
+  | Local → SSH → remote Mac | ✗ (same reason) |
+  | Windows Terminal → SSH → WSL2 | ✓ (WSLg bridges Windows clipboard) |
+  | Local → `ssh -Y` → remote Linux X11 (ccairgap on remote) | ✓ (remote's `xclip` reads the forwarded X11 clipboard, which is the user's local clipboard) |
+
+  Cross-host clipboard forwarding (lemonade, OSC 52 tmux bridges, etc.) is out of scope. Document in SPEC; no CLI warning.
+
+- **Concurrent sessions share the host clipboard but not the bridge file.** N sessions = N watchers polling the same clipboard. Acceptable for small N.
+
+- **Multi-format clipboards (BMP from Windows via WSLg):** handled by Claude Code's Sharp auto-convert — no extra work in ccairgap.
+
+### Security
+
+See `SECURITY.md` §"Clipboard passthrough risks".
 
 ## Container image
 
@@ -739,6 +818,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 | `CCAIRGAP_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `ccairgap` if host has none. |
 | `CCAIRGAP_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@ccairgap.local` if host has none. |
 | `COLORTERM` | hardcoded `truecolor` | Enables 24-bit color output in the container terminal. |
+| `CCAIRGAP_CLIPBOARD_MODE` | `host-bridge` | Set when clipboard passthrough is active. Triggers entrypoint shim install + xclip-regression warning. |
 
 **On the host** — read by the CLI:
 
