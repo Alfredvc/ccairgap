@@ -47,6 +47,7 @@ function mergeRun(cli: {
   mcpEnable: string[];
   dockerRunArg: string[];
   warnDockerArgs?: boolean;
+  clipboard?: boolean;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -66,6 +67,7 @@ function mergeRun(cli: {
     mcpEnable: [...(cfg.mcp?.enable ?? []), ...cli.mcpEnable],
     dockerRunArg: [...(cfg.dockerRunArg ?? []), ...cli.dockerRunArg],
     warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
+    clipboard: cli.clipboard ?? cfg.clipboard ?? true,
   };
 }
 
@@ -153,6 +155,7 @@ async function main() {
       [],
     )
     .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
+    .option("--no-clipboard", "disable image-clipboard passthrough (host-side watcher + bridge-dir RO mount). Passthrough is enabled by default on supported hosts (macOS with pngpaste; Linux Wayland/X11 with wl-clipboard/xclip; WSL2 with wl-clipboard). No-op under --print.")
     .option(
       "--bare",
       "launch a naked container: skip config-file loading and cwd-as-workspace inference. " +
@@ -185,6 +188,10 @@ async function main() {
       const cliWarnDockerArgs: boolean | undefined =
         warnDockerArgsSource === "cli" ? (opts.warnDockerArgs as boolean) : undefined;
 
+      const clipboardSource = cmd.getOptionValueSource("clipboard");
+      const cliClipboard: boolean | undefined =
+        clipboardSource === "cli" ? (opts.clipboard as boolean) : undefined;
+
       const merged = mergeRun(
         {
           repo: opts.repo as string | undefined,
@@ -204,6 +211,7 @@ async function main() {
           mcpEnable: opts.mcpEnable as string[],
           dockerRunArg: opts.dockerRunArg as string[],
           warnDockerArgs: cliWarnDockerArgs,
+          clipboard: cliClipboard,
         },
         fileCfg,
       );
@@ -283,6 +291,7 @@ async function main() {
         mcpEnable: merged.mcpEnable,
         dockerRunArgs: merged.dockerRunArg,
         warnDockerArgs: merged.warnDockerArgs,
+        clipboard: merged.clipboard,
         bare,
       });
       process.exit(result.exitCode);
