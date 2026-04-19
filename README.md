@@ -145,7 +145,7 @@ b4e2d8f Add login route
 
 ### Notes on `--name`
 
-The initial `claude -n "ccairgap <id>"` sets the session label, then on the first user prompt a hook renames the session to `[ccairgap] <id>`. That relabeled form is what `/resume` and the TUI's top-border label show. The two-step rename is intentional — matching labels would trigger Claude Code's hook-dedup and skip the TUI rename effect. `--name` supplies only the **prefix**; the hex suffix is always appended so two launches with the same `--name` never collide on branch, container, or session dir.
+Without `--name`, the session label is `ccairgap` and the TUI title is `[ccairgap]` — no `<id>` suffix. With `--name foo`, the label is `foo` and the title becomes `[ccairgap] foo`. The two-step rename (label → title) is intentional: the two strings still differ, so Claude Code's hook-dedup fires and the TUI rename effect still paints the top-border. `--name` supplies only the **prefix**; the hex suffix is always appended to form the final `<id>` (`<name>-<4hex>`), so two launches with the same `--name` never collide on branch, container, or session dir. The `<id>` still surfaces in `ccairgap list`, the container name, the branch, and the session directory — just not in the TUI label or title. To resume an existing session use `--resume <session-id>`; the original display name is preserved unless `--name` is also passed.
 
 ## Hooks
 
