@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { execa } from "execa";
 import { sessionsDir } from "./paths.js";
 import { readManifest } from "./manifest.js";
 import { countCommitsAhead, dirtyTree } from "./git.js";
+import { runningContainerNames } from "./sessionId.js";
 
 export interface Orphan {
   id: string;
@@ -18,21 +18,12 @@ export interface Orphan {
   dirty: Record<string, { modified: number; untracked: number }>;
 }
 
-async function runningContainers(): Promise<Set<string>> {
-  try {
-    const { stdout } = await execa("docker", ["ps", "--format", "{{.Names}}"]);
-    return new Set(stdout.split("\n").filter(Boolean));
-  } catch {
-    return new Set();
-  }
-}
-
 /** Scan sessions dir; return sessions whose container is not running. */
 export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
   const dir = sessionsDir();
   if (!existsSync(dir)) return [];
 
-  const running = await runningContainers();
+  const running = await runningContainerNames();
   const out: Orphan[] = [];
 
   for (const id of readdirSync(dir)) {

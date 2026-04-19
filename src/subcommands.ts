@@ -35,6 +35,17 @@ import { enumerateMcpServers } from "./mcp.js";
 import { enumerateEnv, enumerateMarketplaces } from "./settings.js";
 import { formatInspectPretty } from "./inspectFormat.js";
 import { detectClipboardMode, isWsl2, hasCommand } from "./clipboardBridge.js";
+import { runningContainerNames } from "./sessionId.js";
+
+/**
+ * Return true if a container named `ccairgap-<id>` is currently running.
+ * Delegates to the shared `runningContainerNames()` in sessionId.ts so
+ * `recover`'s live-check uses the same probe shape as `ccairgap list`.
+ */
+export async function isSessionContainerLive(id: string): Promise<boolean> {
+  const names = await runningContainerNames();
+  return names.has(`ccairgap-${id}`);
+}
 
 export async function listOrphans(): Promise<void> {
   const orphans = await scanOrphans(cliVersion());
@@ -61,6 +72,12 @@ export async function recover(id?: string): Promise<void> {
   const sd = sessionDirFn(id);
   if (!existsSync(sd)) {
     console.error(`ccairgap: no session dir at ${sd}`);
+    process.exit(1);
+  }
+  if (await isSessionContainerLive(id)) {
+    console.error(`ccairgap: session ${id} has a running container (ccairgap-${id}).`);
+    console.error(`  Stop it first: docker stop ccairgap-${id}`);
+    console.error(`  Or let it exit normally — the exit trap will run handoff.`);
     process.exit(1);
   }
   const result = await handoff(sd, cliVersion());
