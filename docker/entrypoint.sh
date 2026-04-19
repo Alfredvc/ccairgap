@@ -44,6 +44,49 @@ if [ -f "$HOST_CLAUDE_CREDS" ]; then
     chmod 600 "$CLAUDE_DIR/.credentials.json"
 fi
 
+# Clipboard bridge: when the host spawned a per-platform clipboard watcher,
+# $SESSION/clipboard-bridge is RO-mounted at /run/ccairgap-clipboard and the
+# watcher writes current.png there on every host clipboard change. We install
+# a fake wl-paste shim on PATH so Claude Code's image-paste flow reads the
+# bridge without ever contacting a real compositor.
+#
+# Verified Claude Code behavior (see docs/SPEC.md §"Clipboard passthrough"):
+# Claude Code calls `xclip ... || wl-paste ...`. The container ships no xclip,
+# so xclip exits 127 (command not found) and the fallback runs — hitting our
+# shim. If xclip ever ends up in the image, it would take precedence and
+# clipboard passthrough silently breaks. Warn loudly so the regression is
+# visible at session start.
+if [ "${CCAIRGAP_CLIPBOARD_MODE:-}" = "host-bridge" ]; then
+    if command -v xclip >/dev/null 2>&1; then
+        echo "ccairgap: WARNING — xclip is present in the container image." >&2
+        echo "  Claude Code tries xclip before wl-paste; clipboard passthrough will silently fail." >&2
+        echo "  This is a ccairgap image regression — please file an issue." >&2
+    fi
+    SHIM_DIR="$HOME_DIR/.local/bin"
+    mkdir -p "$SHIM_DIR"
+    cat > "$SHIM_DIR/wl-paste" <<'SHIM_EOF'
+#!/bin/sh
+# ccairgap fake wl-paste: serves the host clipboard bridge file.
+# Claude Code may call: `wl-paste -l` (list MIME types) or
+# `wl-paste --type image/png` (retrieve bytes). Claude Code's post-retrieval
+# Sharp pipeline auto-converts BMP → PNG, so we serve the bridge bytes
+# as-is regardless of their actual format.
+BRIDGE=/run/ccairgap-clipboard/current.png
+case "$1" in
+    -l|--list-types)
+        [ -f "$BRIDGE" ] && echo "image/png" && exit 0
+        exit 1 ;;
+esac
+for arg in "$@"; do
+    if [ "$arg" = "image/png" ] && [ -f "$BRIDGE" ]; then
+        exec cat "$BRIDGE"
+    fi
+done
+exit 1
+SHIM_EOF
+    chmod +x "$SHIM_DIR/wl-paste"
+fi
+
 # Copy and patch ~/.claude.json.
 # MCP policy overlay wins: if the host-built patched copy is mounted (strips
 # user + user-project `mcpServers` per --mcp-enable), use it as the source so
