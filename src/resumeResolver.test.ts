@@ -189,13 +189,20 @@ describe("resolveResumeArg", () => {
   it("throws with candidate list when no title matches", async () => {
     writeSession("11111111-1111-1111-1111-111111111111", "alpha");
     writeSession("22222222-2222-2222-2222-222222222222", "beta");
-    await expect(
-      resolveResumeArg({
+    let caught: Error | undefined;
+    try {
+      await resolveResumeArg({
         hostClaudeDir: hostClaude,
         workspaceHostPath: workspace,
         arg: "gamma",
-      }),
-    ).rejects.toThrow(/no session with that exact name[\s\S]*alpha[\s\S]*beta/);
+      });
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.message).toMatch(/no session with that exact name/);
+    expect(caught!.message).toMatch(/alpha/);
+    expect(caught!.message).toMatch(/beta/);
   });
 
   it("throws a distinct message when no titled sessions exist at all", async () => {
