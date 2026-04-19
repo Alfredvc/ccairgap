@@ -855,7 +855,14 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
-5. If any repo had an `empty` sandbox branch **and** any other local branch in that session clone carries commits not reachable from `origin/*`, **preserve the session dir** (skip step 6) and emit a warning naming the orphaned branches with their commit counts. Handoff only fetches `ccairgap/<id>`, so commits on side branches would be lost on `rm -rf`. User can inspect the clone, cherry-pick/fetch what they need, then run `ccairgap discard <id>` to drop it — or re-run `ccairgap recover <id>` (the same warning repeats until discard).
+5. **Preserve session dir** (skip step 6) if **any** of the following holds for **any** repo in the manifest:
+   - The session clone's working tree is dirty (`git status --porcelain` non-empty, `.gitignore` respected). The scan runs after step 2's alternates rewrite — ordering must be preserved. When the caller passes `--no-preserve-dirty` / config `no-preserve-dirty: true`, the scan still runs but a dirty result no longer triggers preservation (the scan stays on so scan-failure can still fire, see next bullet).
+   - The dirty-tree scan failed (uncertainty → err on preserve). Fires regardless of `--no-preserve-dirty`.
+   - The sandbox branch is empty **and** another local branch carries commits not reachable from `origin/*`. Fires regardless of `--no-preserve-dirty`.
+
+   The warning emitted names every preservation trigger (dirty repos with their modified/untracked counts, scan-failed repos with their git error, orphan branches with their commit counts) and tells the user the exact `cd` path and `ccairgap recover <id>` next step. `ccairgap discard <id>` is offered as an exit only when safe — suppressed when orphan-branch commits would be lost.
+
+   Known limitation: edits to files matched by `.gitignore` (e.g. `.env.local`) are not detected and are lost on exit. Workaround: launch with `--sync <path>`.
 6. `rm -rf $SESSION/<id>` unless step 5 preserved it.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
@@ -874,6 +881,10 @@ Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM,
 - Print timestamp, repos involved (from manifest), and commit counts on `ccairgap/<id>` in each session clone.
 
 `ccairgap recover [<id>]` — with `<id>`, run the handoff routine against `$SESSION/<id>/` (idempotent; safe to re-run). Without `<id>`, equivalent to `list`.
+
+If the session contains a dirty working tree or orphan-branch commits, `recover` does not delete the session dir — it re-emits the same preservation warning. Commit or discard the work in the session clone (paths printed in the warning), then re-run `ccairgap recover <id>` to finalize.
+
+`recover <id>` refuses to run against a session whose container is still running (checked via `docker ps --filter name=^/ccairgap-<id>$`). Stop the container with `docker stop ccairgap-<id>` first, or let it exit normally — the exit trap will run handoff.
 
 `ccairgap discard <id>` — `rm -rf $SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
 

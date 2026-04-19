@@ -50,6 +50,7 @@ export interface ConfigFile {
   warnDockerArgs?: boolean;
   resume?: string;
   clipboard?: boolean;
+  noPreserveDirty?: boolean;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -78,6 +79,8 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "warn-docker-args": "warnDockerArgs",
   "warnDockerArgs": "warnDockerArgs",
   "clipboard": "clipboard",
+  "no-preserve-dirty": "noPreserveDirty",
+  "noPreserveDirty": "noPreserveDirty",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -267,6 +270,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "clipboard":
         cfg.clipboard = assertBool(val, "clipboard");
+        break;
+      case "noPreserveDirty":
+        cfg.noPreserveDirty = assertBool(val, "no-preserve-dirty");
         break;
     }
   }

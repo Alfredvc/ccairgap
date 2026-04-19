@@ -98,6 +98,11 @@ Claude runs in a Docker container with `--dangerously-skip-permissions`. Your re
 
 When Claude exits, the host (not the container) runs `git fetch` from the clone into your real repo, landing the work as a new `ccairgap/<id>` branch. If Claude didn't commit, nothing lands.
 
+- **No commits** → no branch created.
+- **Commits on a side branch only** → session dir preserved with a warning. Inspect, recover what you need, then `ccairgap discard <id>`.
+- **Uncommitted edits to tracked files, or new untracked files not matched by `.gitignore`** → session dir preserved. The warning tells you where to `cd`, commit, and re-run `ccairgap recover <id>`. Edits to files matched by `.gitignore` (e.g. `.env.local`) are **not** preserved — launch with `--sync <path>` if you need them.
+- **Scripted / CI use** → pass `--no-preserve-dirty` to skip the dirty-tree check entirely. Trade-off: uncommitted edits are lost on exit; build artifacts don't accumulate preserved sessions.
+
 Your host `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md, credentials — is mounted read-only and copied in at startup, so inside the container Claude looks and behaves like yours. Transcripts write to a session-scoped dir and get copied back to `~/.claude/projects/` on exit so `claude --resume` on the host just works.
 
 Hooks and MCP servers are off by default because most reference host binaries that aren't in the container. To add them back you opt in by glob, and likely need to extend the provided Dockerfile so the binaries they need are present. The filter happens host-side: patched configs are overlaid into the container read-only, your real settings are never edited.
@@ -128,6 +133,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `--mcp-enable <glob>` | all disabled | yes | Opt-in an MCP server by `name`. Wildcard `*`. |
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. |
 | `--no-warn-docker-args` | warnings on | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
+| `--no-preserve-dirty` | off | no | Skip the dirty-working-tree preservation check on exit. Intended for scripted / CI use where uncommitted container-side edits are disposable (e.g. `npm install` artifacts). Orphan-branch and scan-failure preservation still fire. |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See `docs/SPEC.md` §"Bare mode". |
 
 ### Notes on `--name`
@@ -278,7 +284,7 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 | Subcommand | Description |
 |------------|-------------|
 | `list` | List orphaned sessions on disk. |
-| `recover [<id>]` | Run handoff (fetch sandbox branch, copy transcripts, rm session dir). Idempotent. With no `<id>`, falls back to `list`. |
+| `recover [<id>]` | Run handoff (fetch sandbox branch, copy transcripts, rm session dir if clean). Idempotent. Preserves session on dirty tree, orphan-branch commits, or scan failure — commit or discard the work, then re-run. Aborts if the container is still running; stop it first. With no `<id>`, falls back to `list`. |
 | `discard <id>` | Delete a session dir without running handoff. |
 | `doctor` | Preflight checks: Docker running, credentials present, image present/stale, state dir writable, `git` + `rsync` + `cp` on PATH. Hash-compares any sidecar `Dockerfile` / `entrypoint.sh` against the bundled copies and warns on drift — useful after a CLI upgrade. |
 | `init` | Scaffold `.ccairgap/{Dockerfile, entrypoint.sh, config.yaml}`. Fails if any file exists; `--force` overwrites. |

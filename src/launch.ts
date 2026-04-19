@@ -104,6 +104,11 @@ export interface LaunchOptions {
    * config. No-op under `--print`.
    */
   clipboard: boolean;
+  /**
+   * Skip the dirty-working-tree preservation check in the exit-trap handoff.
+   * Orphan-branch and scan-failure preservation still fire.
+   */
+  noPreserveDirty: boolean;
 }
 
 export interface LaunchResult {
@@ -607,7 +612,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   } finally {
     await clipboard.cleanup();
     try {
-      await handoff(sessionPath, cliVersion());
+      await handoff(sessionPath, cliVersion(), undefined, {
+        noPreserveDirty: opts.noPreserveDirty,
+      });
     } catch (e) {
       console.error(`ccairgap: handoff failed: ${(e as Error).message}`);
       console.error(`  Recover manually: ccairgap recover ${id}`);

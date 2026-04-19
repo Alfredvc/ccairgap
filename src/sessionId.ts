@@ -151,3 +151,21 @@ export async function listAllContainerNames(): Promise<Set<string>> {
     return new Set();
   }
 }
+
+/**
+ * Names of containers currently RUNNING (not `-a`). Shared between orphan scan
+ * (which filters sessions with live containers out of `ccairgap list`) and
+ * `ccairgap recover` (which refuses to run against a live session). Both
+ * callers need the same "is this session live?" truth; keep it single-source.
+ *
+ * Best-effort: docker errors return an empty set so callers degrade gracefully
+ * rather than bricking on a broken docker CLI.
+ */
+export async function runningContainerNames(): Promise<Set<string>> {
+  try {
+    const { stdout } = await execa("docker", ["ps", "--format", "{{.Names}}"]);
+    return new Set(stdout.split("\n").filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
