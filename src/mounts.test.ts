@@ -29,6 +29,7 @@ function baseInput(r: string) {
     homeInContainer: "/home/claude",
     extraMounts: [] as Mount[],
     autoMemoryHostDir: undefined as string | undefined,
+    managedPolicyHostDir: undefined as string | undefined,
   };
 }
 
@@ -137,5 +138,37 @@ describe("buildMounts + collision resolver", () => {
     const input = baseInput(root);
     input.roPaths = ["/host-claude-memory"];
     expect(() => buildMounts(input)).toThrow(/\/host-claude-memory.*reserved/);
+  });
+
+  it("adds an RO managed-policy mount at /etc/claude-code when host dir exists", () => {
+    const hostPolicy = join(root, "etc", "claude-code");
+    mkdirSync(hostPolicy, { recursive: true });
+    const input = baseInput(root);
+    input.managedPolicyHostDir = hostPolicy;
+
+    const mounts = buildMounts(input);
+    const mp = mounts.find((m) => m.source.kind === "managed-policy");
+    expect(mp).toBeDefined();
+    expect(mp?.src).toBe(hostPolicy);
+    expect(mp?.dst).toBe("/etc/claude-code");
+    expect(mp?.mode).toBe("ro");
+  });
+
+  it("skips the managed-policy mount when the host dir is absent", () => {
+    const input = baseInput(root);
+    input.managedPolicyHostDir = join(root, "etc", "claude-code-missing");
+    expect(buildMounts(input).find((m) => m.source.kind === "managed-policy")).toBeUndefined();
+  });
+
+  it("rejects a user --ro colliding with /etc/claude-code exactly", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/etc/claude-code"];
+    expect(() => buildMounts(input)).toThrow(/\/etc\/claude-code/);
+  });
+
+  it("rejects a user --ro nested under /etc/claude-code/…", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/etc/claude-code/subdir"];
+    expect(() => buildMounts(input)).toThrow(/\/etc\/claude-code/);
   });
 });

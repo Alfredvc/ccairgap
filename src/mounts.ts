@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -72,6 +72,15 @@ export interface BuildMountsInput {
    * into the container so Claude Code's memory resolver uses the mount.
    */
   autoMemoryHostDir?: string;
+  /**
+   * Host managed-policy directory. macOS:
+   * `/Library/Application Support/ClaudeCode/`. Linux: `/etc/claude-code/`.
+   * Mounted RO at the fixed container path `/etc/claude-code/` so the
+   * in-container Linux binary picks it up. Surfaces managed `CLAUDE.md`,
+   * `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`,
+   * and `managed-mcp.json` into the sandbox.
+   */
+  managedPolicyHostDir?: string;
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
 }
@@ -137,6 +146,15 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       dst: "/host-claude-memory",
       mode: "ro",
       source: { kind: "auto-memory" },
+    });
+  }
+
+  if (i.managedPolicyHostDir && existsSync(i.managedPolicyHostDir)) {
+    mounts.push({
+      src: i.managedPolicyHostDir,
+      dst: "/etc/claude-code",
+      mode: "ro",
+      source: { kind: "managed-policy" },
     });
   }
 

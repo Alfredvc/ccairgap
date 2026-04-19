@@ -118,9 +118,13 @@ Hooks and MCP servers are off by default because most reference host binaries th
 
 Claude Code's workspace auto-memory directory (`MEMORY.md` and topic files — see `claude-code/src/memdir/paths.ts`) is surfaced into the sandbox **read-only**. Claude loads past memories normally; any in-session writes (`/remember`, extract-memories background worker, team sync) fail silently — they never reach the host.
 
-The effective host dir is resolved per Claude Code's own `autoMemoryDirectory` cascade (user settings, workspace-local settings, `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var; managed-policy settings join this list in a follow-up commit). Worktrees resolve to their canonical repo root so all worktrees of the same repo share memory. Project-committed settings (`.claude/settings.json`) are intentionally ignored, matching Claude Code's security carve-out.
+The effective host dir is resolved per Claude Code's own `autoMemoryDirectory` cascade (managed-policy settings, workspace-local settings, user settings, `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var). Worktrees resolve to their canonical repo root so all worktrees of the same repo share memory. Project-committed settings (`.claude/settings.json`) are intentionally ignored, matching Claude Code's security carve-out.
 
 Opt out entirely with `--no-auto-memory` on the CLI or `no-auto-memory: true` in the config file.
+
+#### Managed-policy (enterprise / MDM)
+
+When the host has a managed-policy dir (`/Library/Application Support/ClaudeCode/` on macOS, `/etc/claude-code/` on Linux), ccairgap RO-mounts it at `/etc/claude-code/` inside the container — covering managed `CLAUDE.md`, `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`, and `managed-mcp.json`. The mount is skipped when the host dir is absent, so non-enterprise users pay nothing. Windows hosts are out of scope — ccairgap is POSIX-only.
 
 That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 

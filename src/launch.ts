@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { basename, join } from "node:path";
 import { execa } from "execa";
 import {
@@ -42,6 +42,7 @@ import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } 
 import { resolveResumeArg, listProjectSessions } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
+import { resolveManagedPolicyDir } from "./managedPolicy.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -516,6 +517,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     })),
   });
 
+  // Managed-policy: host dir resolved per host OS (macOS or Linux). Used both
+  // as an input to the auto-memory cascade (managed settings can override the
+  // memory dir) and as its own RO bind-mount at `/etc/claude-code/` inside the
+  // container. Returns undefined on non-POSIX hosts or when the dir is absent.
+  const managedPolicyDir = resolveManagedPolicyDir({ platform: platform() });
+
   // Auto-memory: mount host memory dir RO + redirect Claude Code to it via
   // CLAUDE_COWORK_MEMORY_PATH_OVERRIDE. Skipped when --no-auto-memory was set
   // or when the host has no memory dir yet (first-session-for-workspace).
@@ -526,7 +533,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     autoMemoryHostDir = resolveAutoMemoryHostDir({
       hostClaudeDir: hostClaude,
       workspaceHostPath: findCanonicalRepoRoot(repoEntries[0].hostPath),
-      managedPolicyDir: undefined, // populated in Task 5
+      managedPolicyDir,
       homeDir: home,
       env,
     });
@@ -556,6 +563,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       pluginMarketplaces: marketplaces,
       homeInContainer,
       autoMemoryHostDir,
+      managedPolicyHostDir: managedPolicyDir,
       // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
       // MCP-policy overrides are nested single-file overlays (RO) on top of the
       // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
