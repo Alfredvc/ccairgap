@@ -47,6 +47,7 @@ function mergeRun(cli: {
   mcpEnable: string[];
   dockerRunArg: string[];
   warnDockerArgs?: boolean;
+  resume?: string;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -66,6 +67,7 @@ function mergeRun(cli: {
     mcpEnable: [...(cfg.mcp?.enable ?? []), ...cli.mcpEnable],
     dockerRunArg: [...(cfg.dockerRunArg ?? []), ...cli.dockerRunArg],
     warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
+    resume: cli.resume ?? cfg.resume,
   };
 }
 
@@ -154,6 +156,13 @@ async function main() {
     )
     .option("--no-warn-docker-args", "suppress the dangerous-arg warning for --docker-run-arg")
     .option(
+      "-r, --resume <session-id>",
+      "resume an existing Claude session by UUID. Looks up the transcript under " +
+        "~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl on the host and " +
+        "copies it into the sandbox. Requires a workspace repo (--repo or cwd git repo); " +
+        "incompatible with --bare / ro-only launches.",
+    )
+    .option(
       "--bare",
       "launch a naked container: skip config-file loading and cwd-as-workspace inference. " +
         "The user must mount any repo via --repo (or reference material via --ro). Claude config " +
@@ -204,6 +213,7 @@ async function main() {
           mcpEnable: opts.mcpEnable as string[],
           dockerRunArg: opts.dockerRunArg as string[],
           warnDockerArgs: cliWarnDockerArgs,
+          resume: opts.resume as string | undefined,
         },
         fileCfg,
       );
@@ -284,6 +294,7 @@ async function main() {
         dockerRunArgs: merged.dockerRunArg,
         warnDockerArgs: merged.warnDockerArgs,
         bare,
+        resume: merged.resume,
       });
       process.exit(result.exitCode);
     });
