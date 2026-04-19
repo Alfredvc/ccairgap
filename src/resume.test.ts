@@ -198,7 +198,6 @@ describe("copyResumeTranscript", () => {
     const src = writeSourceJsonl(['{"type":"user","message":{"content":"hi"}}']);
     copyResumeTranscript({
       sessionDir: session,
-      workspaceHostPath: workspace,
       source: { encoded, srcJsonl: src, srcSubagentsDir: undefined, origName: undefined },
     });
     const dst = join(session, "transcripts", encoded, `${uuid}.jsonl`);
@@ -216,7 +215,6 @@ describe("copyResumeTranscript", () => {
 
     copyResumeTranscript({
       sessionDir: session,
-      workspaceHostPath: workspace,
       source: { encoded, srcJsonl: src, srcSubagentsDir: subRoot, origName: undefined },
     });
 
@@ -231,7 +229,6 @@ describe("copyResumeTranscript", () => {
     const srcStat = statSync(src);
     copyResumeTranscript({
       sessionDir: session,
-      workspaceHostPath: workspace,
       source: { encoded, srcJsonl: src, srcSubagentsDir: undefined, origName: undefined },
     });
     const dstStat = statSync(join(session, "transcripts", encoded, `${uuid}.jsonl`));

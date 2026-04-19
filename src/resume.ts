@@ -59,8 +59,6 @@ export interface ResolvedResumeSource {
 export interface CopyResumeTranscriptArgs {
   /** `$SESSION` — must already contain `transcripts/` (caller mkdir'd it). */
   sessionDir: string;
-  /** Same realpath as passed to `resolveResumeSource` — but `source.encoded` is what we actually use. Kept for symmetry / future use. */
-  workspaceHostPath: string;
   /** Resolved source bundle from `resolveResumeSource`. */
   source: ResolvedResumeSource;
 }

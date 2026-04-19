@@ -365,10 +365,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     // failure here is a filesystem-level problem worth aborting on, and the
     // setupOk/finally block will rm-rf $SESSION.
     if (resumeSource !== undefined) {
-      const workspace = pendingRepos[0]!.hostPath;
       copyResumeTranscript({
         sessionDir: sessionPath,
-        workspaceHostPath: workspace,
         source: resumeSource,
       });
     }
