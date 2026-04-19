@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -81,6 +81,14 @@ export interface BuildMountsInput {
    * and `managed-mcp.json` into the sandbox.
    */
   managedPolicyHostDir?: string;
+  /**
+   * Host CA bundle from `process.env.NODE_EXTRA_CA_CERTS` and the neutral
+   * container path to mount it at. `containerPath` must live under
+   * `/host-ca-certs/` — this avoids overmounting the base image's own CA
+   * trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). The caller forwards
+   * `NODE_EXTRA_CA_CERTS=<containerPath>` into the container.
+   */
+  nodeExtraCa?: { hostPath: string; containerPath: string };
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
 }
@@ -155,6 +163,15 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       dst: "/etc/claude-code",
       mode: "ro",
       source: { kind: "managed-policy" },
+    });
+  }
+
+  if (i.nodeExtraCa && existsSync(i.nodeExtraCa.hostPath)) {
+    mounts.push({
+      src: i.nodeExtraCa.hostPath,
+      dst: i.nodeExtraCa.containerPath,
+      mode: "ro",
+      source: { kind: "node-extra-ca" },
     });
   }
 

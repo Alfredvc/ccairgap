@@ -444,4 +444,63 @@ exit 0
     expect(run).not.toContain("/host-claude-memory");
     expect(run).not.toContain("CLAUDE_COWORK_MEMORY_PATH_OVERRIDE");
   });
+
+  it("forwards NODE_EXTRA_CA_CERTS into the container via neutral /host-ca-certs mount", async () => {
+    const caFile = join(fakeHome, "corp-ca.pem");
+    writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n");
+    process.env.NODE_EXTRA_CA_CERTS = caFile;
+    try {
+      await launch({
+        repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false,
+      });
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+    }
+
+    const run = dockerRunLine();
+    const real = realpathSync(caFile);
+    expect(run).toContain(`-e NODE_EXTRA_CA_CERTS=/host-ca-certs/corp-ca.pem`);
+    expect(run).toContain(`-v ${real}:/host-ca-certs/corp-ca.pem:ro`);
+  });
+
+  it("does not forward NODE_EXTRA_CA_CERTS when the file is missing", async () => {
+    process.env.NODE_EXTRA_CA_CERTS = join(fakeHome, "does-not-exist.pem");
+    try {
+      await launch({
+        repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false,
+      });
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+    }
+    const run = dockerRunLine();
+    expect(run).not.toContain("NODE_EXTRA_CA_CERTS");
+  });
+
+  it("resolves symlinked NODE_EXTRA_CA_CERTS via realpath (container path uses the real basename)", async () => {
+    const realFile = join(fakeHome, "real-ca.pem");
+    const symLink = join(fakeHome, "ca-link.pem");
+    writeFileSync(realFile, "-----BEGIN CERTIFICATE-----\n");
+    symlinkSync(realFile, symLink);
+    process.env.NODE_EXTRA_CA_CERTS = symLink;
+    try {
+      await launch({
+        repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false,
+      });
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+    }
+    const run = dockerRunLine();
+    const real = realpathSync(realFile);
+    expect(run).toContain(`-e NODE_EXTRA_CA_CERTS=/host-ca-certs/real-ca.pem`);
+    expect(run).toContain(`-v ${real}:/host-ca-certs/real-ca.pem:ro`);
+  });
 });

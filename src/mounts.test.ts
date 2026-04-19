@@ -30,6 +30,7 @@ function baseInput(r: string) {
     extraMounts: [] as Mount[],
     autoMemoryHostDir: undefined as string | undefined,
     managedPolicyHostDir: undefined as string | undefined,
+    nodeExtraCa: undefined as { hostPath: string; containerPath: string } | undefined,
   };
 }
 
@@ -170,5 +171,34 @@ describe("buildMounts + collision resolver", () => {
     const input = baseInput(root);
     input.roPaths = ["/etc/claude-code/subdir"];
     expect(() => buildMounts(input)).toThrow(/\/etc\/claude-code/);
+  });
+
+  it("adds an RO node-extra-ca mount at the caller-supplied neutral container path", () => {
+    const caFile = join(root, "corp-ca-bundle.pem");
+    writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\n");
+    const input = baseInput(root);
+    input.nodeExtraCa = { hostPath: caFile, containerPath: "/host-ca-certs/corp-ca-bundle.pem" };
+
+    const mounts = buildMounts(input);
+    const ca = mounts.find((m) => m.source.kind === "node-extra-ca");
+    expect(ca).toBeDefined();
+    expect(ca?.src).toBe(caFile);
+    expect(ca?.dst).toBe("/host-ca-certs/corp-ca-bundle.pem");
+    expect(ca?.mode).toBe("ro");
+  });
+
+  it("skips the node-extra-ca mount when the host file is absent", () => {
+    const input = baseInput(root);
+    input.nodeExtraCa = {
+      hostPath: join(root, "missing-ca.pem"),
+      containerPath: "/host-ca-certs/missing-ca.pem",
+    };
+    expect(buildMounts(input).find((m) => m.source.kind === "node-extra-ca")).toBeUndefined();
+  });
+
+  it("rejects a user --ro under the /host-ca-certs prefix", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/host-ca-certs/evil.pem"];
+    expect(() => buildMounts(input)).toThrow(/\/host-ca-certs/);
   });
 });

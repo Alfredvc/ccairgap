@@ -184,6 +184,8 @@ In order:
     - `-it` (interactive)
     - `--name ccairgap-<id>`
     - Mount list per §"Container mount manifest"
+    - Env vars pushed via `-e`:
+        - `NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>` if the host env var is set and points at an existing file. The file is RO-bind-mounted at that neutral container path (never at the same host absolute path — that risks overmounting the base image's CA trust store).
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
     - Image: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 13. Install exit trap: run §"Handoff routine" against `$SESSION/<id>/`.
@@ -299,6 +301,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `<effective-host-memory-dir>` (resolved per Claude Code's `autoMemoryDirectory` cascade — see §"Auto-memory") | `/host-claude-memory` | ro | Host auto-memory dir surfaced to Claude Code via `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory` env var. Skipped when the host dir is absent, when no workspace repo is present, or when `--no-auto-memory` is set. Writes fail EROFS; reads (`MEMORY.md`, topic files) succeed. |
 | macOS: `/Library/Application Support/ClaudeCode/` / Linux: `/etc/claude-code/` | `/etc/claude-code/` | ro | Managed-policy directory: managed `CLAUDE.md`, `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`, `managed-mcp.json`. Only present when the host dir exists (MDM / enterprise). macOS host path translates to Linux container path — the in-container binary always runs Linux and consults only `/etc/claude-code/`. Skipped on Linux when the dir is absent; skipped entirely on Windows hosts. Interaction with ccairgap's MCP policy: `managed-mcp.json` is **not** filtered by `--mcp-enable`, matching Claude Code's precedence where managed policy overrides user flags. |
+| `$NODE_EXTRA_CA_CERTS` on host (when set + file exists) | `/host-ca-certs/<basename>` | ro | Corporate TLS CA bundle. The env var is forwarded as `-e NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>`. Mounted at a neutral container path rather than the host-absolute path so it does not overmount the base image's own CA trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). Symlinks resolved via `realpath()`. Stderr warning + skip when the env var points at a missing file. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` | `<original-host-path>` | rw | Session clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. |
 | `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/objects/` | ro | Alternates target for `--shared` clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
@@ -318,7 +321,7 @@ Before invoking `docker run`, ccairgap resolves mount conflicts in two passes:
 1. **Marketplace pre-filter (`filterSubsumedMarketplaces`).** If a plugin marketplace path from `extraKnownMarketplaces` equals or is nested inside any `--repo`/`--extra-repo` `hostPath`, the marketplace mount is dropped. The repo's session-clone RW mount serves those files at the same container path. A stderr warning notes the drop and reminds users that the container sees HEAD-only content (uncommitted files in the marketplace tree are not visible).
 2. **Collision resolver (`resolveMountCollisions`).** Defense-in-depth at the end of `buildMounts`:
    - Any two surviving mounts sharing a container `dst` throw with both source labels (`--repo/--extra-repo`, `--ro`, `--mount`, `plugin marketplace`, etc.).
-   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/` or `/etc/claude-code/`.
+   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`, `/etc/claude-code/`, or `/host-ca-certs/`.
 
 Nested mounts with distinct `dst` strings (hook/MCP single-file overlays on top of a repo, `--mount` paths inside a repo) are **allowed** — they're the intended overlay mechanism.
 

@@ -33,7 +33,7 @@ export function reservedContainerPaths(
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
-    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard", "/etc/claude-code"],
+    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard", "/etc/claude-code", "/host-ca-certs"],
   };
 }
 
@@ -66,6 +66,7 @@ function label(src: MountSource): string {
     case "clipboard-bridge": return `clipboard bridge`;
     case "auto-memory": return `auto-memory RO mount`;
     case "managed-policy": return `managed-policy RO mount`;
+    case "node-extra-ca": return `NODE_EXTRA_CA_CERTS RO mount`;
   }
 }
 
