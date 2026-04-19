@@ -138,3 +138,38 @@ export async function countCommitsAhead(repo: string, branch: string, base: stri
     return 0;
   }
 }
+
+export type DirtyStatus =
+  | { kind: "clean" }
+  | { kind: "dirty"; modified: number; untracked: number }
+  | { kind: "scan-failed"; error: string };
+
+/**
+ * Scan a working tree for uncommitted changes.
+ *
+ * Definition of "dirty": `git status --porcelain` emits any non-empty line
+ * (modifications, staged hunks, untracked non-ignored entries). Respects
+ * `.gitignore`. A scan failure (git crashes, `.git/` missing) is returned
+ * as a distinct `scan-failed` kind — callers err on preserve.
+ */
+export async function dirtyTree(dir: string): Promise<DirtyStatus> {
+  try {
+    const { stdout } = await execa("git", [
+      "-C",
+      dir,
+      "status",
+      "--porcelain",
+    ]);
+    const lines = stdout.split("\n").filter((l) => l.length > 0);
+    if (lines.length === 0) return { kind: "clean" };
+    let modified = 0;
+    let untracked = 0;
+    for (const l of lines) {
+      if (l.startsWith("??")) untracked++;
+      else modified++;
+    }
+    return { kind: "dirty", modified, untracked };
+  } catch (e) {
+    return { kind: "scan-failed", error: (e as Error).message };
+  }
+}
