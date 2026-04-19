@@ -87,14 +87,9 @@ b4e2d8f Add login route
 npx skills add alfredvc/ccairgap
 ```
 
-## Security
-
-ccairgap protects your host filesystem: Claude can only write to a small, explicit set of paths. It does **not** prevent exfiltration — anything the container can read may be sent over the network. See [`SECURITY.md`](SECURITY.md) for the threat model and [`docs/SPEC.md`](docs/SPEC.md) for the design.
-
 ## Contents
 
 - [Why ccairgap?](#why-ccairgap)
-- [Security](#security)
 - [Setup](#setup)
 - [Quick start](#quick-start)
 - [Agent Skills](#agent-skills)
