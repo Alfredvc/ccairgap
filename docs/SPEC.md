@@ -748,6 +748,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 | `CCAIRGAP_GIT_USER_NAME` | `git config --get user.name` (run in `--repo[0]`) | Set as `git config --global user.name` in entrypoint. Fallback `ccairgap` if host has none. |
 | `CCAIRGAP_GIT_USER_EMAIL` | `git config --get user.email` (run in `--repo[0]`) | Set as `git config --global user.email` in entrypoint. Fallback `noreply@ccairgap.local` if host has none. |
 | `COLORTERM` | hardcoded `truecolor` | Enables 24-bit color output in the container terminal. |
+| `TZ` | `Intl.DateTimeFormat().resolvedOptions().timeZone` (host IANA zone) | Container timezone matches the host. Resolved via the image's `tzdata` package. Omitted if the host runtime has no IANA zone. |
 
 **On the host** — read by the CLI:
 

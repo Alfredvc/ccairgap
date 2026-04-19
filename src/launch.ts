@@ -544,6 +544,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
   dockerArgs.push("-e", "COLORTERM=truecolor");
+  // Match host timezone inside the container. IANA name from the host's ICU
+  // data; tzdata in the image makes it resolvable. Falls back silently if the
+  // host runtime has no IANA zone (small-icu returns "UTC" — harmless).
+  const hostTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (hostTz) dockerArgs.push("-e", `TZ=${hostTz}`);
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }

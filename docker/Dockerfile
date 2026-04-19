@@ -13,6 +13,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       rsync \
       ca-certificates \
       less \
+      tzdata \
       vim \
  && rm -rf /var/lib/apt/lists/*
 
