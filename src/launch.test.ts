@@ -194,6 +194,7 @@ describe("launch --resume validation runs before any session-dir creation", () =
         dockerRunArgs: [],
         warnDockerArgs: false,
         bare: false,
+        clipboard: false,
         resume: bogusUuid,
       }),
     ).rejects.toThrow(/process\.exit\(1\)/);
@@ -319,6 +320,7 @@ exit 0
       dockerRunArgs: [],
       warnDockerArgs: false,
       bare: false,
+      clipboard: false,
     });
     expect(result.id).toMatch(/^[a-z]+-[a-z]+-[0-9a-f]{4}$/);
     const run = dockerRunLine();
@@ -341,6 +343,7 @@ exit 0
       dockerRunArgs: [],
       warnDockerArgs: false,
       bare: false,
+      clipboard: false,
       name: "myfeature",
     });
     expect(result.id).toMatch(/^myfeature-[0-9a-f]{4}$/);
@@ -376,6 +379,7 @@ exit 0
       dockerRunArgs: [],
       warnDockerArgs: false,
       bare: false,
+      clipboard: false,
       resume: uuid,
     });
     const run = dockerRunLine();

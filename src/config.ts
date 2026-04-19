@@ -49,6 +49,7 @@ export interface ConfigFile {
   dockerRunArg?: string[];
   warnDockerArgs?: boolean;
   resume?: string;
+  clipboard?: boolean;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -76,6 +77,7 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "dockerRunArg": "dockerRunArg",
   "warn-docker-args": "warnDockerArgs",
   "warnDockerArgs": "warnDockerArgs",
+  "clipboard": "clipboard",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -262,6 +264,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "warnDockerArgs":
         cfg.warnDockerArgs = assertBool(val, "warn-docker-args");
+        break;
+      case "clipboard":
+        cfg.clipboard = assertBool(val, "clipboard");
         break;
     }
   }

@@ -169,4 +169,26 @@ describe("resolveMountCollisions", () => {
     );
     expect(reserved.prefixes).toEqual(expect.arrayContaining(["/host-git-alternates"]));
   });
+
+  it("blocks --ro mounting under the clipboard bridge prefix", () => {
+    expect(() =>
+      resolveMountCollisions(
+        [
+          { src: "/tmp/a", dst: "/run/ccairgap-clipboard/current.png", mode: "ro", source: { kind: "ro", path: "/tmp/a" } },
+        ],
+        { homeInContainer: "/home/claude" },
+      ),
+    ).toThrow(/reserved prefix \/run\/ccairgap-clipboard.*--ro \/tmp\/a/);
+  });
+
+  it("blocks --ro mounting the clipboard bridge dir exactly", () => {
+    expect(() =>
+      resolveMountCollisions(
+        [
+          { src: "/tmp/a", dst: "/run/ccairgap-clipboard", mode: "ro", source: { kind: "ro", path: "/tmp/a" } },
+        ],
+        { homeInContainer: "/home/claude" },
+      ),
+    ).toThrow(/reserved prefix \/run\/ccairgap-clipboard.*--ro \/tmp\/a/);
+  });
 });

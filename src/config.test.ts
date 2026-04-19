@@ -196,6 +196,20 @@ mount:
       new RegExp(`^${SRC.replace(/\//g, "\\/")}: yaml parse error:`),
     );
   });
+
+  it("parses clipboard: false", () => {
+    const cfg = parseConfig("clipboard: false\n", "/fake/path.yaml");
+    expect(cfg.clipboard).toBe(false);
+  });
+
+  it("parses clipboard: true", () => {
+    const cfg = parseConfig("clipboard: true\n", "/fake/path.yaml");
+    expect(cfg.clipboard).toBe(true);
+  });
+
+  it("rejects non-boolean clipboard", () => {
+    expect(() => parseConfig("clipboard: yes-please\n", "/fake/path.yaml")).toThrow(/expected boolean/);
+  });
 });
 
 describe("resolveConfigPaths", () => {

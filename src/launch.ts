@@ -38,6 +38,7 @@ import {
   scanDangerousArgs,
 } from "./dockerRunArgs.js";
 import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } from "./resume.js";
+import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -97,6 +98,12 @@ export interface LaunchOptions {
    * workspace repo; incompatible with `--bare` or ro-only launches.
    */
   resume?: string;
+  /**
+   * Enable clipboard passthrough (host-side watcher + bridge-dir RO mount).
+   * Default: true. Kill switch: `--no-clipboard` / `clipboard: false` in
+   * config. No-op under `--print`.
+   */
+  clipboard: boolean;
 }
 
 export interface LaunchResult {
@@ -485,6 +492,14 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     })),
   });
 
+  // Clipboard passthrough (v2): host-side watcher writes
+  // $SESSION/clipboard-bridge/current.png; container RO-mounts that directory
+  // at /run/ccairgap-clipboard and reads via the entrypoint's fake wl-paste
+  // shim. Disabled under --print (non-interactive has no paste UX).
+  const clipboard = await detectAndSetupClipboardBridge(sessionPath, {
+    enabled: opts.clipboard && opts.print === undefined,
+  });
+
   let mounts: Mount[];
   try {
     mounts = buildMounts({
@@ -508,6 +523,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         ...artifacts.extraMounts,
         ...hookPolicyResult.overrideMounts,
         ...mcpPolicyResult.overrideMounts,
+        ...clipboard.mounts,
       ],
     });
   } catch (e) {
@@ -559,6 +575,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   if (opts.resume !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_RESUME=${opts.resume}`);
   }
+  for (const [k, v] of Object.entries(clipboard.envVars)) {
+    dockerArgs.push("-e", `${k}=${v}`);
+  }
   for (const m of mounts) dockerArgs.push(...mountArg(m));
 
   // User-supplied docker run args. Appended last so Docker's last-wins
@@ -586,6 +605,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     });
     exitCode = typeof result.exitCode === "number" ? result.exitCode : 1;
   } finally {
+    await clipboard.cleanup();
     try {
       await handoff(sessionPath, cliVersion());
     } catch (e) {

@@ -47,6 +47,11 @@ RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
 RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache
 
 USER root
+# Pre-create the clipboard bridge mount point. RO bind source is the host
+# directory $SESSION/clipboard-bridge → /run/ccairgap-clipboard. Must be
+# traversable by the non-root claude user, so chown after creation.
+RUN mkdir -p /run/ccairgap-clipboard \
+ && chown ${HOST_UID}:${HOST_GID} /run/ccairgap-clipboard
 COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
 RUN chmod +x /usr/local/bin/ccairgap-entrypoint
 

@@ -34,6 +34,7 @@ import { enumerateHooks } from "./hooks.js";
 import { enumerateMcpServers } from "./mcp.js";
 import { enumerateEnv, enumerateMarketplaces } from "./settings.js";
 import { formatInspectPretty } from "./inspectFormat.js";
+import { detectClipboardMode, isWsl2, hasCommand } from "./clipboardBridge.js";
 
 export async function listOrphans(): Promise<void> {
   const orphans = await scanOrphans(cliVersion());
@@ -172,6 +173,30 @@ function checkSessions(): DoctorCheck {
   }
 }
 
+function checkClipboard(): DoctorCheck {
+  const { mode, warning } = detectClipboardMode({
+    platform: process.platform,
+    env: process.env,
+    isWsl2,
+    hasCommand,
+  });
+  if (mode !== "none") {
+    const tool = mode === "macos" ? "pngpaste" : mode === "x11" ? "xclip" : "wl-paste";
+    return { name: "clipboard passthrough", ok: true, detail: `${mode} via ${tool}` };
+  }
+  if (warning) {
+    // Strip the "ccairgap: " prefix — doctor renders `[WARN] name: detail` and
+    // the prefix would be redundant under our own `name:` column.
+    return {
+      name: "clipboard passthrough",
+      ok: true,
+      warn: true,
+      detail: warning.replace(/^ccairgap: /, ""),
+    };
+  }
+  return { name: "clipboard passthrough", ok: true, detail: "disabled (unsupported platform)" };
+}
+
 /**
  * `ccairgap inspect` — enumerate the full config surface the container would
  * see at launch. Sources walked mirror what the launch pipeline actually reads
@@ -224,6 +249,7 @@ export async function doctor(): Promise<void> {
   checks.push(await checkHostBinary("rsync"));
   checks.push(await checkHostBinary("cp"));
   checks.push(await checkImage());
+  checks.push(checkClipboard());
   const drift = checkSidecarDrift();
   if (drift) checks.push(drift);
 

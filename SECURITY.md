@@ -31,6 +31,21 @@ A bug that lets the container escape those constraints is a vulnerability. Repor
 - **`--mount <path>` writes.** User-declared live RW bind mounts bypass the host-write invariant for exactly the path given. Using `--mount` is opt-in; any host mutation via that path is expected behavior.
 - **`--dangerously-skip-permissions` semantics inside the container.** Claude Code runs with all permissions by design. Inside-container destruction of the session clone, session scratch, `/output`, and declared `--mount` targets is expected.
 
+### Clipboard passthrough risks
+
+Clipboard passthrough (see `docs/SPEC.md` §"Clipboard passthrough") introduces two accepted attack surfaces.
+
+- **Sensitive clipboard images persisted briefly to disk.** The host-side watcher writes the current clipboard image to `$SESSION/clipboard-bridge/current.png` on every clipboard change. If the user copies a sensitive screenshot (password UI, 2FA code) while a ccairgap session is running, it lives on disk at user-readable perms until the clipboard changes to non-image content or the session ends. Mitigation: `--no-clipboard`; session scratch is removed on handoff/recover.
+
+- **Always-on host-side watcher.** A background process runs as the host user for the CLI lifetime, reading the clipboard on every poll (macOS/X11) or clipboard-change event (Wayland/WSL2). Runs as the host user (required to read the clipboard) and is not sandboxed. A compromise of ccairgap could repurpose it as a persistent clipboard reader. Mitigation: `--no-clipboard`.
+
+Explicitly NOT risks in v2 (they were in v1):
+
+- Host-clipboard write-back from the container — no clipboard-write tool, no compositor access.
+- X11 full-session exposure — container has no `$DISPLAY`, no `/tmp/.X11-unix/` mount.
+- Wayland client capabilities — container is not a Wayland client.
+- Broader `/mnt/wslg` mount — `/mnt/wslg` is not mounted.
+
 ### Hardening posture
 
 - `docker run --cap-drop=ALL --user <hostuid>:<hostgid> --rm`

@@ -32,7 +32,7 @@ export function reservedContainerPaths(
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
-    prefixes: ["/host-git-alternates"],
+    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard"],
   };
 }
 
@@ -62,6 +62,7 @@ function label(src: MountSource): string {
     case "plugins-host-path": return `plugins host-abs-path RO mount`;
     case "transcripts": return `transcripts RW mount`;
     case "output": return `/output RW mount`;
+    case "clipboard-bridge": return `clipboard bridge`;
   }
 }
 
