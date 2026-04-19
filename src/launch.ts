@@ -114,6 +114,52 @@ function dedupeResolved(paths: string[]): string[] {
   return out;
 }
 
+/**
+ * Validates that `opts.repos` entries resolve to distinct real paths and that
+ * no `opts.ros` entry resolves to the same real path as any repo. Uses
+ * `realpath()` so a symlinked form of a real path is caught.
+ *
+ * Preserves the existing UX: if a path does not exist, `realpath()` throws
+ * ENOENT — we catch that and rethrow with the same "path does not exist"
+ * message the downstream existence checks (`resolveGitDir`, `--ro` existsSync)
+ * would produce. The validation order is therefore: existence → real-path
+ * equality, not the other way around.
+ */
+export function validateRepoRoOverlap(
+  repos: string[],
+  ros: string[],
+  resolveRealpath: (p: string) => string,
+): void {
+  const resolveOr = (label: string, p: string): string => {
+    try {
+      return resolveRealpath(p);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        throw new Error(`${label} path does not exist: ${p}`);
+      }
+      throw e;
+    }
+  };
+
+  const repoSet = new Set<string>();
+  for (const r of repos) {
+    const real = resolveOr("--repo/--extra-repo", r);
+    if (repoSet.has(real)) {
+      throw new Error(`duplicate repo path in --repo/--extra-repo: ${r} (resolves to ${real})`);
+    }
+    repoSet.add(real);
+  }
+  for (const ro of ros) {
+    const real = resolveOr("--ro", ro);
+    if (repoSet.has(real)) {
+      throw new Error(
+        `path appears in both repo (--repo/--extra-repo) and --ro: ${ro} (resolves to ${real})`,
+      );
+    }
+  }
+}
+
 export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const env = process.env;
   const home = env.HOME ?? homedir();
@@ -130,18 +176,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
 
   // repos must be unique; repos + ros may not overlap
-  const repoSet = new Set<string>();
-  for (const r of opts.repos) {
-    const abs = resolve(r);
-    if (repoSet.has(abs)) {
-      die(`duplicate repo path in --repo/--extra-repo: ${r}`);
-    }
-    repoSet.add(abs);
-  }
-  for (const ro of opts.ros) {
-    if (repoSet.has(resolve(ro))) {
-      die(`path appears in both repo (--repo/--extra-repo) and --ro: ${ro}`);
-    }
+  try {
+    validateRepoRoOverlap(opts.repos, opts.ros, realpath);
+  } catch (e) {
+    die((e as Error).message);
   }
 
   // Compute ts + session dir paths up-front so we can resolve artifact
