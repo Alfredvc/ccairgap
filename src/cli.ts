@@ -97,6 +97,13 @@ async function main() {
         "root (parent of the config dir); relative `dockerfile` anchors on the config " +
         "file's directory; relative `cp`/`sync`/`mount` anchor on the workspace repo root.",
     )
+    .option(
+      "--profile <name>",
+      "load a named config file under the canonical config dir. " +
+        "`default` = config.yaml (same as no flag); any other `<name>` = <name>.config.yaml " +
+        "(e.g. --profile web → <git-root>/.ccairgap/web.config.yaml). " +
+        "Missing profile file is a hard error. Mutually exclusive with --config.",
+    )
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo exposed alongside --repo (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])
@@ -172,11 +179,16 @@ async function main() {
     .action(async (opts, cmd) => {
       const bare = Boolean(opts.bare);
 
+      if (opts.config && opts.profile) {
+        console.error("ccairgap: --config and --profile are mutually exclusive");
+        process.exit(1);
+      }
+
       // Load config file (if any). Paths inside config resolve relative to config file dir.
-      // Under --bare, skip the default-path walk entirely — only an explicit --config loads.
+      // Under --bare, skip the default-path walk entirely — only an explicit --config/--profile loads.
       let fileCfg: ConfigFile = {};
-      if (!bare || opts.config) {
-        const loaded = loadConfig(opts.config);
+      if (!bare || opts.config || opts.profile) {
+        const loaded = loadConfig(opts.config, process.cwd(), opts.profile);
         if (loaded.path) {
           fileCfg = resolveConfigPaths(loaded.config, loaded.path);
         }
@@ -336,12 +348,17 @@ async function main() {
         "dirs). JSON `{hooks, mcpServers}` to stdout. Read-only.",
     )
     .option("--config <path>", "path to yaml config file (same semantics as launch)")
+    .option("--profile <name>", "load a named config file (same semantics as launch; mutually exclusive with --config)")
     .option("--repo <path>", "host repo whose .claude/settings.json[.local] and .mcp.json should be included. Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo to include. Repeatable.", collect, [])
     .option("--pretty", "render human-readable tables instead of JSON")
     .action((opts) => {
+      if (opts.config && opts.profile) {
+        console.error("ccairgap: --config and --profile are mutually exclusive");
+        process.exit(1);
+      }
       let fileCfg: ConfigFile = {};
-      const loaded = loadConfig(opts.config);
+      const loaded = loadConfig(opts.config, process.cwd(), opts.profile);
       if (loaded.path) fileCfg = resolveConfigPaths(loaded.config, loaded.path);
 
       const repo: string | undefined = (opts.repo as string | undefined) ?? fileCfg.repo;

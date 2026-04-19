@@ -7,6 +7,25 @@ import { parse as parseYaml } from "yaml";
 export const DEFAULT_CONFIG_REL = ".ccairgap/config.yaml";
 export const ALTERNATE_CONFIG_REL = ".config/ccairgap/config.yaml";
 
+/** Valid profile name: alnum + `._-`, no slashes or empty. */
+const PROFILE_NAME_RE = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Profile-scoped filename. `default` → `config.yaml` (back-compat with the
+ * unprefixed default). Any other `<name>` → `<name>.config.yaml`.
+ */
+export function profileFilename(profile: string): string {
+  return profile === "default" ? "config.yaml" : `${profile}.config.yaml`;
+}
+
+function assertProfileName(profile: string): void {
+  if (!PROFILE_NAME_RE.test(profile)) {
+    throw new Error(
+      `--profile: invalid name '${profile}' (allowed: letters, digits, '.', '_', '-')`,
+    );
+  }
+}
+
 /**
  * All CLI options that can live in config. Camel-cased to match launch opts.
  * Undefined = unset (not "use default").
@@ -75,12 +94,18 @@ function gitRepoRoot(cwd: string): string | undefined {
 
 /**
  * Resolve config file to load.
+ *  - `explicit` and `profile` are mutually exclusive (enforced at CLI layer).
  *  - If `explicit` set: must exist, absolute or resolved against cwd.
+ *  - If `profile` set (and not `default`): look up `<root>/.ccairgap/<name>.config.yaml`,
+ *    fallback `<root>/.config/ccairgap/<name>.config.yaml`. Missing = hard error
+ *    (user explicitly asked for this profile). `profile: "default"` behaves
+ *    identically to no profile.
  *  - Else: checks .ccairgap/config.yaml then .config/ccairgap/config.yaml under git root.
  */
 export function resolveConfigPath(
   explicit: string | undefined,
   cwd: string = process.cwd(),
+  profile?: string,
 ): string | undefined {
   if (explicit) {
     const p = isAbsolute(explicit) ? explicit : resolve(cwd, explicit);
@@ -89,20 +114,37 @@ export function resolveConfigPath(
     }
     return p;
   }
+  const filename = profile !== undefined
+    ? (assertProfileName(profile), profileFilename(profile))
+    : "config.yaml";
+  const primaryRel = `.ccairgap/${filename}`;
+  const alternateRel = `.config/ccairgap/${filename}`;
   const root = gitRepoRoot(cwd);
-  if (!root) return undefined;
-  const primary = join(root, DEFAULT_CONFIG_REL);
-  const alternate = join(root, ALTERNATE_CONFIG_REL);
+  if (!root) {
+    if (profile && profile !== "default") {
+      throw new Error(
+        `--profile ${profile}: not inside a git repo (expected ${primaryRel} or ${alternateRel} under git root)`,
+      );
+    }
+    return undefined;
+  }
+  const primary = join(root, primaryRel);
+  const alternate = join(root, alternateRel);
   const primaryExists = existsSync(primary);
   const alternateExists = existsSync(alternate);
   if (primaryExists && alternateExists) {
     console.error(
-      `ccairgap: warning: both ${DEFAULT_CONFIG_REL} and ${ALTERNATE_CONFIG_REL} ` +
-        `found; using ${DEFAULT_CONFIG_REL}`,
+      `ccairgap: warning: both ${primaryRel} and ${alternateRel} ` +
+        `found; using ${primaryRel}`,
     );
   }
   if (primaryExists) return primary;
   if (alternateExists) return alternate;
+  if (profile && profile !== "default") {
+    throw new Error(
+      `--profile ${profile}: config file not found (looked for ${primary} and ${alternate})`,
+    );
+  }
   return undefined;
 }
 
@@ -260,8 +302,9 @@ function assertMcpBlock(v: unknown): { enable?: string[] } {
 export function loadConfig(
   explicit: string | undefined,
   cwd: string = process.cwd(),
+  profile?: string,
 ): { path?: string; config: ConfigFile } {
-  const path = resolveConfigPath(explicit, cwd);
+  const path = resolveConfigPath(explicit, cwd, profile);
   if (!path) return { config: {} };
   const text = readFileSync(path, "utf8");
   return { path, config: parseConfig(text, path) };

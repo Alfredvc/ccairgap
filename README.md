@@ -123,6 +123,7 @@ b4e2d8f Add login route
 | Flag | Default | Repeatable | Description |
 |------|---------|------------|-------------|
 | `--config <path>` | `<git-root>/.ccairgap/config.yaml` (fallback: `<git-root>/.config/ccairgap/config.yaml`) | no | YAML config file. |
+| `--profile <name>` | — | no | Named config under the canonical dir: `default` = `config.yaml`, any other `<name>` = `<name>.config.yaml` (e.g. `--profile web` → `<git-root>/.ccairgap/web.config.yaml`). Missing profile file is a hard error. Mutually exclusive with `--config`. |
 | `--repo <path>` | cwd (if git repo) | no | Host repo exposed as the workspace (container cwd). Cloned `--shared`; branch `ccairgap/<id>` created on exit. |
 | `--extra-repo <path>` | — | yes | Additional repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | — | yes | Extra read-only bind mount. |
@@ -226,9 +227,18 @@ See `docs/SPEC.md` §"Raw docker run args" for the full spec.
 
 ## Config file
 
-Any launch flag can live in a YAML file. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. Override with `--config <path>`.
+Any launch flag can live in a YAML file. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. Override with `--config <path>` or `--profile <name>`.
 
 Precedence: **CLI > config > built-in defaults**. Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `docker-run-arg`, etc.): concat (config first, CLI appended). `docker-build-arg` map merges per-key with CLI winning.
+
+### Profiles
+
+`--profile <name>` picks a named config file under the same canonical dir:
+
+- `--profile default` → `config.yaml` (same as no flag).
+- `--profile web` → `web.config.yaml` (e.g. `<git-root>/.ccairgap/web.config.yaml`, fallback `<git-root>/.config/ccairgap/web.config.yaml`).
+
+Missing profile file is a hard error. Mutually exclusive with `--config`. No inheritance between profiles — each file stands alone. Relative paths inside a profile file anchor the same way as `config.yaml` (see table below).
 
 ### Relative path resolution
 

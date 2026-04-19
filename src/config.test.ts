@@ -340,4 +340,84 @@ describe("resolveConfigPath", () => {
     expect(resolveConfigPath(primary, root)).toBe(primary);
     expect(warn).not.toHaveBeenCalled();
   });
+
+  describe("profile", () => {
+    function writeProfilePrimary(name: string): string {
+      const dir = join(root, ".ccairgap");
+      mkdirSync(dir, { recursive: true });
+      const p = join(dir, `${name}.config.yaml`);
+      writeFileSync(p, "");
+      return p;
+    }
+
+    function writeProfileAlternate(name: string): string {
+      const dir = join(root, ".config", "ccairgap");
+      mkdirSync(dir, { recursive: true });
+      const p = join(dir, `${name}.config.yaml`);
+      writeFileSync(p, "");
+      return p;
+    }
+
+    it("resolves --profile <name> to .ccairgap/<name>.config.yaml", () => {
+      const p = writeProfilePrimary("web");
+      expect(resolveConfigPath(undefined, root, "web")).toBe(p);
+    });
+
+    it("falls back to .config/ccairgap/<name>.config.yaml", () => {
+      const p = writeProfileAlternate("web");
+      expect(resolveConfigPath(undefined, root, "web")).toBe(p);
+    });
+
+    it("--profile default is identical to no profile (uses config.yaml)", () => {
+      const primary = writePrimary();
+      expect(resolveConfigPath(undefined, root, "default")).toBe(primary);
+    });
+
+    it("--profile default still returns undefined when no config exists", () => {
+      expect(resolveConfigPath(undefined, root, "default")).toBeUndefined();
+    });
+
+    it("errors when profile file is missing (no silent fallback)", () => {
+      expect(() => resolveConfigPath(undefined, root, "web")).toThrow(
+        /--profile web: config file not found/,
+      );
+    });
+
+    it("errors when not inside a git repo", () => {
+      const outside = realpathSync(mkdtempSync(join(tmpdir(), "airgap-nogit-")));
+      try {
+        expect(() => resolveConfigPath(undefined, outside, "web")).toThrow(
+          /--profile web: not inside a git repo/,
+        );
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("warns when both profile locations exist and picks primary", () => {
+      const primary = writeProfilePrimary("web");
+      writeProfileAlternate("web");
+      const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+      expect(resolveConfigPath(undefined, root, "web")).toBe(primary);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toMatch(/web\.config\.yaml/);
+    });
+
+    it("rejects invalid profile names", () => {
+      expect(() => resolveConfigPath(undefined, root, "web/prod")).toThrow(
+        /--profile: invalid name 'web\/prod'/,
+      );
+      expect(() => resolveConfigPath(undefined, root, "")).toThrow(
+        /--profile: invalid name/,
+      );
+      expect(() => resolveConfigPath(undefined, root, "../etc/passwd")).toThrow(
+        /--profile: invalid name/,
+      );
+    });
+
+    it("accepts alnum + . _ - in profile names", () => {
+      const p = writeProfilePrimary("web.prod_v2-alpha");
+      expect(resolveConfigPath(undefined, root, "web.prod_v2-alpha")).toBe(p);
+    });
+  });
 });

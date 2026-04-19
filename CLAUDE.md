@@ -77,6 +77,8 @@ docs/SPEC.md      authoritative design
 
 `--config <path>` or default `<git-root>/.ccairgap/config.yaml` (fallback `<git-root>/.config/ccairgap/config.yaml`). YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
 
+**Profiles** — `--profile <name>` picks `<name>.config.yaml` under the canonical dir (or `config.yaml` for `--profile default`). Missing profile file is a hard error (unlike the silent default-walk fallback). Mutex with `--config`. Profile name regex: `[A-Za-z0-9._-]+`. No inheritance; filename lookup only. Anchor logic in `resolveConfigPaths` depends on basename of config dir (`.ccairgap` / `.config/ccairgap`), so profile files get identical workspace-anchor treatment.
+
 **Relative path resolution** — three anchors by semantic (implemented in `src/config.ts` `resolveConfigPaths` + `src/artifacts.ts`):
 - `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at either canonical location (`<git-root>/.ccairgap/config.yaml` or `<git-root>/.config/ccairgap/config.yaml`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
 - `dockerfile` → **config file's directory** (sidecar convention). `dockerfile: Dockerfile` = `.ccairgap/Dockerfile`.

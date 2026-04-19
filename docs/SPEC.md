@@ -185,9 +185,10 @@ In order:
 
 ## Config file
 
-YAML file that mirrors launch flags. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. Override: `--config <path>`.
+YAML file that mirrors launch flags. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. Override: `--config <path>` or `--profile <name>`.
 
 - **Load:** the CLI walks up from `cwd` to find the git root; it checks `<git-root>/.ccairgap/config.yaml` first, then `<git-root>/.config/ccairgap/config.yaml`; the first one found is loaded. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
+- **Profiles:** `--profile <name>` loads `<git-root>/.ccairgap/<name>.config.yaml` (fallback `<git-root>/.config/ccairgap/<name>.config.yaml`) instead of the default `config.yaml`. `--profile default` is equivalent to no flag (loads `config.yaml`). Missing profile file is a hard error (unlike the silent walk-fallback for the default). Profile names must match `[A-Za-z0-9._-]+`. `--config` and `--profile` are mutually exclusive. Relative-path anchoring (see §"Relative path resolution") treats profile files identically to `config.yaml` — same canonical-dir detection, so `repo: .` in `web.config.yaml` still means the git root. Profiles are a filename lookup only: no inheritance, no merge between profiles.
 - **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth.
 - **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
 - **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
@@ -242,7 +243,7 @@ hooks:
 
 **What `--bare` turns off:**
 
-- **Config file loading.** Default config discovery (`<git-root>/.ccairgap/config.yaml` / `<git-root>/.config/ccairgap/config.yaml`) is skipped. `--bare` + explicit `--config <path>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
+- **Config file loading.** Default config discovery (`<git-root>/.ccairgap/config.yaml` / `<git-root>/.config/ccairgap/config.yaml`) is skipped. `--bare` + explicit `--config <path>` or `--profile <name>` is the one exception: the user asked for a specific config, so it loads (CLI wins — `--bare` is about discovery, not suppression).
 - **Workspace inference from cwd.** Normal mode defaults `--repo` to `$(pwd)` when cwd is a git repo. `--bare` skips this — the workspace stays unset unless `--repo` is passed explicitly.
 - **Empty-session guard.** Normal mode errors when no `--repo` / `--ro` / git-repo-cwd is available. `--bare` proceeds with zero mounts; the user gets a Claude-only container with no host repos or reference material at all.
 
