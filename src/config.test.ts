@@ -239,6 +239,22 @@ mount:
       /config\.claude-args: expected string/,
     );
   });
+
+  it("parses no-auto-memory: true as noAutoMemory = true", () => {
+    const cfg = parseConfig("no-auto-memory: true\n", "<test>");
+    expect(cfg.noAutoMemory).toBe(true);
+  });
+
+  it("parses camelCase noAutoMemory: false", () => {
+    const cfg = parseConfig("noAutoMemory: false\n", "<test>");
+    expect(cfg.noAutoMemory).toBe(false);
+  });
+
+  it("rejects non-boolean noAutoMemory", () => {
+    expect(() => parseConfig("no-auto-memory: \"yes\"\n", "<test>")).toThrow(
+      /no-auto-memory: expected boolean/,
+    );
+  });
 });
 
 describe("resolveConfigPaths", () => {

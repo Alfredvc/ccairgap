@@ -29,3 +29,14 @@ describe("docker/Dockerfile clipboard invariants", () => {
     expect(DOCKERFILE).toMatch(/chown \$\{HOST_UID\}:\$\{HOST_GID\} \/run\/ccairgap-clipboard/);
   });
 });
+
+describe("docker/Dockerfile managed-policy invariants", () => {
+  it("does NOT create anything under /etc/claude-code/", () => {
+    // /etc/claude-code is the reserved container path for the host managed-
+    // policy RO bind-mount (src/mounts.ts `managed-policy` case). If the base
+    // image ever bakes files under that path, our mount would silently
+    // overmount them — drifting from the documented invariant that the
+    // managed-policy mount is the only source of truth for that dir.
+    expect(DOCKERFILE).not.toMatch(/\/etc\/claude-code\b/);
+  });
+});

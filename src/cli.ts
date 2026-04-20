@@ -52,6 +52,7 @@ function mergeRun(cli: {
   clipboard?: boolean;
   noPreserveDirty?: boolean;
   claudeArgs: string[];
+  noAutoMemory?: boolean;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -75,6 +76,7 @@ function mergeRun(cli: {
     clipboard: cli.clipboard ?? cfg.clipboard ?? true,
     noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
     claudeArgs: [...(cfg.claudeArgs ?? []), ...cli.claudeArgs],
+    noAutoMemory: cli.noAutoMemory ?? cfg.noAutoMemory ?? false,
   };
 }
 
@@ -179,6 +181,10 @@ async function main() {
         "Orphan-branch and scan-failure preservation still fire.",
     )
     .option(
+      "--no-auto-memory",
+      "skip the auto-memory RO mount + CLAUDE_COWORK_MEMORY_PATH_OVERRIDE env var forwarding (kill switch). Config key: no-auto-memory: true.",
+    )
+    .option(
       "-r, --resume <id-or-name>",
       "resume an existing Claude session. Accepts a session UUID OR the session's " +
         "custom title (e.g. what `claude` prints on exit). Titles are matched " +
@@ -233,6 +239,10 @@ async function main() {
       const cliNoPreserveDirty: boolean | undefined =
         preserveDirtySource === "cli" ? !(opts.preserveDirty as boolean) : undefined;
 
+      const autoMemorySource = cmd.getOptionValueSource("autoMemory");
+      const cliNoAutoMemory: boolean | undefined =
+        autoMemorySource === "cli" ? !(opts.autoMemory as boolean) : undefined;
+
       const merged = mergeRun(
         {
           repo: opts.repo as string | undefined,
@@ -256,6 +266,7 @@ async function main() {
           clipboard: cliClipboard,
           noPreserveDirty: cliNoPreserveDirty,
           claudeArgs: cliClaudeArgs,
+          noAutoMemory: cliNoAutoMemory,
         },
         fileCfg,
       );
@@ -340,6 +351,7 @@ async function main() {
         resume: merged.resume,
         noPreserveDirty: merged.noPreserveDirty,
         claudeArgs: merged.claudeArgs,
+        noAutoMemory: merged.noAutoMemory,
       });
       process.exit(result.exitCode);
     });

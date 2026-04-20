@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 import { launch, validateRepoRoOverlap } from "./launch.js";
 import { encodeCwd } from "./paths.js";
+import { sanitizePath } from "./autoMemory.js";
 
 const fakeRealpath = (map: Record<string, string>) => (p: string) => {
   if (!(p in map)) {
@@ -197,6 +198,7 @@ describe("launch --resume validation runs before any session-dir creation", () =
         clipboard: false,
         noPreserveDirty: false,
         claudeArgs: [],
+        noAutoMemory: false,
         resume: bogusUuid,
       }),
     ).rejects.toThrow(/process\.exit\(1\)/);
@@ -325,6 +327,7 @@ exit 0
       clipboard: false,
       noPreserveDirty: false,
       claudeArgs: [],
+      noAutoMemory: false,
     });
     expect(result.id).toMatch(/^[a-z]+-[a-z]+-[0-9a-f]{4}$/);
     const run = dockerRunLine();
@@ -349,6 +352,7 @@ exit 0
       bare: false,
       clipboard: false,
       noPreserveDirty: false,
+      noAutoMemory: false,
       name: "myfeature",
       claudeArgs: [],
     });
@@ -387,6 +391,7 @@ exit 0
       bare: false,
       clipboard: false,
       noPreserveDirty: false,
+      noAutoMemory: false,
       resume: uuid,
       claudeArgs: [],
     });
@@ -395,5 +400,133 @@ exit 0
     expect(run).toContain(`-e CCAIRGAP_RESUME=${uuid}`);
     expect(run).not.toContain("CCAIRGAP_RESUME_ORIG_NAME");
     expect(run).not.toContain("priorname");
+  });
+
+  it("mounts auto-memory dir at /host-claude-memory and sets CLAUDE_COWORK_MEMORY_PATH_OVERRIDE", async () => {
+    const repoReal = realpathSync(repoDir);
+    const memoryDir = join(fakeHome, ".claude", "projects", sanitizePath(repoReal), "memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# seed\n");
+
+    await launch({
+      repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+    });
+
+    const run = dockerRunLine();
+    expect(run).toContain(`-v ${memoryDir}:/host-claude-memory:ro`);
+    expect(run).toContain("-e CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory");
+  });
+
+  it("skips auto-memory when --no-auto-memory is set", async () => {
+    const repoReal = realpathSync(repoDir);
+    const memoryDir = join(fakeHome, ".claude", "projects", sanitizePath(repoReal), "memory");
+    mkdirSync(memoryDir, { recursive: true });
+
+    await launch({
+      repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: true, claudeArgs: [],
+    });
+
+    const run = dockerRunLine();
+    expect(run).not.toContain("/host-claude-memory");
+    expect(run).not.toContain("CLAUDE_COWORK_MEMORY_PATH_OVERRIDE");
+  });
+
+  it("does not emit the mount or env var when the host memory dir is absent", async () => {
+    await launch({
+      repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+    });
+    const run = dockerRunLine();
+    expect(run).not.toContain("/host-claude-memory");
+    expect(run).not.toContain("CLAUDE_COWORK_MEMORY_PATH_OVERRIDE");
+  });
+
+  it("forwards NODE_EXTRA_CA_CERTS into the container via neutral /host-ca-certs mount", async () => {
+    const caFile = join(fakeHome, "corp-ca.pem");
+    writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n");
+    process.env.NODE_EXTRA_CA_CERTS = caFile;
+    try {
+      await launch({
+        repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+      });
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+    }
+
+    const run = dockerRunLine();
+    const real = realpathSync(caFile);
+    expect(run).toContain(`-e NODE_EXTRA_CA_CERTS=/host-ca-certs/corp-ca.pem`);
+    expect(run).toContain(`-v ${real}:/host-ca-certs/corp-ca.pem:ro`);
+  });
+
+  it("does not forward NODE_EXTRA_CA_CERTS when the file is missing", async () => {
+    process.env.NODE_EXTRA_CA_CERTS = join(fakeHome, "does-not-exist.pem");
+    try {
+      await launch({
+        repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+      });
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+    }
+    const run = dockerRunLine();
+    expect(run).not.toContain("NODE_EXTRA_CA_CERTS");
+  });
+
+  it("rejects NODE_EXTRA_CA_CERTS whose basename contains ':' (breaks docker -v parsing)", async () => {
+    const caFile = join(fakeHome, "weird:name.pem");
+    writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\n");
+    process.env.NODE_EXTRA_CA_CERTS = caFile;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+    try {
+      await expect(
+        launch({
+          repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+          keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+          hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+          bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+        }),
+      ).rejects.toThrow(/process\.exit\(1\)/);
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("resolves symlinked NODE_EXTRA_CA_CERTS via realpath (container path uses the real basename)", async () => {
+    const realFile = join(fakeHome, "real-ca.pem");
+    const symLink = join(fakeHome, "ca-link.pem");
+    writeFileSync(realFile, "-----BEGIN CERTIFICATE-----\n");
+    symlinkSync(realFile, symLink);
+    process.env.NODE_EXTRA_CA_CERTS = symLink;
+    try {
+      await launch({
+        repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+      });
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+    }
+    const run = dockerRunLine();
+    const real = realpathSync(realFile);
+    expect(run).toContain(`-e NODE_EXTRA_CA_CERTS=/host-ca-certs/real-ca.pem`);
+    expect(run).toContain(`-v ${real}:/host-ca-certs/real-ca.pem:ro`);
   });
 });

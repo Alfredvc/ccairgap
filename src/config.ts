@@ -53,6 +53,7 @@ export interface ConfigFile {
   noPreserveDirty?: boolean;
   /** Tokens forwarded verbatim to `claude` (subject to denylist). */
   claudeArgs?: string[];
+  noAutoMemory?: boolean;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -85,6 +86,8 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "noPreserveDirty": "noPreserveDirty",
   "claude-args": "claudeArgs",
   "claudeArgs": "claudeArgs",
+  "no-auto-memory": "noAutoMemory",
+  "noAutoMemory": "noAutoMemory",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -280,6 +283,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "claudeArgs":
         cfg.claudeArgs = assertStringArray(val, "claude-args");
+        break;
+      case "noAutoMemory":
+        cfg.noAutoMemory = assertBool(val, "no-auto-memory");
         break;
     }
   }

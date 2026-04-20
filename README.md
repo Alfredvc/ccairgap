@@ -117,6 +117,18 @@ Project-scope Claude config travels in too, even when uncommitted: the host work
 
 Hooks and MCP servers are off by default because most reference host binaries that aren't in the container. To add them back you opt in by glob, and likely need to extend the provided Dockerfile so the binaries they need are present. The filter happens host-side: patched configs are overlaid into the container read-only, your real settings are never edited.
 
+#### Auto-memory
+
+Claude Code's workspace auto-memory directory (`MEMORY.md` and topic files — see `claude-code/src/memdir/paths.ts`) is surfaced into the sandbox **read-only**. Claude loads past memories normally; any in-session writes (`/remember`, extract-memories background worker, team sync) fail silently — they never reach the host.
+
+The effective host dir is resolved per Claude Code's own `autoMemoryDirectory` cascade (managed-policy settings, workspace-local settings, user settings, `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var). Worktrees resolve to their canonical repo root so all worktrees of the same repo share memory. Project-committed settings (`.claude/settings.json`) are intentionally ignored, matching Claude Code's security carve-out.
+
+Opt out entirely with `--no-auto-memory` on the CLI or `no-auto-memory: true` in the config file.
+
+#### Managed-policy (enterprise / MDM)
+
+When the host has a managed-policy dir (`/Library/Application Support/ClaudeCode/` on macOS, `/etc/claude-code/` on Linux), ccairgap RO-mounts it at `/etc/claude-code/` inside the container — covering managed `CLAUDE.md`, `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`, and `managed-mcp.json`. The mount is skipped when the host dir is absent, so non-enterprise users pay nothing. Windows hosts are out of scope — ccairgap is POSIX-only.
+
 That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Launch flags
@@ -144,6 +156,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. |
 | `--no-warn-docker-args` | warnings on | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
 | `--no-preserve-dirty` | off | no | Skip the dirty-working-tree preservation check on exit. Intended for scripted / CI use where uncommitted container-side edits are disposable (e.g. `npm install` artifacts). Orphan-branch and scan-failure preservation still fire. |
+| `--no-auto-memory` | — | no | Skip the auto-memory RO mount. Use when you want a clean-slate memory in the sandbox. |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See `docs/SPEC.md` §"Bare mode". |
 | `-- <claude-args…>` | — | no | Tokens after `--` are forwarded verbatim to `claude` inside the container, subject to a small denylist (ccairgap-owned flags, host-path flags, etc.). Config equivalent: `claude-args: [<token>, …]`. See `docs/SPEC.md` §"Claude arg passthrough". |
 
@@ -335,6 +348,8 @@ Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are acce
 |---------|--------|
 | `CCAIRGAP_HOME` | Override state dir. Default: `$XDG_STATE_HOME/ccairgap/`. |
 | `CCAIRGAP_CC_VERSION` | Short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. |
+| `CLAUDE_CONFIG_DIR` | If set on the host, ccairgap resolves the host Claude config home and `.claude.json` inside that directory instead of `~/.claude` / `~/.claude.json`. Matches Claude Code's own convention. **Not** forwarded into the container — inside the sandbox the config home is always `~/.claude`. |
+| `NODE_EXTRA_CA_CERTS` | If set on the host, the file is RO-bind-mounted at `/host-ca-certs/<basename>` inside the container and the env var is forwarded via `-e NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>`. Required for corporate TLS proxies. Missing file → stderr warning + skip. Mounted at a neutral container path so it doesn't overmount the base image's CA trust store. |
 
 ## Development
 

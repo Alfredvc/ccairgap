@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { basename, join } from "node:path";
 import { execa } from "execa";
 import {
@@ -43,6 +43,8 @@ import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } 
 import { resolveResumeArg, listProjectSessions } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { validateClaudeArgs } from "./claudeArgs.js";
+import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
+import { resolveManagedPolicyDir } from "./managedPolicy.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -119,6 +121,13 @@ export interface LaunchOptions {
    * in `src/claudeArgs.ts`; hard denials abort launch before side effects.
    */
   claudeArgs: string[];
+  /**
+   * Skip the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`
+   * env-var forwarding. Use if Claude Code's EROFS handling becomes noisy
+   * or if the user wants a clean-slate sandbox. Matches `--no-clipboard`
+   * precedent. Config key: `no-auto-memory: true`.
+   */
+  noAutoMemory: boolean;
 }
 
 export interface LaunchResult {
@@ -540,6 +549,61 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     })),
   });
 
+  // Managed-policy: host dir resolved per host OS (macOS or Linux). Used both
+  // as an input to the auto-memory cascade (managed settings can override the
+  // memory dir) and as its own RO bind-mount at `/etc/claude-code/` inside the
+  // container. Returns undefined on non-POSIX hosts or when the dir is absent.
+  const managedPolicyDir = resolveManagedPolicyDir({ platform: platform() });
+
+  // NODE_EXTRA_CA_CERTS passthrough: realpath the host path, mount at a
+  // neutral /host-ca-certs/<basename> container path, and forward the env var
+  // pointing to that neutral path. Mounting at the same absolute path would
+  // overmount /etc/ssl/certs/* in the base image and break TLS to Anthropic.
+  // Missing file → warn + skip.
+  let nodeExtraCa: { hostPath: string; containerPath: string } | undefined;
+  if (env.NODE_EXTRA_CA_CERTS) {
+    let real: string | undefined;
+    try {
+      real = realpath(env.NODE_EXTRA_CA_CERTS);
+    } catch {
+      console.error(
+        `ccairgap: NODE_EXTRA_CA_CERTS is set to ${env.NODE_EXTRA_CA_CERTS} but the file does not exist — skipping passthrough.`,
+      );
+    }
+    if (real !== undefined) {
+      const base = basename(real);
+      // Docker `-v` splits on `:` and argv delimits on `\n`, so either char in
+      // the basename would break the mount spec (colon) or the emitted argv
+      // (newline). Reject rather than silently mis-mount. Whitespace is fine:
+      // execa passes argv directly without shell interpretation.
+      if (base.includes(":") || base.includes("\n")) {
+        die(
+          `NODE_EXTRA_CA_CERTS realpath basename contains an unsafe character (':' or newline): ${JSON.stringify(base)}`,
+        );
+      }
+      nodeExtraCa = {
+        hostPath: real,
+        containerPath: join("/host-ca-certs", base),
+      };
+    }
+  }
+
+  // Auto-memory: mount host memory dir RO + redirect Claude Code to it via
+  // CLAUDE_COWORK_MEMORY_PATH_OVERRIDE. Skipped when --no-auto-memory was set
+  // or when the host has no memory dir yet (first-session-for-workspace).
+  // Uses the canonical repo root (not the worktree path) so all worktrees of
+  // the same repo share one memory dir — matches Claude Code's behavior.
+  let autoMemoryHostDir: string | undefined;
+  if (!opts.noAutoMemory && repoEntries[0] !== undefined) {
+    autoMemoryHostDir = resolveAutoMemoryHostDir({
+      hostClaudeDir: hostClaude,
+      workspaceHostPath: findCanonicalRepoRoot(repoEntries[0].hostPath),
+      managedPolicyDir,
+      homeDir: home,
+      env,
+    });
+  }
+
   // Clipboard passthrough (v2): host-side watcher writes
   // $SESSION/clipboard-bridge/current.png; container RO-mounts that directory
   // at /run/ccairgap-clipboard and reads via the entrypoint's fake wl-paste
@@ -563,6 +627,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       roPaths: roResolved,
       pluginMarketplaces: marketplaces,
       homeInContainer,
+      autoMemoryHostDir,
+      managedPolicyHostDir: managedPolicyDir,
+      nodeExtraCa,
       // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
       // MCP-policy overrides are nested single-file overlays (RO) on top of the
       // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
@@ -610,6 +677,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // host runtime has no IANA zone (small-icu returns "UTC" — harmless).
   const hostTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (hostTz) dockerArgs.push("-e", `TZ=${hostTz}`);
+  if (autoMemoryHostDir !== undefined) {
+    dockerArgs.push("-e", "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory");
+  }
+  if (nodeExtraCa !== undefined) {
+    dockerArgs.push("-e", `NODE_EXTRA_CA_CERTS=${nodeExtraCa.containerPath}`);
+  }
   if (opts.print !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }

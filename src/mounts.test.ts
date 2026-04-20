@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMounts, type Mount } from "./mounts.js";
@@ -28,6 +28,9 @@ function baseInput(r: string) {
     pluginMarketplaces: [] as string[],
     homeInContainer: "/home/claude",
     extraMounts: [] as Mount[],
+    autoMemoryHostDir: undefined as string | undefined,
+    managedPolicyHostDir: undefined as string | undefined,
+    nodeExtraCa: undefined as { hostPath: string; containerPath: string } | undefined,
   };
 }
 
@@ -101,5 +104,101 @@ describe("buildMounts + collision resolver", () => {
       (m) => m.source.kind === "plugins-host-path",
     );
     expect(hostAbsCandidates).toHaveLength(0);
+  });
+
+  it("adds an RO auto-memory mount at /host-claude-memory when host dir exists", () => {
+    const memoryDir = join(root, "memory-src");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "# seed\n");
+
+    const input = baseInput(root);
+    input.autoMemoryHostDir = memoryDir;
+
+    const mounts = buildMounts(input);
+    const mem = mounts.find((m) => m.source.kind === "auto-memory");
+    expect(mem).toBeDefined();
+    expect(mem?.src).toBe(memoryDir);
+    expect(mem?.dst).toBe("/host-claude-memory");
+    expect(mem?.mode).toBe("ro");
+  });
+
+  it("skips the auto-memory mount when the host dir is absent", () => {
+    const input = baseInput(root);
+    input.autoMemoryHostDir = join(root, "does-not-exist");
+    const mounts = buildMounts(input);
+    expect(mounts.find((m) => m.source.kind === "auto-memory")).toBeUndefined();
+  });
+
+  it("skips the auto-memory mount when autoMemoryHostDir is undefined", () => {
+    const input = baseInput(root);
+    const mounts = buildMounts(input);
+    expect(mounts.find((m) => m.source.kind === "auto-memory")).toBeUndefined();
+  });
+
+  it("rejects a user --ro colliding with /host-claude-memory", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/host-claude-memory"];
+    expect(() => buildMounts(input)).toThrow(/\/host-claude-memory.*reserved/);
+  });
+
+  it("adds an RO managed-policy mount at /etc/claude-code when host dir exists", () => {
+    const hostPolicy = join(root, "etc", "claude-code");
+    mkdirSync(hostPolicy, { recursive: true });
+    const input = baseInput(root);
+    input.managedPolicyHostDir = hostPolicy;
+
+    const mounts = buildMounts(input);
+    const mp = mounts.find((m) => m.source.kind === "managed-policy");
+    expect(mp).toBeDefined();
+    expect(mp?.src).toBe(hostPolicy);
+    expect(mp?.dst).toBe("/etc/claude-code");
+    expect(mp?.mode).toBe("ro");
+  });
+
+  it("skips the managed-policy mount when the host dir is absent", () => {
+    const input = baseInput(root);
+    input.managedPolicyHostDir = join(root, "etc", "claude-code-missing");
+    expect(buildMounts(input).find((m) => m.source.kind === "managed-policy")).toBeUndefined();
+  });
+
+  it("rejects a user --ro colliding with /etc/claude-code exactly", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/etc/claude-code"];
+    expect(() => buildMounts(input)).toThrow(/\/etc\/claude-code/);
+  });
+
+  it("rejects a user --ro nested under /etc/claude-code/…", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/etc/claude-code/subdir"];
+    expect(() => buildMounts(input)).toThrow(/\/etc\/claude-code/);
+  });
+
+  it("adds an RO node-extra-ca mount at the caller-supplied neutral container path", () => {
+    const caFile = join(root, "corp-ca-bundle.pem");
+    writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\n");
+    const input = baseInput(root);
+    input.nodeExtraCa = { hostPath: caFile, containerPath: "/host-ca-certs/corp-ca-bundle.pem" };
+
+    const mounts = buildMounts(input);
+    const ca = mounts.find((m) => m.source.kind === "node-extra-ca");
+    expect(ca).toBeDefined();
+    expect(ca?.src).toBe(caFile);
+    expect(ca?.dst).toBe("/host-ca-certs/corp-ca-bundle.pem");
+    expect(ca?.mode).toBe("ro");
+  });
+
+  it("skips the node-extra-ca mount when the host file is absent", () => {
+    const input = baseInput(root);
+    input.nodeExtraCa = {
+      hostPath: join(root, "missing-ca.pem"),
+      containerPath: "/host-ca-certs/missing-ca.pem",
+    };
+    expect(buildMounts(input).find((m) => m.source.kind === "node-extra-ca")).toBeUndefined();
+  });
+
+  it("rejects a user --ro under the /host-ca-certs prefix", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/host-ca-certs/evil.pem"];
+    expect(() => buildMounts(input)).toThrow(/\/host-ca-certs/);
   });
 });

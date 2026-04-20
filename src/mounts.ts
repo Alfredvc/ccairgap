@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -64,6 +64,31 @@ export interface BuildMountsInput {
   roPaths: string[];
   pluginMarketplaces: string[];
   homeInContainer: string;
+  /**
+   * Absolute host path of the resolved auto-memory directory (from
+   * `resolveAutoMemoryHostDir()`). When set and existing, RO-bind-mounted at
+   * the fixed container path `/host-claude-memory`. The caller is responsible
+   * for forwarding `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory`
+   * into the container so Claude Code's memory resolver uses the mount.
+   */
+  autoMemoryHostDir?: string;
+  /**
+   * Host managed-policy directory. macOS:
+   * `/Library/Application Support/ClaudeCode/`. Linux: `/etc/claude-code/`.
+   * Mounted RO at the fixed container path `/etc/claude-code/` so the
+   * in-container Linux binary picks it up. Surfaces managed `CLAUDE.md`,
+   * `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`,
+   * and `managed-mcp.json` into the sandbox.
+   */
+  managedPolicyHostDir?: string;
+  /**
+   * Host CA bundle from `process.env.NODE_EXTRA_CA_CERTS` and the neutral
+   * container path to mount it at. `containerPath` must live under
+   * `/host-ca-certs/` — this avoids overmounting the base image's own CA
+   * trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). The caller forwards
+   * `NODE_EXTRA_CA_CERTS=<containerPath>` into the container.
+   */
+  nodeExtraCa?: { hostPath: string; containerPath: string };
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
 }
@@ -122,6 +147,33 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     mode: "rw",
     source: { kind: "transcripts" },
   });
+
+  if (i.autoMemoryHostDir && existsSync(i.autoMemoryHostDir)) {
+    mounts.push({
+      src: i.autoMemoryHostDir,
+      dst: "/host-claude-memory",
+      mode: "ro",
+      source: { kind: "auto-memory" },
+    });
+  }
+
+  if (i.managedPolicyHostDir && existsSync(i.managedPolicyHostDir)) {
+    mounts.push({
+      src: i.managedPolicyHostDir,
+      dst: "/etc/claude-code",
+      mode: "ro",
+      source: { kind: "managed-policy" },
+    });
+  }
+
+  if (i.nodeExtraCa && existsSync(i.nodeExtraCa.hostPath)) {
+    mounts.push({
+      src: i.nodeExtraCa.hostPath,
+      dst: i.nodeExtraCa.containerPath,
+      mode: "ro",
+      source: { kind: "node-extra-ca" },
+    });
+  }
 
   mounts.push({ src: i.outputDir, dst: "/output", mode: "rw", source: { kind: "output" } });
 

@@ -29,10 +29,11 @@ export function reservedContainerPaths(
       "/host-claude-creds",
       "/host-claude-patched-settings.json",
       "/host-claude-patched-json",
+      "/host-claude-memory",
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
-    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard"],
+    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard", "/etc/claude-code", "/host-ca-certs"],
   };
 }
 
@@ -63,6 +64,9 @@ function label(src: MountSource): string {
     case "transcripts": return `transcripts RW mount`;
     case "output": return `/output RW mount`;
     case "clipboard-bridge": return `clipboard bridge`;
+    case "auto-memory": return `auto-memory RO mount`;
+    case "managed-policy": return `managed-policy RO mount`;
+    case "node-extra-ca": return `NODE_EXTRA_CA_CERTS RO mount`;
   }
 }
 

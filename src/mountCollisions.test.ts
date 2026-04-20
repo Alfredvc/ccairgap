@@ -163,6 +163,7 @@ describe("resolveMountCollisions", () => {
         "/host-claude-creds",
         "/host-claude-patched-settings.json",
         "/host-claude-patched-json",
+        "/host-claude-memory",
         `${HOME_IN_CONTAINER}/.claude/projects`,
         `${HOME_IN_CONTAINER}/.claude/plugins/cache`,
       ]),

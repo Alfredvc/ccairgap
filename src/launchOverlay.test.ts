@@ -126,6 +126,7 @@ function baseOpts(repos: string[], extra: Partial<Parameters<typeof launch>[0]> 
     clipboard: false,
     noPreserveDirty: false,
     claudeArgs: [],
+    noAutoMemory: false,
     ...extra,
   };
 }
