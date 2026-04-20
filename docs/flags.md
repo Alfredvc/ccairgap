@@ -23,6 +23,7 @@
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. See [docker-run-args.md](docker-run-args.md). |
 | `--no-warn-docker-args` | warnings on | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
 | `--no-preserve-dirty` | off | no | Skip the dirty-working-tree preservation check on exit. Intended for scripted / CI use where uncommitted container-side edits are disposable. Orphan-branch and scan-failure preservation still fire. |
+| `--refresh-below-ttl <mins>` | 120 | no | Host token ttl threshold (minutes) for pre-launch auth refresh. `0` disables the refresh; cold-start-dead refusal still fires. See [auth-refresh.md](auth-refresh.md). |
 | `--no-auto-memory` | — | no | Skip the auto-memory RO mount. See [auto-memory.md](auto-memory.md). |
 | `--no-clipboard` | — | no | Disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See [SPEC.md](SPEC.md) §"Bare mode". |

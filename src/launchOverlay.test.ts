@@ -127,6 +127,7 @@ function baseOpts(repos: string[], extra: Partial<Parameters<typeof launch>[0]> 
     noPreserveDirty: false,
     claudeArgs: [],
     noAutoMemory: false,
+    refreshBelowTtlMinutes: 0,
     ...extra,
   };
 }

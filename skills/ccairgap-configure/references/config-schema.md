@@ -37,6 +37,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
 | `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |
+| `refresh-below-ttl` | number (minutes) | `--refresh-below-ttl` | Host token ttl threshold for pre-launch auth refresh. Default 120. `0` disables the refresh; cold-start-dead refusal still fires. See [auth-refresh.md](auth-refresh.md). |
 
 ## Profiles
 

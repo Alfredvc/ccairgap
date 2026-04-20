@@ -133,6 +133,7 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 - [Forwarding flags to claude](docs/claude-args.md)
 - [Hooks](docs/hooks.md)
 - [MCP servers](docs/mcp.md)
+- [Auth refresh](docs/auth-refresh.md)
 - [Raw docker run args & secrets](docs/docker-run-args.md)
 - [Custom Dockerfile](docs/dockerfile.md)
 - [Clipboard passthrough](docs/clipboard.md)

@@ -53,6 +53,7 @@ function mergeRun(cli: {
   noPreserveDirty?: boolean;
   claudeArgs: string[];
   noAutoMemory?: boolean;
+  refreshBelowTtl?: number;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -77,6 +78,7 @@ function mergeRun(cli: {
     noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
     claudeArgs: [...(cfg.claudeArgs ?? []), ...cli.claudeArgs],
     noAutoMemory: cli.noAutoMemory ?? cfg.noAutoMemory ?? false,
+    refreshBelowTtl: cli.refreshBelowTtl ?? cfg.refreshBelowTtl ?? 120,
   };
 }
 
@@ -185,6 +187,22 @@ async function main() {
       "skip the auto-memory RO mount + CLAUDE_COWORK_MEMORY_PATH_OVERRIDE env var forwarding (kill switch). Config key: no-auto-memory: true.",
     )
     .option(
+      "--refresh-below-ttl <mins>",
+      "if the host token has less than this many minutes of life remaining, " +
+        "attempt a pre-launch `claude auth login` refresh on the host (under " +
+        "proper-lockfile coordination) so the container starts with a fresh " +
+        "access token and no refresh token. 0 disables the refresh; the " +
+        "cold-start-dead refusal still fires when the token is already below " +
+        "the 5-minute floor. Default: 120.",
+      (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) {
+          throw new Error(`--refresh-below-ttl: expected non-negative number, got ${v}`);
+        }
+        return n;
+      },
+    )
+    .option(
       "-r, --resume <id-or-name>",
       "resume an existing Claude session. Accepts a session UUID OR the session's " +
         "custom title (e.g. what `claude` prints on exit). Titles are matched " +
@@ -267,6 +285,7 @@ async function main() {
           noPreserveDirty: cliNoPreserveDirty,
           claudeArgs: cliClaudeArgs,
           noAutoMemory: cliNoAutoMemory,
+          refreshBelowTtl: opts.refreshBelowTtl as number | undefined,
         },
         fileCfg,
       );
@@ -352,6 +371,7 @@ async function main() {
         noPreserveDirty: merged.noPreserveDirty,
         claudeArgs: merged.claudeArgs,
         noAutoMemory: merged.noAutoMemory,
+        refreshBelowTtlMinutes: merged.refreshBelowTtl,
       });
       process.exit(result.exitCode);
     });

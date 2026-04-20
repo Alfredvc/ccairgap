@@ -199,6 +199,7 @@ describe("launch --resume validation runs before any session-dir creation", () =
         noPreserveDirty: false,
         claudeArgs: [],
         noAutoMemory: false,
+        refreshBelowTtlMinutes: 0,
         resume: bogusUuid,
       }),
     ).rejects.toThrow(/process\.exit\(1\)/);
@@ -328,6 +329,7 @@ exit 0
       noPreserveDirty: false,
       claudeArgs: [],
       noAutoMemory: false,
+      refreshBelowTtlMinutes: 0,
     });
     expect(result.id).toMatch(/^[a-z]+-[a-z]+-[0-9a-f]{4}$/);
     const run = dockerRunLine();
@@ -353,6 +355,7 @@ exit 0
       clipboard: false,
       noPreserveDirty: false,
       noAutoMemory: false,
+      refreshBelowTtlMinutes: 0,
       name: "myfeature",
       claudeArgs: [],
     });
@@ -392,6 +395,7 @@ exit 0
       clipboard: false,
       noPreserveDirty: false,
       noAutoMemory: false,
+      refreshBelowTtlMinutes: 0,
       resume: uuid,
       claudeArgs: [],
     });
@@ -412,7 +416,7 @@ exit 0
       repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
       keepContainer: false, dockerBuildArgs: {}, rebuild: false,
       hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
     });
 
     const run = dockerRunLine();
@@ -429,7 +433,7 @@ exit 0
       repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
       keepContainer: false, dockerBuildArgs: {}, rebuild: false,
       hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: true, claudeArgs: [],
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: true, claudeArgs: [], refreshBelowTtlMinutes: 0,
     });
 
     const run = dockerRunLine();
@@ -442,7 +446,7 @@ exit 0
       repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
       keepContainer: false, dockerBuildArgs: {}, rebuild: false,
       hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+      bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
     });
     const run = dockerRunLine();
     expect(run).not.toContain("/host-claude-memory");
@@ -458,7 +462,7 @@ exit 0
         repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
         keepContainer: false, dockerBuildArgs: {}, rebuild: false,
         hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
       });
     } finally {
       delete process.env.NODE_EXTRA_CA_CERTS;
@@ -477,7 +481,7 @@ exit 0
         repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
         keepContainer: false, dockerBuildArgs: {}, rebuild: false,
         hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
       });
     } finally {
       delete process.env.NODE_EXTRA_CA_CERTS;
@@ -499,7 +503,7 @@ exit 0
           repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
           keepContainer: false, dockerBuildArgs: {}, rebuild: false,
           hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-          bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+          bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
         }),
       ).rejects.toThrow(/process\.exit\(1\)/);
     } finally {
@@ -519,7 +523,7 @@ exit 0
         repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
         keepContainer: false, dockerBuildArgs: {}, rebuild: false,
         hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
-        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [],
+        bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
       });
     } finally {
       delete process.env.NODE_EXTRA_CA_CERTS;

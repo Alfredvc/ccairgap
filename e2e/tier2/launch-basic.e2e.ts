@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as fs from "fs/promises";
 import * as path from "path";
 import { execa } from "execa";
 import {
   mkTmpHome,
   seedGitRepo,
   seedClaudeHome,
+  seedHostCreds,
   runCli,
   cleanupContainers,
 } from "../helpers/env";
@@ -24,12 +24,6 @@ const FAKE_DOCKERFILE = "e2e/fixtures/fake.Dockerfile";
 const FORCE_LINUX_PRELOAD = path.resolve("e2e/helpers/force-linux.cjs");
 const TIER2_NODE_OPTIONS = `--require ${FORCE_LINUX_PRELOAD}`;
 
-async function seedCredentials(home: string): Promise<void> {
-  const claudeDir = path.join(home, ".claude");
-  await fs.mkdir(claudeDir, { recursive: true });
-  await fs.writeFile(path.join(claudeDir, ".credentials.json"), "{}");
-}
-
 describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
   let home: string;
   let ccairgapHome: string;
@@ -40,7 +34,7 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
   beforeEach(async () => {
     ({ home, ccairgapHome, cleanup } = await mkTmpHome());
     await seedClaudeHome(home);
-    await seedCredentials(home);
+    await seedHostCreds(home);
     repo = await seedGitRepo(home, "myapp");
     sessionId = null;
   });

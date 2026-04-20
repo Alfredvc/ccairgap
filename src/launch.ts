@@ -26,7 +26,7 @@ import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
 import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
-import { resolveCredentials } from "./credentials.js";
+import { resolveCredentials, CredentialsDeadError } from "./credentials.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { alternatesName } from "./alternatesName.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
@@ -129,6 +129,12 @@ export interface LaunchOptions {
    * precedent. Config key: `no-auto-memory: true`.
    */
   noAutoMemory: boolean;
+  /**
+   * If the host token has less than this many minutes of life remaining at
+   * launch, run the pre-launch `claude auth login` refresh. `0` disables the
+   * refresh (cold-start-dead still refuses). See `docs/SPEC.md §Authentication flow`.
+   */
+  refreshBelowTtlMinutes: number;
 }
 
 export interface LaunchResult {
@@ -401,12 +407,48 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
 
   // ---- Side-effect phase: create session dir, on any failure rm -rf it ----
+  //
+  // Credentials resolve FIRST: pre-launch auth refresh (see
+  // src/authRefresh.ts + docs/SPEC.md §Authentication flow). On hard failure
+  // (refresh dead + ttl below the 5-min cold-start floor) this throws before
+  // any session state is materialized, so the user's resumable source session
+  // and branches stay untouched. Soft failure surfaces via a stderr banner
+  // but launch proceeds.
+  let creds: Awaited<ReturnType<typeof resolveCredentials>>;
+  try {
+    creds = await resolveCredentials(sessionPath, {
+      refreshBelowMs: opts.refreshBelowTtlMinutes * 60_000,
+    });
+  } catch (e) {
+    if (e instanceof CredentialsDeadError) {
+      const mins = Math.max(0, Math.round(e.finalTtlMs / 60_000));
+      console.error(`ccairgap: ✗ Host auth is dead (${e.message}; ${mins}m left).`);
+      console.error(`  Run \`claude\` on host to re-login, then retry ccairgap.`);
+      process.exit(1);
+    }
+    die((e as Error).message);
+  }
+
+  if (!creds.refreshResult.ok) {
+    const clock =
+      Number.isFinite(creds.finalTtlMs)
+        ? new Date(Date.now() + creds.finalTtlMs).toTimeString().slice(0, 5)
+        : "??:??";
+    const mins = Number.isFinite(creds.finalTtlMs)
+      ? Math.max(0, Math.round(creds.finalTtlMs / 60_000))
+      : 0;
+    console.error(
+      `ccairgap: ⚠ Auth refresh failed: ${creds.refreshResult.reason}. ` +
+        `Token expires ${clock} (${mins}m).`,
+    );
+    console.error(`  When it hits: Claude will error. Run /login in Claude to recover.`);
+  }
+
   mkdirSync(join(sessionPath, "repos"), { recursive: true });
   mkdirSync(join(sessionPath, "transcripts"), { recursive: true });
   mkdirSync(outputDirPath(env), { recursive: true });
 
   let setupOk = false;
-  let creds: Awaited<ReturnType<typeof resolveCredentials>>;
   const repoEntries: RepoPlan[] = [];
   try {
     // Resume: pre-populate $SESSION/transcripts/<encoded>/<uuid>.jsonl (plus
@@ -421,8 +463,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         source: resumeSource,
       });
     }
-
-    creds = await resolveCredentials(sessionPath);
 
     for (const plan of repoPlans) {
       const clonePath = plan.sessionClonePath;

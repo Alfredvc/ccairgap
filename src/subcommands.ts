@@ -120,7 +120,16 @@ async function checkDocker(): Promise<DoctorCheck> {
 
 async function checkCredentials(): Promise<DoctorCheck> {
   const r = await probeCredentials();
-  return { name: "host credentials", ok: r.ok, detail: r.detail };
+  if (!r.ok) return { name: "host credentials", ok: false, detail: r.detail };
+  const parts = [r.detail];
+  if (r.ttlMs !== undefined) {
+    const mins = Math.max(0, Math.round(r.ttlMs / 60_000));
+    parts.push(`ttl=${mins}m`);
+  }
+  if (r.scopes && r.scopes.length > 0) {
+    parts.push(`scopes=${r.scopes.join(" ")}`);
+  }
+  return { name: "host credentials", ok: true, detail: parts.join("; ") };
 }
 
 function checkStateDir(): DoctorCheck {

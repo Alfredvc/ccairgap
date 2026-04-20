@@ -72,7 +72,7 @@ When `CLAUDE_CONFIG_DIR` is set on the host, ccairgap reads that directory inste
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` on macOS (see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
+1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` (always materialized; see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
 2. `$XDG_STATE_HOME/ccairgap/output/` — `/output` mount inside container, plus `output/<id>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `ccairgap/<id>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
@@ -83,6 +83,8 @@ A session may cause writes to:
 No other host path is writable by the container. `~/.claude/`, `~/.claude.json`, plugin marketplace repos, `--ro` reference paths are all RO-mounted.
 
 The host auto-memory directory is mounted **read-only**. Writes from inside the container (extract-memories background worker, `/remember`, team sync) fail with EROFS and are swallowed by Claude Code's callers. The auto-memory path is not in the host-writable set.
+
+This list covers paths ccairgap itself writes. When pre-launch auth refresh runs (see §"Authentication flow"), ccairgap shells out to the supported public `claude auth login` subcommand on the host; that process writes through its own storage paths (keychain on macOS, `~/.claude/.credentials.json` on Linux) — ccairgap does not write those paths directly.
 
 ## Command line interface
 
@@ -313,7 +315,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 |-------------|----------------|------|-------|
 | `~/.claude/` (resolved) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds` row for credentials. |
 | `~/.claude.json` (resolved) | `/host-claude-json` | ro | Fallback source only — used when the MCP-policy patched copy is absent. Entrypoint normally overlays `/host-claude-patched-json` over this and then applies the jq onboarding patch. |
-| macOS: `$SESSION/creds/.credentials.json` / Linux: `~/.claude/.credentials.json` | `/host-claude-creds` | ro | Single-file mount. Entrypoint copies to `~/.claude/.credentials.json`, chmod 600. See §"Authentication flow". |
+| `$SESSION/creds/.credentials.json` (always) | `/host-claude-creds` | ro | Single-file mount. CLI materializes this file on every launch, stripped of `claudeAiOauth.refreshToken`. Entrypoint copies to `~/.claude/.credentials.json`, chmod 600. See §"Authentication flow". |
 | `$SESSION/hook-policy/user-settings.json` | `/host-claude-patched-settings.json` | ro | Single-file mount. Host-built copy of `settings.json` with `hooks` filtered per `--hook-enable` (empty list → `hooks: {}`) and `disableAllHooks: false` forced. Entrypoint overlays it on the rsync'd `~/.claude/settings.json` before the env-merge jq step. See §"Hook policy". |
 | `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled cache-backed plugin that ships a `hooks/hooks.json`. Always present (filtered = `{}` for the empty enable list). |
 | `$SESSION/hook-policy/dir-plugins/<market>/<plugin>/hooks.json` | `<pluginDir>/hooks/hooks.json` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin that ships `hooks/hooks.json`. Always present. |
@@ -598,21 +600,60 @@ Claude Code's auto-memory feature persists rolling per-workspace notes to `<auto
 
 ## Authentication flow
 
-Credentials come from the host's existing Claude Code login. Storage location differs per OS, so the CLI normalizes both paths to a single RO mount at `/host-claude-creds` inside the container; the entrypoint copies from there into `~/.claude/.credentials.json`.
+Credentials come from the host's existing Claude Code login. At launch the CLI runs a three-step pipeline: read host creds → pre-launch refresh (best-effort, lock-coordinated) → materialize a **stripped** session creds file. The container always receives a creds file with `claudeAiOauth.refreshToken` removed, so its Claude Code never refreshes in place and can't race host or peer containers for the refresh-token rotation window (RFC 9700 §4.13).
 
-- **macOS:** Claude Code stores credentials in the Keychain (item `Claude Code-credentials`). The CLI reads them at launch with `security find-generic-password -w -s "Claude Code-credentials"`, writes the JSON to `$SESSION/creds/.credentials.json` (mode 0600), and bind-mounts that file at `/host-claude-creds`. The materialized file is deleted with the session dir on exit. Keychain ACLs may prompt for approval on first read; grant "Always Allow" to avoid re-prompts.
-- **Linux / other:** The CLI bind-mounts host `~/.claude/.credentials.json` directly at `/host-claude-creds`. No session-dir copy is needed.
+**Step 1 — Read host creds.**
+- **macOS:** `security find-generic-password -w -s "Claude Code-credentials"` → JSON string.
+- **Linux / other:** `readFile(~/.claude/.credentials.json)` → JSON string.
 
-The entrypoint does `cp -L /host-claude-creds ~/.claude/.credentials.json` and `chmod 600` on the destination. The container's copy is writable, so Claude Code can refresh the access token in-place during the session; the host keychain / credentials file stay untouched.
+**Step 2 — Pre-launch refresh (best-effort).** Uses the `proper-lockfile` library on host `~/.claude/` (same library/path Claude Code acquires in `src/utils/auth.ts:1491`). If the token's remaining ttl falls below `--refresh-below-ttl` minutes (default 120), the CLI:
 
-The `/host-claude` RO mount (the rest of `~/.claude/`) does not include `.credentials.json` — the credentials file is handled solely via `/host-claude-creds` to keep the code path uniform across macOS and Linux.
+1. Acquires a `proper-lockfile` on host `~/.claude/` (stale: 10s, 5 retries with exponential backoff).
+2. Re-reads host creds inside the lock. If another writer refreshed while we waited, action = `already-fresh` and we skip the refresh call (benign race-loss).
+3. Otherwise invokes `claude auth login` on the host with env vars `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` + `CLAUDE_CODE_OAUTH_SCOPES` (Claude Code's supported fast-path — upstream `src/cli/handlers/auth.ts:140-186`). `stdin: "ignore"`, 120 s timeout.
+4. Re-reads host creds post-call → authoritative ttl.
+5. Releases the lock.
 
-Behavior:
+Any running host `claude` mid-refresh waits for our lock, and vice versa.
 
-- Log in on the host once with `claude` (normal host login).
-- `ccairgap` inherits those credentials for the duration of the container.
-- The container's `~/.claude/` is writable (normal home dir), so session mutations (permission cache, prompt history in `.claude.json`) stay in-container and die with it — host state is untouched.
+**Step 3 — Strip and materialize.** The authoritative post-refresh JSON is parsed, `claudeAiOauth.refreshToken` is deleted, and the result is written to `$SESSION/creds/.credentials.json` (mode 0600). That file is bind-mounted RO at `/host-claude-creds` on every platform. The `ccairgap` session dir (and so the stripped file) is deleted on exit.
+
+**UX branches.**
+
+- **Success / fresh:** no banner. Action is `fresh` (ttl above threshold), `already-fresh`, or `refreshed`.
+- **Soft failure** — refresh call failed but the existing access token still has ≥5 min of life. Launch proceeds; stderr banner names the failure reason and tells the user to `/login` in Claude when the token expires mid-session:
+  ```
+  ⚠ Auth refresh failed: <reason>. Token expires HH:MM (Xm).
+    When it hits: Claude will error. Run /login in Claude to recover.
+  ```
+- **Hard failure (cold-start-dead)** — refresh failed AND final ttl < 5 min. The CLI refuses to launch and throws `CredentialsDeadError` before any session dir is materialized:
+  ```
+  ✗ Host auth is dead (<reason>; <Xm> left).
+    Run `claude` on host to re-login, then retry ccairgap.
+  ```
+  Rationale: below the 5-min floor the container's Claude Code would 401 on its first API call and cycle the upstream `withRetry` 10× before giving up. A clean launch-time refusal is better UX.
+
+**Failure classification** (`<reason>` text in the banners):
+
+| Classification | Trigger | Reason text |
+|---|---|---|
+| `revoked` | stderr matches `/invalid_grant/` | `refresh token revoked` |
+| `network` | stderr matches `/ENOTFOUND\|ETIMEDOUT\|ECONNREFUSED\|getaddrinfo\|network/i` | `network error contacting Anthropic` |
+| `binary-missing` | spawn errors with `ENOENT` | `claude not on PATH` |
+| `timeout` | `execa` timeout fires | `claude auth login timed out after 120s` |
+| `expired` | no refresh attempted (e.g. `--refresh-below-ttl 0`) but final ttl < 5 min | `host token near expiry` |
+| `unknown` | any other non-zero exit | first line of stderr (truncated to 120 chars) |
+
+**In-container behavior.** Claude Code's refresh path short-circuits at `!tokens?.refreshToken` (upstream `src/utils/auth.ts:1459`) so it never contacts Anthropic's token endpoint. Mid-session expiry: the next API request returns 401 and the upstream 401 handler returns `false` (`auth.ts:1380-1382`) because there is no refresh token to rotate — `withRetry` cycles up to 10× then throws. The user types `/login` in the TUI, completes the paste-code OAuth flow, and Claude Code writes a fresh container-scoped token pair into `~/.claude/.credentials.json`. The session continues with that new chain until exit.
+
+The `/host-claude` RO mount (the rest of `~/.claude/`) still excludes `.credentials.json` — the stripped session file is the only creds source the container sees.
+
+**Operator notes.**
+
+- Log in on the host once with `claude` (normal host login). `ccairgap doctor` prints the current token ttl + OAuth scopes.
+- `--refresh-below-ttl 0` disables the pre-launch refresh; the cold-start-dead refusal still fires when the host token is already below the 5-min floor.
 - To switch accounts, log in differently on the host before launching. Multi-profile support is out of scope.
+- The container's `~/.claude/` is writable (normal home dir), so session mutations (permission cache, prompt history in `.claude.json`) stay in-container and die with it — host state is untouched.
 
 ## Repository access mechanism
 
