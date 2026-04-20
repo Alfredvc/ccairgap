@@ -2,7 +2,7 @@
 
 # ccairgap
 
-![ccairgap — walk away, work lands as branches](docs/readme-banner.jpg)
+![ccairgap — walk away, work lands as branches](docs/demo.gif)
 
 [![CI](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml/badge.svg)](https://github.com/alfredvc/ccairgap/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/ccairgap.svg)](https://www.npmjs.com/package/ccairgap)
@@ -16,11 +16,14 @@ Same config, skills, hooks, and MCP servers as on your host. Full permissions in
 
 - **Full permissions, contained** — host filesystem physically out of reach.
 - **Your Claude** — config, skills, hooks, and MCP servers all inherited.
+- **Credentials safe** — refresh token never enters the container; pre-launch refresh keeps the access token fresh so long sessions don't 401.
 - **Work lands as branches** — nothing lost if you walk away.
 - **Fast on large repos** — shared clone, no full copy.
 - **Opt-in hooks and MCP** — disabled by default; enable by glob.
+- **Per-repo config** — drop `.ccairgap/` at your repo root for project-scoped skills, hooks, MCP servers, or settings that don't belong in `~/.claude/`.
 - **Resume any session** — start on host or sandbox, continue on either.
 - **Clipboard passthrough** — copy an image on your host, paste it into Claude inside the sandbox. macOS, Linux (Wayland/X11), and WSL2.
+- **Works behind corp proxies** — `NODE_EXTRA_CA_CERTS` forwards through, so custom CA bundles just work.
 
 ## Why ccairgap?
 
@@ -28,7 +31,7 @@ Same config, skills, hooks, and MCP servers as on your host. Full permissions in
 
 **vs. using Claude with permission prompts.** Prompts are tedious to babysit, blanket rules risk over-permissioning, and precise rules are hard to write. ccairgap skips the permission layer entirely — the sandbox itself is the layer.
 
-**vs. other Claude sandbox tools.** Most give you a stripped-down Claude. ccairgap gives you yours — fully configured, exactly as it runs on your host.
+**vs. Anthropic's reference devcontainer or Docker AI Sandboxes.** Both hand you an empty `~/.claude/` — re-auth inside, and your skills, hooks, MCP servers, and plugins don't come along. ccairgap mirrors your host config read-only, strips the refresh token before any creds enter the container, and lets `claude --resume` on the host pick up whatever the sandbox produced.
 
 ## Setup
 
@@ -57,8 +60,8 @@ The sandboxed Claude has:
 - Your skills from: project, global, inside plugins
 - Your memories (read-only)
 - Host clipboard images
-- Your hooks (may require adjusting your dockerfile)
-- Your MCP servers (likely requires adjusting your dockerfile)
+- Your hooks (may need a [custom Dockerfile](docs/dockerfile.md) if hooks shell out to host binaries)
+- Your MCP servers (usually needs a [custom Dockerfile](docs/dockerfile.md) to install the server binaries)
 - Your managed-policy settings (enterprise / MDM; skipped when absent)
 
 ### Common setups
@@ -81,11 +84,32 @@ ccairgap -r 'Refactor login flow'
 claude --resume 01234567-89ab-cdef-0123-456789abcdef
 ```
 
+### When things go wrong
+
+If Claude leaves uncommitted work behind, the container crashes, or you `kill -9` the CLI, ccairgap preserves the session dir on disk so nothing is lost.
+
+```bash
+# See preserved sessions
+ccairgap list
+
+# Re-run handoff: fetch the sandbox branch, copy transcripts, clean up
+ccairgap recover <id>
+
+# Throw a preserved session away without recovering
+ccairgap discard <id>
+```
+
+Full subcommand reference: [docs/subcommands.md](docs/subcommands.md).
+
 ## Agent Skills
+
+Install the `ccairgap-configure` skill so Claude (on your host) can set up ccairgap for a new project — detect which host binaries the workflow needs, generate a custom `Dockerfile`, and write `.ccairgap/config.yaml` with the right `--ro`, hook, and MCP entries.
 
 ```bash
 npx skills add alfredvc/ccairgap
 ```
+
+Then in Claude: *"configure ccairgap for this repo"*. Source: [`skills/ccairgap-configure/`](skills/ccairgap-configure).
 
 ## How it works
 
@@ -125,20 +149,29 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 
 ## Reference
 
+**Launch**
 - [Launch flags](docs/flags.md)
 - [Subcommands](docs/subcommands.md)
 - [Host environment variables](docs/env-vars.md)
+- [Forwarding flags to claude](docs/claude-args.md)
+
+**Config**
 - [Configuration file](docs/config.md)
 - [`.ccairgap/` — ccairgap-scope Claude config](docs/ccairgap-dir.md)
-- [Forwarding flags to claude](docs/claude-args.md)
+
+**Integrations**
 - [Hooks](docs/hooks.md)
 - [MCP servers](docs/mcp.md)
-- [Auth refresh](docs/auth-refresh.md)
-- [Raw docker run args & secrets](docs/docker-run-args.md)
-- [Custom Dockerfile](docs/dockerfile.md)
 - [Clipboard passthrough](docs/clipboard.md)
 - [Auto-memory](docs/auto-memory.md)
 - [Managed policy (MDM)](docs/managed-policy.md)
+
+**Advanced**
+- [Auth refresh](docs/auth-refresh.md)
+- [Custom Dockerfile](docs/dockerfile.md)
+- [Raw docker run args & secrets](docs/docker-run-args.md)
+
+**Design**
 - [Full design spec](docs/SPEC.md)
 
 ## Development
