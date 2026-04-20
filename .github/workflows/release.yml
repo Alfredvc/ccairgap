@@ -32,6 +32,20 @@ jobs:
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Extract CHANGELOG section for this tag
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v ver="$version" '
+            /^## \[/ {
+              if (p) exit
+              if (index($0, "[" ver "]") == 4) { p=1; print; next }
+            }
+            p { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::No CHANGELOG section found for $version"
+            exit 1
+          fi
       - uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
