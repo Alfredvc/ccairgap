@@ -45,6 +45,7 @@ import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { validateClaudeArgs } from "./claudeArgs.js";
 import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
 import { resolveManagedPolicyDir } from "./managedPolicy.js";
+import { resolveCcairgapDir } from "./config.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -613,6 +614,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   });
 
   let mounts: Mount[];
+  // Anchor on primary repo host path so --bare --repo <other> resolves correctly.
+  const ccairgapDir = resolveCcairgapDir(repoEntries[0]?.hostPath ?? process.cwd());
   try {
     mounts = buildMounts({
       hostClaudeDir: hostClaude,
@@ -630,6 +633,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       autoMemoryHostDir,
       managedPolicyHostDir: managedPolicyDir,
       nodeExtraCa,
+      ccairgapDir,
       // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
       // MCP-policy overrides are nested single-file overlays (RO) on top of the
       // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
