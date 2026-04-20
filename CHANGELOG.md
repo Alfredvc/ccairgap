@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.4.1](https://github.com/Alfredvc/ccairgap/compare/v0.4.0...v0.4.1) (2026-04-20)
+
+
+### Bug Fixes
+
+* **docker:** preserve HOST_GID when UID collides with base image user ([d7dac94](https://github.com/Alfredvc/ccairgap/commit/d7dac94e669d0f57adc4a316dceed47fd237d64d))
+* **overlay:** allowlist project .claude/ subpaths to skip parked junk ([9193287](https://github.com/Alfredvc/ccairgap/commit/919328765f1ec45547f4784f44a373a1c689557a))
+
 ## [0.4.0](https://github.com/Alfredvc/ccairgap/compare/v0.3.0...v0.4.0) (2026-04-20)
 
 
