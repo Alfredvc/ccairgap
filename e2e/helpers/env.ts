@@ -55,12 +55,18 @@ function parseSessionId(output: string): string | null {
  * Call cleanup() when the test is done.
  */
 export async function mkTmpHome(): Promise<TmpHome> {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccairgap-e2e-"));
+  const raw = await fs.mkdtemp(path.join(os.tmpdir(), "ccairgap-e2e-"));
+  // macOS tmpdir is a symlink (/var/folders → /private/var/folders). The CLI
+  // realpath()s HOME and the workspace repo before building the Claude
+  // encoded-cwd transcript path, so tests must seed against the realpath'd
+  // form — otherwise seeded files land under the symlink form and the CLI
+  // looks under the realpath form. Resolve once up-front.
+  const home = await fs.realpath(raw);
   const ccairgapHome = path.join(home, ".local", "state", "ccairgap");
   return {
     home,
     ccairgapHome,
-    cleanup: () => fs.rm(home, { recursive: true, force: true }),
+    cleanup: () => fs.rm(raw, { recursive: true, force: true }),
   };
 }
 

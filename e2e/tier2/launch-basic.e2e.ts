@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs/promises";
 import * as path from "path";
-import * as os from "os";
 import { execa } from "execa";
 import {
   mkTmpHome,
@@ -19,8 +18,12 @@ import {
 
 const FAKE_DOCKERFILE = "e2e/fixtures/fake.Dockerfile";
 
-// On Linux, credentials come from ~/.claude/.credentials.json (not keychain).
-// Pre-create it so the credentials flow doesn't fail.
+// Preload that overwrites process.platform → "linux" in the spawned CLI so
+// credentials.ts takes the file-based branch on all hosts (no macOS keychain).
+// Tier2 seeds ~/.claude/.credentials.json unconditionally to match.
+const FORCE_LINUX_PRELOAD = path.resolve("e2e/helpers/force-linux.cjs");
+const TIER2_NODE_OPTIONS = `--require ${FORCE_LINUX_PRELOAD}`;
+
 async function seedCredentials(home: string): Promise<void> {
   const claudeDir = path.join(home, ".claude");
   await fs.mkdir(claudeDir, { recursive: true });
@@ -37,9 +40,7 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
   beforeEach(async () => {
     ({ home, ccairgapHome, cleanup } = await mkTmpHome());
     await seedClaudeHome(home);
-    if (os.platform() === "linux") {
-      await seedCredentials(home);
-    }
+    await seedCredentials(home);
     repo = await seedGitRepo(home, "myapp");
     sessionId = null;
   });
@@ -54,10 +55,10 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
       [
         "--repo", repo,
         "--dockerfile", FAKE_DOCKERFILE,
-        "--no-preserve-dirty",
+        "--no-preserve-dirty", "--print", "smoke",
         ...testCmd("exit 0"),
       ],
-      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome } },
+      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome, NODE_OPTIONS: TIER2_NODE_OPTIONS } },
     );
 
     sessionId = result.sessionId;
@@ -74,10 +75,10 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
       [
         "--repo", repo,
         "--dockerfile", FAKE_DOCKERFILE,
-        "--no-preserve-dirty",
-        ...testCmd("git commit --allow-empty -m handoff-branch-test && exit 0"),
+        "--no-preserve-dirty", "--print", "smoke",
+        ...testCmd("git commit --allow-empty -m handoff-branch-test"),
       ],
-      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome } },
+      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome, NODE_OPTIONS: TIER2_NODE_OPTIONS } },
     );
 
     sessionId = result.sessionId;
@@ -96,10 +97,10 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
       [
         "--repo", repo,
         "--dockerfile", FAKE_DOCKERFILE,
-        "--no-preserve-dirty",
-        ...testCmd("git commit --allow-empty -m e2e-test-commit && exit 0"),
+        "--no-preserve-dirty", "--print", "smoke",
+        ...testCmd("git commit --allow-empty -m e2e-test-commit"),
       ],
-      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome } },
+      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome, NODE_OPTIONS: TIER2_NODE_OPTIONS } },
     );
 
     sessionId = result.sessionId;
@@ -133,10 +134,10 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
       [
         "--repo", repo,
         "--dockerfile", FAKE_DOCKERFILE,
-        "--no-preserve-dirty",
+        "--no-preserve-dirty", "--print", "smoke",
         ...testCmd("exit 1"),
       ],
-      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome } },
+      { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome, NODE_OPTIONS: TIER2_NODE_OPTIONS } },
     );
 
     sessionId = result.sessionId;

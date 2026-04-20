@@ -42,10 +42,18 @@ export async function assertSessionDirRemoved(
 /**
  * Build --docker-run-arg flags to pass a test command into the container
  * via the CCAIRGAP_TEST_CMD environment variable.
- * Returns ["--docker-run-arg=-e", "--docker-run-arg=CCAIRGAP_TEST_CMD=<script>"].
+ *
+ * The script must be single-quoted so `parseDockerRunArgs` (shell-quote) keeps
+ * it as a single literal token. Without quoting, a script like `exit 0` would
+ * split into ["exit", "0"] and the stray `0` token corrupts the docker arg
+ * layout. Raw single quotes inside the script are rejected — the helper is
+ * intended for shell-free literal commands only.
  */
 export function testCmd(script: string): string[] {
-  return ["--docker-run-arg=-e", `--docker-run-arg=CCAIRGAP_TEST_CMD=${script}`];
+  if (script.includes("'")) {
+    throw new Error("testCmd: script must not contain single quotes");
+  }
+  return ["--docker-run-arg=-e", `--docker-run-arg=CCAIRGAP_TEST_CMD='${script}'`];
 }
 
 /**
