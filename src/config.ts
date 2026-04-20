@@ -105,6 +105,19 @@ function gitRepoRoot(cwd: string): string | undefined {
 }
 
 /**
+ * Returns the host path of the `.ccairgap/` directory at the workspace repo
+ * root when it exists, otherwise `undefined`. `cwd` should be the workspace
+ * repo host path (not `process.cwd()`) so `--bare --repo <other>` resolves
+ * correctly.
+ */
+export function resolveCcairgapDir(cwd: string = process.cwd()): string | undefined {
+  const root = gitRepoRoot(cwd);
+  if (!root) return undefined;
+  const dir = join(root, ".ccairgap");
+  return existsSync(dir) ? dir : undefined;
+}
+
+/**
  * Resolve config file to load.
  *  - `explicit` and `profile` are mutually exclusive (enforced at CLI layer).
  *  - If `explicit` set: must exist, absolute or resolved against cwd.

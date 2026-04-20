@@ -13,6 +13,7 @@ import {
   parseConfig,
   resolveConfigPath,
   resolveConfigPaths,
+  resolveCcairgapDir,
 } from "./config.js";
 
 const SRC = "/repo/.ccairgap/config.yaml";
@@ -478,5 +479,41 @@ describe("resolveConfigPath", () => {
       const p = writeProfilePrimary("web.prod_v2-alpha");
       expect(resolveConfigPath(undefined, root, "web.prod_v2-alpha")).toBe(p);
     });
+  });
+});
+
+describe("resolveCcairgapDir", () => {
+  let root: string;
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "ccairgap-dir-")));
+    execaSync("git", ["init", "-q"], { cwd: root });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("returns the .ccairgap/ path when the dir exists at the git root", () => {
+    mkdirSync(join(root, ".ccairgap"));
+    expect(resolveCcairgapDir(root)).toBe(join(root, ".ccairgap"));
+  });
+
+  it("returns undefined when .ccairgap/ is absent", () => {
+    expect(resolveCcairgapDir(root)).toBeUndefined();
+  });
+
+  it("returns the path even when called from a subdirectory", () => {
+    mkdirSync(join(root, ".ccairgap"));
+    const sub = join(root, "packages", "app");
+    mkdirSync(sub, { recursive: true });
+    expect(resolveCcairgapDir(sub)).toBe(join(root, ".ccairgap"));
+  });
+
+  it("returns undefined when not in a git repo", () => {
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "no-git-")));
+    try {
+      expect(resolveCcairgapDir(outside)).toBeUndefined();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
