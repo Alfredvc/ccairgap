@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" | "ccairgap-dir" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -89,6 +89,7 @@ export interface BuildMountsInput {
    * `NODE_EXTRA_CA_CERTS=<containerPath>` into the container.
    */
   nodeExtraCa?: { hostPath: string; containerPath: string };
+  ccairgapDir?: string;
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
 }
@@ -172,6 +173,15 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       dst: i.nodeExtraCa.containerPath,
       mode: "ro",
       source: { kind: "node-extra-ca" },
+    });
+  }
+
+  if (i.ccairgapDir && existsSync(i.ccairgapDir)) {
+    mounts.push({
+      src: i.ccairgapDir,
+      dst: "/ccairgap-dir",
+      mode: "ro",
+      source: { kind: "ccairgap-dir" },
     });
   }
 
