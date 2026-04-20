@@ -42,6 +42,7 @@ import {
 import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } from "./resume.js";
 import { resolveResumeArg, listProjectSessions } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
+import { validateClaudeArgs } from "./claudeArgs.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -112,6 +113,12 @@ export interface LaunchOptions {
    * Orphan-branch and scan-failure preservation still fire.
    */
   noPreserveDirty: boolean;
+  /**
+   * Tokens forwarded verbatim to `claude` inside the container (config
+   * `claude-args` followed by CLI `--` tail). Filtered against the denylist
+   * in `src/claudeArgs.ts`; hard denials abort launch before side effects.
+   */
+  claudeArgs: string[];
 }
 
 export interface LaunchResult {
@@ -211,6 +218,19 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   } catch (e) {
     die((e as Error).message);
   }
+
+  // claude-args passthrough: filter against the denylist before any side
+  // effects so hard-denied flags exit 1 with no $SESSION on disk. The merged
+  // list mixes config (first) and CLI (appended); source attribution per
+  // entry is not preserved here — error messages hint that config may be the
+  // source via the prefix.
+  const claudeArgsValidation = validateClaudeArgs(opts.claudeArgs, "merged");
+  if (claudeArgsValidation.hardDenied.length > 0) {
+    for (const h of claudeArgsValidation.hardDenied) console.error(h.message);
+    process.exit(1);
+  }
+  for (const s of claudeArgsValidation.softDropped) console.error(s.reason);
+  const filteredClaudeArgs = claudeArgsValidation.filtered;
 
   // Resume requires a workspace repo: the source transcript lives under
   // ~/.claude/projects/<encoded-cwd>/ and the cwd is the workspace.
@@ -626,6 +646,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push(...extraDockerTokens);
 
   dockerArgs.push(image.tag);
+
+  // claude-args passthrough: appended as positional argv to `docker run`.
+  // Docker forwards them to the entrypoint as "$@", which splices them into
+  // the `exec claude` line between -r and -p. argv (not env-var JSON) avoids
+  // serialization layers and the per-env-var size cap.
+  dockerArgs.push(...filteredClaudeArgs);
 
   // Step 11: exec docker run with exit-trap handoff
   let exitCode = 0;
