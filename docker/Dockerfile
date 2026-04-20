@@ -25,7 +25,7 @@ RUN set -e; \
         useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash claude; \
     else \
         existing=$(getent passwd ${HOST_UID} | cut -d: -f1); \
-        usermod -l claude -d /home/claude -m -s /bin/bash "$existing" || true; \
+        usermod -l claude -d /home/claude -m -s /bin/bash -g ${HOST_GID} "$existing" || true; \
     fi; \
     mkdir -p /home/claude && chown -R ${HOST_UID}:${HOST_GID} /home/claude
 

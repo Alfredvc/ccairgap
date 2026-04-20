@@ -12,7 +12,7 @@ RUN set -e; \
         useradd -m -u ${HOST_UID} -g ${HOST_GID} claude; \
     else \
         existing=$(getent passwd ${HOST_UID} | cut -d: -f1); \
-        usermod -l claude -d /home/claude -m "$existing" || true; \
+        usermod -l claude -d /home/claude -m -g ${HOST_GID} "$existing" || true; \
     fi; \
     mkdir -p /home/claude && chown -R ${HOST_UID}:${HOST_GID} /home/claude
 # Minimal inline entrypoint. Tier2 only exercises the CCAIRGAP_TEST_CMD
