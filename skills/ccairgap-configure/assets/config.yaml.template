@@ -130,6 +130,18 @@
 # warn-docker-args: true
 
 # ---------------------------------------------------------------------------
+# Claude arg passthrough
+# ---------------------------------------------------------------------------
+
+# Extra tokens forwarded verbatim to `claude` inside the container.
+# Config values are prepended; CLI `-- <token>` tail is appended.
+# claude-args:
+#   - --model
+#   - opus
+#   - --effort
+#   - high
+
+# ---------------------------------------------------------------------------
 # Session behavior
 # ---------------------------------------------------------------------------
 
@@ -139,3 +151,14 @@
 
 # Non-interactive prompt — makes ccairgap run once and exit.
 # print: "run the test suite"
+
+# Disable image-clipboard passthrough (host-side watcher + bridge dir RO mount).
+# Passthrough is on by default on macOS, Linux Wayland/X11, and WSL2.
+# clipboard: false
+
+# Skip the auto-memory RO mount. Use for a clean-slate memory in the sandbox.
+# no-auto-memory: false
+
+# Skip dirty-working-tree preservation on exit. For scripted / CI use where
+# uncommitted container-side edits are disposable.
+# no-preserve-dirty: false

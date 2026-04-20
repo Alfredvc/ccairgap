@@ -127,7 +127,7 @@ ccairgap runs a host-side watcher alongside the container. When you copy an imag
 
 Platform support: macOS uses the built-in `osascript` (no install required). Linux Wayland uses `wl-paste` from `wl-clipboard`. Linux X11 uses `xclip`. WSL2 uses `wl-paste`. If the required tool is missing, ccairgap prints an install hint and continues without passthrough. The watcher is a child of the CLI process — it is stopped automatically when the session exits.
 
-Opt out with `--no-clipboard` or `no-clipboard: true` in config. No-op under `--print`.
+Opt out with `--no-clipboard` or `clipboard: false` in config. No-op under `--print`.
 
 That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 
@@ -332,7 +332,7 @@ claude-args:
   - --model
   - opus
 no-auto-memory: true
-no-clipboard: true
+clipboard: false
 ```
 
 Both kebab-case (`keep-container`) and camelCase (`keepContainer`) keys are accepted. Unknown keys and wrong types are rejected with a clear error.

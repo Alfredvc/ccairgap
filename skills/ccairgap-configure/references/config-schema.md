@@ -25,13 +25,17 @@ Unknown keys or wrong types abort launch with a clear error. The CLI validator i
 | `mcp.enable` | `[string]` | `--mcp-enable` (repeat) | Glob against MCP server `name` (key under `mcpServers`). Project-scope `<repo>/.mcp.json` additionally requires host approval. |
 | `docker-run-arg` | `[string]` | `--docker-run-arg` (repeat) | Raw docker tokens, shell-split. |
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |
+| `claude-args` | `[string]` | `-- <token> …` (tail) | Tokens forwarded verbatim to `claude` inside the container, subject to the denylist. Config first, CLI `--` tail appended. |
+| `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
+| `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. |
+| `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |
 
 ## Precedence
 
 **CLI > config > built-in defaults.**
 
-- Scalars (`repo`, `base`, `dockerfile`, `print`, `name`, `keep-container`, `rebuild`, `warn-docker-args`): CLI wins if passed.
-- Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`): config values first, CLI appended. No dedup.
+- Scalars (`repo`, `base`, `dockerfile`, `print`, `name`, `keep-container`, `rebuild`, `warn-docker-args`, `no-auto-memory`, `clipboard`, `no-preserve-dirty`): CLI wins if passed.
+- Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`): config values first, CLI appended. No dedup.
 - Maps (`docker-build-arg`): per-key merge; CLI value wins for overlapping keys.
 
 ## Path resolution
