@@ -254,6 +254,23 @@ claude-args:
   - high
 ```
 
+### `.ccairgap/` scope Claude config
+
+In addition to `config.yaml`, the `.ccairgap/` directory acts as a **ccairgap-scope analog of `.claude/`**: files here are automatically injected into every container session regardless of profile. Aside from `config.yaml`, profile files, and optional `Dockerfile`/`entrypoint.sh` sidecars (host-consumed at launch), the files below are injected into the container only.
+
+| File / dir | Injection semantics |
+|---|---|
+| `.ccairgap/CLAUDE.md` | Appended (blank-line separator) to `~/.claude/CLAUDE.md` (user-scope) in the container |
+| `.ccairgap/settings.json` | Deep-merged into `~/.claude/settings.json` after all other patches. Arrays concatenated (existing first); scalars/objects: ccairgap wins. `null` in ccairgap is a no-op. |
+| `.ccairgap/mcp.json` | `mcpServers` merged into `~/.claude.json` user-scope; ccairgap wins on server-name collision |
+| `.ccairgap/skills/` | Rsynced into `~/.claude/skills/`; ccairgap wins on skill-name collision |
+
+**Policy bypass (intentional).** `.ccairgap/settings.json` hooks are injected after the `--hook-enable` policy pass; `.ccairgap/mcp.json` servers are injected after the `--mcp-enable` policy pass. Both bypass their respective filters — same design as the built-in session-title hook. These are environment-level policy, not user hooks.
+
+**`--bare` mode.** `.ccairgap/` injection is active in `--bare` mode. It governs session environment, not launch configuration.
+
+**`null` semantics.** A `null` value in `.ccairgap/settings.json` leaves the existing setting unchanged (no-op). To leave a setting unchanged, omit the key.
+
 ## Bare mode
 
 `--bare` launches a container with nothing pre-wired beyond Claude's own config (`~/.claude` RO mount, credentials, plugins cache, `~/.claude.json`). It is the escape hatch for users who want to opt out of every ccairgap convenience and mount exactly what they want.
@@ -310,6 +327,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `<effective-host-memory-dir>` (resolved per Claude Code's `autoMemoryDirectory` cascade — see §"Auto-memory") | `/host-claude-memory` | ro | Host auto-memory dir surfaced to Claude Code via `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory` env var. Skipped when the host dir is absent, when no workspace repo is present, or when `--no-auto-memory` is set. Writes fail EROFS; reads (`MEMORY.md`, topic files) succeed. |
 | macOS: `/Library/Application Support/ClaudeCode/` / Linux: `/etc/claude-code/` | `/etc/claude-code/` | ro | Managed-policy directory: managed `CLAUDE.md`, `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`, `managed-mcp.json`. Only present when the host dir exists (MDM / enterprise). macOS host path translates to Linux container path — the in-container binary always runs Linux and consults only `/etc/claude-code/`. Skipped on Linux when the dir is absent; skipped entirely on Windows hosts. Interaction with ccairgap's MCP policy: `managed-mcp.json` is **not** filtered by `--mcp-enable`, matching Claude Code's precedence where managed policy overrides user flags. |
+| `<workspace-root>/.ccairgap/` | `/ccairgap-dir` | ro | ccairgap-scope Claude config dir. Skipped when absent. |
 | `$NODE_EXTRA_CA_CERTS` on host (when set + file exists) | `/host-ca-certs/<basename>` | ro | Corporate TLS CA bundle. The env var is forwarded as `-e NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>`. Mounted at a neutral container path rather than the host-absolute path so it does not overmount the base image's own CA trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). Symlinks resolved via `realpath()`. Stderr warning + skip when the env var points at a missing file. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` | `<original-host-path>` | rw | Session clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. |
@@ -330,7 +348,7 @@ Before invoking `docker run`, ccairgap resolves mount conflicts in two passes:
 1. **Marketplace pre-filter (`filterSubsumedMarketplaces`).** If a plugin marketplace path from `extraKnownMarketplaces` equals or is nested inside any `--repo`/`--extra-repo` `hostPath`, the marketplace mount is dropped. The repo's session-clone RW mount serves those files at the same container path. A stderr warning notes the drop and reminds users that the container sees HEAD-only content (uncommitted files in the marketplace tree are not visible).
 2. **Collision resolver (`resolveMountCollisions`).** Defense-in-depth at the end of `buildMounts`:
    - Any two surviving mounts sharing a container `dst` throw with both source labels (`--repo/--extra-repo`, `--ro`, `--mount`, `plugin marketplace`, etc.).
-   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`, `/etc/claude-code/`, or `/host-ca-certs/`.
+   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `/ccairgap-dir`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`, `/etc/claude-code/`, or `/host-ca-certs/`.
 
 Nested mounts with distinct `dst` strings (hook/MCP single-file overlays on top of a repo, `--mount` paths inside a repo) are **allowed** — they're the intended overlay mechanism.
 

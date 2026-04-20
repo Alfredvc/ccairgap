@@ -129,6 +129,7 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 - [Subcommands](docs/subcommands.md)
 - [Host environment variables](docs/env-vars.md)
 - [Configuration file](docs/config.md)
+- [`.ccairgap/` — ccairgap-scope Claude config](docs/ccairgap-dir.md)
 - [Forwarding flags to claude](docs/claude-args.md)
 - [Hooks](docs/hooks.md)
 - [MCP servers](docs/mcp.md)

@@ -30,6 +30,7 @@ export function reservedContainerPaths(
       "/host-claude-patched-settings.json",
       "/host-claude-patched-json",
       "/host-claude-memory",
+      "/ccairgap-dir",
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
@@ -67,6 +68,7 @@ function label(src: MountSource): string {
     case "auto-memory": return `auto-memory RO mount`;
     case "managed-policy": return `managed-policy RO mount`;
     case "node-extra-ca": return `NODE_EXTRA_CA_CERTS RO mount`;
+    case "ccairgap-dir": return `.ccairgap/ RO mount`;
   }
 }
 

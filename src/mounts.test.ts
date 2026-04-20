@@ -31,6 +31,7 @@ function baseInput(r: string) {
     autoMemoryHostDir: undefined as string | undefined,
     managedPolicyHostDir: undefined as string | undefined,
     nodeExtraCa: undefined as { hostPath: string; containerPath: string } | undefined,
+    ccairgapDir: undefined as string | undefined,
   };
 }
 
@@ -200,5 +201,38 @@ describe("buildMounts + collision resolver", () => {
     const input = baseInput(root);
     input.roPaths = ["/host-ca-certs/evil.pem"];
     expect(() => buildMounts(input)).toThrow(/\/host-ca-certs/);
+  });
+
+  it("mounts ccairgapDir at /ccairgap-dir RO when the dir exists", () => {
+    const ccairgapDir = join(root, "dot-ccairgap");
+    mkdirSync(ccairgapDir, { recursive: true });
+    const input = baseInput(root);
+    input.ccairgapDir = ccairgapDir;
+
+    const mounts = buildMounts(input);
+    const m = mounts.find((m) => m.source.kind === "ccairgap-dir");
+    expect(m).toBeDefined();
+    expect(m?.src).toBe(ccairgapDir);
+    expect(m?.dst).toBe("/ccairgap-dir");
+    expect(m?.mode).toBe("ro");
+  });
+
+  it("omits the ccairgap-dir mount when ccairgapDir is undefined", () => {
+    const input = baseInput(root);
+    const mounts = buildMounts(input);
+    expect(mounts.find((m) => m.source.kind === "ccairgap-dir")).toBeUndefined();
+  });
+
+  it("omits the ccairgap-dir mount when the dir does not exist on disk", () => {
+    const input = baseInput(root);
+    input.ccairgapDir = join(root, "does-not-exist");
+    const mounts = buildMounts(input);
+    expect(mounts.find((m) => m.source.kind === "ccairgap-dir")).toBeUndefined();
+  });
+
+  it("rejects a user --ro colliding with /ccairgap-dir", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/ccairgap-dir"];
+    expect(() => buildMounts(input)).toThrow(/\/ccairgap-dir.*reserved/);
   });
 });
