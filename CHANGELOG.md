@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.4.0](https://github.com/Alfredvc/ccairgap/compare/v0.3.0...v0.4.0) (2026-04-20)
+
+
+### Features
+
+* add ccairgap-dir mount kind and /ccairgap-dir reserved path ([f834331](https://github.com/Alfredvc/ccairgap/commit/f834331f33c41b12153dc83f10f45f901d90ba45))
+* add resolveCcairgapDir() to detect .ccairgap/ at workspace repo root ([c479f18](https://github.com/Alfredvc/ccairgap/commit/c479f18296e89f62e743ade17683813ae9e79c83))
+* **autoMemory:** resolve effective host auto-memory dir via Claude Code settings cascade ([4e7ccee](https://github.com/Alfredvc/ccairgap/commit/4e7ccee5e115305dd0030abd83a85b01c0ec097d))
+* **cli:** add --no-auto-memory flag + config key ([7b4aed2](https://github.com/Alfredvc/ccairgap/commit/7b4aed2564eeb97ef4ae38f41d1c9b18b4b9c0cf))
+* **e2e:** add E2E test harness infrastructure ([7acb4ad](https://github.com/Alfredvc/ccairgap/commit/7acb4ad014d8777f7d8063828d5dd08d65bb6316))
+* forward claude args via `--` tail and config ([c38b581](https://github.com/Alfredvc/ccairgap/commit/c38b581134ffef0112ad8bb7c8309e6faac6ce51))
+* inject .ccairgap/ scope CLAUDE.md, settings.json, mcp.json, skills/ in entrypoint ([42201df](https://github.com/Alfredvc/ccairgap/commit/42201df38d68bff8e34f80b9c847b02f2e67e0f7))
+* **mounts:** forward NODE_EXTRA_CA_CERTS into the container ([0e4aa00](https://github.com/Alfredvc/ccairgap/commit/0e4aa009fad437a8ade66f057f26354eeef61c07))
+* **mounts:** surface auto-memory dir RO via CLAUDE_COWORK_MEMORY_PATH_OVERRIDE ([0c9dab2](https://github.com/Alfredvc/ccairgap/commit/0c9dab29b9dab9768e4f6c63dc15feb494364475))
+* **mounts:** surface managed-policy dir RO at /etc/claude-code ([f54515b](https://github.com/Alfredvc/ccairgap/commit/f54515b1dd519db15841b1ceab6c85a49e145c16))
+* overlay host working-tree project .claude config into sandbox ([97f7f38](https://github.com/Alfredvc/ccairgap/commit/97f7f3870d1cdc61a6d2ca286084507b7b5089d6))
+* **paths:** honor CLAUDE_CONFIG_DIR for host config home resolution ([880759f](https://github.com/Alfredvc/ccairgap/commit/880759f84bca0932cf401ea2a1e365832a7c7562))
+* pre-launch auth refresh + stripped refresh token ([87eca77](https://github.com/Alfredvc/ccairgap/commit/87eca774926dbf8b1e2063977cbf1dd68b069e56))
+* wire ccairgapDir into buildMounts, anchored on workspace repo root ([dbdd32d](https://github.com/Alfredvc/ccairgap/commit/dbdd32de60a9edefa21c4ef2eb5e1ed30b3d77f7))
+
+
+### Bug Fixes
+
+* close reviewer nits from mount-missing-claude-state review ([421cd94](https://github.com/Alfredvc/ccairgap/commit/421cd94a81035d06e927c601ca4f0b1a39bf8f3d))
+* **e2e:** make tier1/tier2 suites pass on macOS ([1c81b64](https://github.com/Alfredvc/ccairgap/commit/1c81b64e26e409d80b7dc7fa13c374cd8c62e5c7))
+
+
+### Refactors
+
+* drop redundant resume-hint printout on exit ([b41ae4e](https://github.com/Alfredvc/ccairgap/commit/b41ae4e50c72f1486acbb14f1b209e8b8363929d))
+
 ## [0.3.0](https://github.com/Alfredvc/ccairgap/compare/v0.2.0...v0.3.0) (2026-04-19)
 
 
