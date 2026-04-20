@@ -90,6 +90,7 @@ npx skills add alfredvc/ccairgap
 - [Agent Skills](#agent-skills)
 - [How it works](#how-it-works)
 - [Launch flags](#launch-flags)
+- [Forwarding flags to claude](#forwarding-flags-to-claude)
 - [Hooks](#hooks)
 - [MCP servers](#mcp-servers)
 - [Raw docker run args](#raw-docker-run-args)
@@ -144,6 +145,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `--no-warn-docker-args` | warnings on | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
 | `--no-preserve-dirty` | off | no | Skip the dirty-working-tree preservation check on exit. Intended for scripted / CI use where uncommitted container-side edits are disposable (e.g. `npm install` artifacts). Orphan-branch and scan-failure preservation still fire. |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See `docs/SPEC.md` §"Bare mode". |
+| `-- <claude-args…>` | — | no | Tokens after `--` are forwarded verbatim to `claude` inside the container, subject to a small denylist (ccairgap-owned flags, host-path flags, etc.). Config equivalent: `claude-args: [<token>, …]`. See `docs/SPEC.md` §"Claude arg passthrough". |
 
 ### Notes on `--name`
 
@@ -152,6 +154,34 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 - The full `<id>` surfaces in `ccairgap list`, the container name (`ccairgap-<id>`), the branch (`ccairgap/<id>`), and the session directory.
 - The two-step rename (label → title) is intentional: the two strings still differ, so Claude Code's hook-dedup fires and the TUI rename effect paints the top-border.
 - `--resume <id-or-name>`: the resumed session uses the new `<id>` as its label — prior display name is not preserved.
+
+## Forwarding flags to claude
+
+Anything ccairgap doesn't own (`--model`, `--effort`, `--agents`, `--betas`, …) can be forwarded to `claude` inside the container by writing it after `--`:
+
+```bash
+# Pin the model and bump effort
+ccairgap --repo . -- --model opus --effort high
+
+# Combine with --print to shape the output
+ccairgap --print "summarize README" --repo . -- --output-format json --max-budget-usd 1
+```
+
+In config:
+
+```yaml
+claude-args:
+  - --model
+  - opus
+  - --effort
+  - high
+```
+
+Config and CLI are concatenated (config first, CLI appended); claude's last-wins arg parser handles duplicates, so `-- --model sonnet` from the CLI overrides a config `--model opus`.
+
+A small denylist blocks flags ccairgap owns (`--name`, `--resume`, `--print`), the resume family (`--continue`, `--from-pr`, …), host-path / policy-bypass flags (`--add-dir`, `--mcp-config`, `--settings`, …), and pointless-in-container flags (`--help`, `--version`, `--chrome`). Hard-denied flags abort launch with a one-line pointer at the ccairgap equivalent. `--dangerously-skip-permissions` is soft-dropped (already set by the entrypoint).
+
+See `docs/SPEC.md` §"Claude arg passthrough" for the full denylist.
 
 ## Hooks
 

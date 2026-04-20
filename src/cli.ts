@@ -5,6 +5,7 @@ import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
 import { doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
 import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
+import { splitClaudeArgs } from "./cliSplit.js";
 
 function parseBuildArg(v: string, acc: Record<string, string>): Record<string, string> {
   const eq = v.indexOf("=");
@@ -50,6 +51,7 @@ function mergeRun(cli: {
   resume?: string;
   clipboard?: boolean;
   noPreserveDirty?: boolean;
+  claudeArgs: string[];
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -72,10 +74,13 @@ function mergeRun(cli: {
     resume: cli.resume ?? cfg.resume,
     clipboard: cli.clipboard ?? cfg.clipboard ?? true,
     noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
+    claudeArgs: [...(cfg.claudeArgs ?? []), ...cli.claudeArgs],
   };
 }
 
 async function main() {
+  const { argvForCommander, cliClaudeArgs } = splitClaudeArgs(process.argv);
+
   const program = new Command();
 
   program
@@ -250,6 +255,7 @@ async function main() {
           resume: opts.resume as string | undefined,
           clipboard: cliClipboard,
           noPreserveDirty: cliNoPreserveDirty,
+          claudeArgs: cliClaudeArgs,
         },
         fileCfg,
       );
@@ -333,6 +339,7 @@ async function main() {
         bare,
         resume: merged.resume,
         noPreserveDirty: merged.noPreserveDirty,
+        claudeArgs: merged.claudeArgs,
       });
       process.exit(result.exitCode);
     });
@@ -440,7 +447,7 @@ async function main() {
       }
     });
 
-  await program.parseAsync(process.argv);
+  await program.parseAsync(argvForCommander);
 }
 
 main().catch((e) => {

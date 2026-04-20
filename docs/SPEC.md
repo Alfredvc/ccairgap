@@ -110,6 +110,7 @@ Default (no subcommand): start a new session.
 | `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--network`, `--cap-drop`, etc.). Repeatable. See §"Raw docker run args". |
 | `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
 | `--bare` | no | Launch a "naked" container: no config-file loading, no workspace-repo inference from cwd. User mounts whatever they need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. All Claude config flow is unchanged (`~/.claude` RO mount, credentials, plugins cache, etc.). See §"Bare mode". |
+| `-- <claude-args…>` | no | Tokens after `--` are forwarded verbatim to the in-container `claude` invocation, subject to a small denylist (see §"Claude arg passthrough"). Example: `ccairgap --repo . -- --model opus --effort high`. Config equivalent: `claude-args: [<token>, …]`. Config and CLI tails are concatenated (config first, CLI appended); claude's last-wins arg parser handles duplicates. |
 
 No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
@@ -236,6 +237,14 @@ docker-run-arg:
 hooks:
   enable:
     - "python3 *"
+
+# Forwarded verbatim to the in-container `claude` (subject to the denylist
+# in §"Claude arg passthrough"). Concatenated with the CLI `--` tail.
+claude-args:
+  - --model
+  - opus
+  - --effort
+  - high
 ```
 
 ## Bare mode
@@ -534,11 +543,12 @@ Runs at container start. Steps:
    }
    ```
 8. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-9. Build the final `claude` args: always `--dangerously-skip-permissions`; then label and resume args per these rules:
+9. Build the final `claude` args: always `--dangerously-skip-permissions`; then label, resume, passthrough, and (optionally) print:
    - **Label (`-n`):** `CCAIRGAP_NAME` carries the session id (always set by the CLI). Use `-n "ccairgap $CCAIRGAP_NAME"`. Fallback to `-n "ccairgap"` only when `CCAIRGAP_NAME` is unset (i.e. the entrypoint was launched directly without the CLI env).
    - **Resume (`-r`):** if `CCAIRGAP_RESUME` is set, append `-r "$CCAIRGAP_RESUME"`.
+   - **Passthrough (`"$@"`):** the CLI appends filtered claude-args as positional args to `docker run`; they arrive at the entrypoint as `"$@"` and are spliced verbatim. Filtered host-side; the entrypoint does not re-validate. See §"Claude arg passthrough".
    - The `-n` value (`"ccairgap <id>"`) is intentionally **not** the same as the UserPromptSubmit hook's `sessionTitle` output (`"[ccairgap] <id>"`): Claude Code's hook layer dedups against the current title, so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire.
-   - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`.
+   - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`. `-p` stays the final positional so claude treats `$CCAIRGAP_PRINT` as the prompt argument (claude's prompt-positional convention).
 
 ## Authentication flow
 
@@ -654,6 +664,84 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 
 - Raw args that add RW mounts (`-v <host>:<ctr>:rw`, `--mount type=bind,source=<host>,...`) expand the writable-paths set beyond what the CLI can see. §"Host writable paths" item 6 records this formally.
 - Users who only want per-path host RW should prefer `--mount <path>` — it's narrower in semantics and stays within the structured flag surface.
+
+## Claude arg passthrough
+
+ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
+
+**Sources:**
+
+- **CLI:** tokens after a bare `--` are the passthrough tail. Example: `ccairgap --repo . -- --model opus --effort high`. The pre-split runs in `src/cliSplit.ts` before commander parses, so the existing unknown-positional guard still catches typos like `ccairgap lsit`. `--` passthrough on a known subcommand (`list`, `recover`, `discard`, `doctor`, `inspect`, `init`) errors with "`--` passthrough is only valid on the default launch command".
+- **Config:** `claude-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Same shape as the CLI tail: a list of literal tokens. No map form — `claude-args: {model: opus}` is rejected by `assertStringArray`.
+- **Merge:** config tokens come first, CLI tokens append. Claude's last-wins arg parser handles duplicates; users can rely on that to override config values from the CLI (config sets `--model opus`, CLI passes `-- --model sonnet` → claude keeps the last).
+
+**Plumbing:** the merged + filtered list is appended as positional args to `docker run`. Docker forwards them to the entrypoint as `"$@"` (execve-style — no shell parsing, no JSON layer). The entrypoint splices `"$@"` between `RESUME_ARGS` and `-p` in the `exec claude` line. Argv (not env-var JSON) avoids serialization layers and the per-env-var size cap; values with spaces, quotes, or newlines round-trip unchanged.
+
+**Filtering** runs in `src/claudeArgs.ts`. Hard-denied flags abort launch with exit 1 before any session-dir side effects (same ordering as `--resume` validation). Soft-dropped flags are stripped with a stderr warning; launch continues. The entrypoint does not re-validate — the CLI is the trust boundary, not the image.
+
+### Denylist
+
+Each entry covers all canonical forms (`--flag`, `-f`, `--flag=val`, `-fval`).
+
+#### HARD deny — ccairgap-owned
+
+| Claude flag | ccairgap equivalent |
+|-------------|---------------------|
+| `-n`, `--name` | `ccairgap --name` (drives session id, container name, branch) |
+| `-r`, `--resume` | `ccairgap --resume` (drives transcript copy + name→UUID resolution) |
+| `-p`, `--print` | `ccairgap --print` (drives docker `-it` → `-i`, clipboard bridge off) |
+
+#### HARD deny — resume-family
+
+| Claude flag | Why |
+|-------------|-----|
+| `-c`, `--continue` | "continue most recent in cwd" is meaningless inside a freshly-cloned session workspace |
+| `--from-pr` | requires GitHub auth; the container has none |
+| `--fork-session` | pairs with `-r` / `-c`, both denied |
+| `--session-id` | conflicts with `CCAIRGAP_NAME`-driven id plumbing |
+
+#### HARD deny — broken inside the sandbox
+
+| Claude flag | Why |
+|-------------|-----|
+| `--ide` | IDE socket not exposed by default; use `--docker-run-arg -v /path/to/ide-socket:...` to wire one up |
+| `-w`, `--worktree` | ccairgap IS the isolation layer; use a second `ccairgap` invocation for parallel worktrees |
+| `--tmux` | pairs with `--worktree` (also denied); tmux binary not in the image |
+| `--add-dir` | host paths do not resolve in the container; use `ccairgap --ro <path>` |
+| `--plugin-dir` | host paths do not resolve; plugins flow via host `~/.claude/plugins/` RO mount |
+| `--debug-file` | host paths do not resolve; use `--debug` and capture container stderr |
+| `--mcp-config` | bypasses ccairgap's MCP allowlist (`--mcp-enable`); also references host paths |
+| `--strict-mcp-config` | pairs with `--mcp-config` (also denied) |
+| `--settings` | bypasses ccairgap's hook/MCP policy; adjust host `~/.claude/settings.json` or use `--hook-enable` / `--mcp-enable` |
+
+#### HARD deny — pointless inside a fully-wired container
+
+| Claude flag | Why |
+|-------------|-----|
+| `-h`, `--help` | would exit before the session starts; run `claude --help` on the host |
+| `-v`, `--version` | would exit before the session starts; run `ccairgap doctor` for the in-image version |
+| `--chrome`, `--no-chrome` | no Chrome binary inside the container; the integration cannot run |
+
+#### SOFT drop (warn on stderr, strip)
+
+| Claude flag | Why |
+|-------------|-----|
+| `--dangerously-skip-permissions` | already set unconditionally by the entrypoint |
+| `--allow-dangerously-skip-permissions` | redundant with the above |
+
+#### Allow (implicit)
+
+Everything not above passes through unchanged. Examples: `--model`, `--effort`, `--agent`, `--agents`, `--permission-mode`, `--append-system-prompt`, `--system-prompt`, `--allowed-tools` / `--allowedTools`, `--disallowed-tools` / `--disallowedTools`, `--tools`, `--fallback-model`, `--verbose`, `--debug`, `--betas`, `--brief`, `--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, `--setting-sources`, plus print-mode companions (`--output-format`, `--input-format`, `--max-budget-usd`, `--json-schema`, `--no-session-persistence`, `--include-partial-messages`, `--include-hook-events`, `--replay-user-messages`) — print-mode companions only meaningfully combine with `ccairgap --print`.
+
+### Tokenization
+
+`src/claudeArgs.ts` walks tokens in flag-position. `--flag=val` splits on the first `=` (lookup target = `--flag`, value preserved if allowed). For short forms, `-x` and `-xval` (inline value) are normalized via the short→long map for `-n`/`-r`/`-p`/`-c`/`-v`/`-h`/`-w`. A small value-taking-flag table (sourced from `claude --help`) tells the walker when to skip the next token as a value rather than re-classify it as a flag — covers both denied (`-n`, `--add-dir`, `--mcp-config`, …) and allowed (`--model`, `--agent`, `--agents`, `--permission-mode`, …) value-takers, so JSON values containing `--` substrings (e.g. `--agents '{"foo": "--not-a-flag"}'`) don't trigger spurious denials.
+
+**Unknown flags default to "no value."** Conservative: false-positives on a denied-adjacent flag error visibly (the user discovers a missing entry in the value-taking table); the alternative would mask denied tokens by treating them as values. `--add-dir` after `--unknown-new-flag` errors on `--add-dir` (correct outcome — extend the value-taking table when a real new value-taking flag lands).
+
+### Forward compatibility
+
+If a future Claude Code flag needs to join the denylist (e.g. a new host-path flag), that is an additive ccairgap change — bump the denylist in `src/claudeArgs.ts` and the table above. Until then, new flags work the day they ship.
 
 ## Hook policy
 

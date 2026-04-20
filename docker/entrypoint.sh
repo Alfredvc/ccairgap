@@ -200,8 +200,12 @@ if [ -n "${CCAIRGAP_TEST_CMD:-}" ]; then
   exec sh -c "$CCAIRGAP_TEST_CMD"
 fi
 
+# Passthrough: tokens forwarded by ccairgap from CLI `--` tail and config
+# `claude-args:`. CLI already filtered against the denylist; entrypoint trusts
+# the input. Spliced between RESUME_ARGS and -p so that -p (when set) stays
+# the final positional, matching claude's prompt-positional convention.
 if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" -p "$CCAIRGAP_PRINT"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT"
 else
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}"
+    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@"
 fi

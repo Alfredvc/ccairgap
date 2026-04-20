@@ -223,6 +223,22 @@ mount:
       /no-preserve-dirty/,
     );
   });
+
+  it("parses claude-args (kebab) and claudeArgs (camel) as string arrays", () => {
+    const a = parseConfig("claude-args:\n  - --model\n  - opus\n", SRC);
+    const b = parseConfig("claudeArgs:\n  - --effort\n  - high\n", SRC);
+    expect(a.claudeArgs).toEqual(["--model", "opus"]);
+    expect(b.claudeArgs).toEqual(["--effort", "high"]);
+  });
+
+  it("rejects claude-args of wrong type", () => {
+    expect(() => parseConfig("claude-args: --model opus\n", SRC)).toThrow(
+      /config\.claude-args: expected array of strings/,
+    );
+    expect(() => parseConfig("claude-args:\n  - 1\n  - 2\n", SRC)).toThrow(
+      /config\.claude-args: expected string/,
+    );
+  });
 });
 
 describe("resolveConfigPaths", () => {

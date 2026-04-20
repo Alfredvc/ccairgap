@@ -51,6 +51,8 @@ export interface ConfigFile {
   resume?: string;
   clipboard?: boolean;
   noPreserveDirty?: boolean;
+  /** Tokens forwarded verbatim to `claude` (subject to denylist). */
+  claudeArgs?: string[];
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -81,6 +83,8 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "clipboard": "clipboard",
   "no-preserve-dirty": "noPreserveDirty",
   "noPreserveDirty": "noPreserveDirty",
+  "claude-args": "claudeArgs",
+  "claudeArgs": "claudeArgs",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -273,6 +277,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "noPreserveDirty":
         cfg.noPreserveDirty = assertBool(val, "no-preserve-dirty");
+        break;
+      case "claudeArgs":
+        cfg.claudeArgs = assertStringArray(val, "claude-args");
         break;
     }
   }
