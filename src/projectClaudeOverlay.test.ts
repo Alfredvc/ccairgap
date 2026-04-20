@@ -102,12 +102,14 @@ describe("overlayProjectClaudeConfig", () => {
     mkdirSync(shared, { recursive: true });
     writeFileSync(join(shared, "ext.md"), "external\n");
 
-    mkdirSync(join(host, ".claude"), { recursive: true });
-    symlinkSync(join(shared, "ext.md"), join(host, ".claude", "ext.md"));
+    mkdirSync(join(host, ".claude", "skills"), { recursive: true });
+    symlinkSync(join(shared, "ext.md"), join(host, ".claude", "skills", "ext.md"));
 
     await overlayProjectClaudeConfig({ hostPath: host, clonePath: clone });
 
-    expect(readFileSync(join(clone, ".claude", "ext.md"), "utf8")).toBe("external\n");
+    expect(readFileSync(join(clone, ".claude", "skills", "ext.md"), "utf8")).toBe(
+      "external\n",
+    );
   });
 
   it("no-ops when host has no overlay paths", async () => {
@@ -118,10 +120,28 @@ describe("overlayProjectClaudeConfig", () => {
     expect(existsSync(join(clone, "CLAUDE.md"))).toBe(false);
   });
 
+  it("skips non-allowlisted .claude subpaths (e.g. worktrees/, cache/)", async () => {
+    mkdirSync(join(host, ".claude", "worktrees", "branch-a"), { recursive: true });
+    writeFileSync(join(host, ".claude", "worktrees", "branch-a", "huge.bin"), "x");
+    mkdirSync(join(host, ".claude", "cache"), { recursive: true });
+    writeFileSync(join(host, ".claude", "cache", "blob"), "y");
+    // Allowlisted entry so the overlay runs at all.
+    writeFileSync(join(host, ".claude", "settings.local.json"), "{}\n");
+
+    await overlayProjectClaudeConfig({ hostPath: host, clonePath: clone });
+
+    expect(existsSync(join(clone, ".claude", "settings.local.json"))).toBe(true);
+    expect(existsSync(join(clone, ".claude", "worktrees"))).toBe(false);
+    expect(existsSync(join(clone, ".claude", "cache"))).toBe(false);
+  });
+
   it("warns but does not throw on dangling symlinks", async () => {
-    mkdirSync(join(host, ".claude"), { recursive: true });
-    symlinkSync("/nonexistent-target-xyz", join(host, ".claude", "dangling.md"));
-    writeFileSync(join(host, ".claude", "real.md"), "ok\n");
+    mkdirSync(join(host, ".claude", "skills"), { recursive: true });
+    symlinkSync(
+      "/nonexistent-target-xyz",
+      join(host, ".claude", "skills", "dangling.md"),
+    );
+    writeFileSync(join(host, ".claude", "skills", "real.md"), "ok\n");
 
     const warnings: string[] = [];
     await overlayProjectClaudeConfig({
@@ -130,7 +150,9 @@ describe("overlayProjectClaudeConfig", () => {
       onWarning: (m) => warnings.push(m),
     });
 
-    expect(readFileSync(join(clone, ".claude", "real.md"), "utf8")).toBe("ok\n");
+    expect(readFileSync(join(clone, ".claude", "skills", "real.md"), "utf8")).toBe(
+      "ok\n",
+    );
     expect(warnings.length).toBeGreaterThanOrEqual(1);
   });
 });

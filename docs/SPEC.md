@@ -923,14 +923,15 @@ Host files are never mutated; all patched copies live under `$SESSION/mcp-policy
 - Applies to: `settings.json`, `CLAUDE.md`, `statusline.sh`, `plugins/` (minus `cache/`), `skills/`, `commands/`, anything else in `~/.claude/` except session-specific dirs (`projects/`, `sessions/`, `todos/`, `shell-snapshots/`, `history.jsonl`), `plugins/cache/` (RO-mounted separately), and `.credentials.json` (handled via `/host-claude-creds`).
 
 **Project-scope working-tree overlay:**
-- After `git clone --shared` + `git checkout -b ccairgap/<id>`, the CLI `rsync -rL`s three host-working-tree paths into each session clone (per `--repo` / `--extra-repo`):
-  - `<hostPath>/.claude/`  → `<clonePath>/.claude/` (merge; host files overwrite clone files on conflict)
+- After `git clone --shared` + `git checkout -b ccairgap/<id>`, the CLI `rsync -rL`s an allowlist of host-working-tree paths into each session clone (per `--repo` / `--extra-repo`):
+  - Under `<hostPath>/.claude/`, each of: `settings.json`, `settings.local.json`, `commands/`, `agents/`, `skills/`, `hooks/` → `<clonePath>/.claude/<name>` (merge; host overwrites clone on conflict)
   - `<hostPath>/.mcp.json` → `<clonePath>/.mcp.json`
   - `<hostPath>/CLAUDE.md` → `<clonePath>/CLAUDE.md`
 - Rationale: `git clone --shared` checks out HEAD, so uncommitted / `.gitignore`'d project-scope config is invisible to the container. Notably, `.claude/settings.local.json` is gitignored by Claude Code convention and carries MCP approvals + permission allow-lists; without the overlay every session starts with those reset.
+- Allowlist (not whole-`.claude/`) because users sometimes park non-Claude data under `.claude/` (git worktrees, build caches, logs) that can run to multi-GB and stall the overlay. The allowlist mirrors Claude Code's documented project-scope layout — grow it when Claude Code ships a new project-scope subpath.
 - Symlink handling: `rsync -L` follows symlinks and materializes targets as real files. Handles the common `CLAUDE.md → AGENTS.md` swap and out-of-repo skill targets uniformly — the container only ever sees real files.
-- Scope is closed and minimal: these three paths only. Other repo-root paths (e.g. `.env.local`, generated configs) are out of scope — use `--cp` / `--sync` as today.
-- Interaction with `dirtyTree`: these three paths are excluded from the exit-time scan via pathspec (`:(exclude).claude :(exclude).mcp.json :(exclude)CLAUDE.md`), so overlay-introduced "uncommitted" state doesn't trigger preservation. Consequence: container-side edits to any of these paths are also lost on exit (by design — sandbox shouldn't mutate Claude config across sessions).
+- Scope is closed and minimal: only the paths above. Other repo-root paths (e.g. `.env.local`, generated configs) and non-listed `.claude/*` entries are out of scope — use `--cp` / `--sync` as today.
+- Interaction with `dirtyTree`: `.claude/`, `.mcp.json`, `CLAUDE.md` are excluded from the exit-time scan via pathspec (`:(exclude).claude :(exclude).mcp.json :(exclude)CLAUDE.md`). The `.claude` exclude is deliberately a superset of the overlay allowlist so overlay-introduced "uncommitted" state never triggers preservation **and** container-side writes to non-overlaid `.claude/*` paths (e.g. plugin-install flows) are also silently discarded on exit (by design — sandbox shouldn't mutate Claude config across sessions).
 - Ordering: overlay runs AFTER `writeAlternates`, BEFORE `applyHookPolicy` / `applyMcpPolicy` / `executeCopies`. Hook + MCP policy filters then see host working-tree content. Explicit `--cp` / `--sync` still wins (runs last).
 
 **Plugin marketplace discovery:**

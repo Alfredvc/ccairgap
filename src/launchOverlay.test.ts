@@ -241,36 +241,43 @@ describe("launch — project Claude config overlay integration", () => {
     const repoB = join(root, "b");
     initRepo(repoA);
     initRepo(repoB);
-    mkdirSync(join(repoA, ".claude"), { recursive: true });
-    mkdirSync(join(repoB, ".claude"), { recursive: true });
-    writeFileSync(join(repoA, ".claude", "tag.txt"), "A\n");
-    writeFileSync(join(repoB, ".claude", "tag.txt"), "B\n");
+    mkdirSync(join(repoA, ".claude", "skills"), { recursive: true });
+    mkdirSync(join(repoB, ".claude", "skills"), { recursive: true });
+    writeFileSync(join(repoA, ".claude", "skills", "tag.txt"), "A\n");
+    writeFileSync(join(repoB, ".claude", "skills", "tag.txt"), "B\n");
 
     // LaunchOptions.repos[0] = workspace, repos[1..] = extras. Both get overlay.
     const result = await launch(baseOpts([repoA, repoB]));
 
     const cloneA = findSessionClone(join(ccairgapHome, "sessions"), result.id, "a");
     const cloneB = findSessionClone(join(ccairgapHome, "sessions"), result.id, "b");
-    expect(readFileSync(join(cloneA, ".claude", "tag.txt"), "utf8")).toBe("A\n");
-    expect(readFileSync(join(cloneB, ".claude", "tag.txt"), "utf8")).toBe("B\n");
+    expect(readFileSync(join(cloneA, ".claude", "skills", "tag.txt"), "utf8")).toBe("A\n");
+    expect(readFileSync(join(cloneB, ".claude", "skills", "tag.txt"), "utf8")).toBe("B\n");
   });
 
   it("overlay failure (dangling symlink) warns but does not abort launch", async () => {
     const repo = join(root, "repo");
     initRepo(repo);
-    mkdirSync(join(repo, ".claude"), { recursive: true });
-    writeFileSync(join(repo, ".claude", "real.md"), "ok\n");
-    symlinkSync("/definitely-not-a-real-path-xyz", join(repo, ".claude", "dangling.md"));
+    mkdirSync(join(repo, ".claude", "skills"), { recursive: true });
+    writeFileSync(join(repo, ".claude", "skills", "real.md"), "ok\n");
+    symlinkSync(
+      "/definitely-not-a-real-path-xyz",
+      join(repo, ".claude", "skills", "dangling.md"),
+    );
 
     const result = await launch(baseOpts([repo]));
     // Launch completed — session id was produced.
     expect(result.id).toMatch(/^[a-z]+-[a-z]+-[0-9a-f]{4}$/);
     // And the non-dangling file was copied.
     const clone = findSessionClone(join(ccairgapHome, "sessions"), result.id, "repo");
-    expect(readFileSync(join(clone, ".claude", "real.md"), "utf8")).toBe("ok\n");
+    expect(readFileSync(join(clone, ".claude", "skills", "real.md"), "utf8")).toBe(
+      "ok\n",
+    );
 
     // Warning about the overlay failure landed in stderr.
     const stderrLines = stderrSpy.mock.calls.map((args) => args.map(String).join(" "));
-    expect(stderrLines.some((l) => l.includes("project .claude overlay failed"))).toBe(true);
+    expect(
+      stderrLines.some((l) => l.includes("project .claude/skills overlay failed")),
+    ).toBe(true);
   });
 });

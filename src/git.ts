@@ -155,12 +155,13 @@ export type DirtyStatus =
  * Paths excluded from the scan via pathspec:
  *   .claude/ | .mcp.json | CLAUDE.md
  *
- * These are populated at launch by `overlayProjectClaudeConfig` — the session
- * clone receives the host working tree's version of each path, which would
- * otherwise flag every session as dirty and preserve it by default. The trade:
- * container-side edits to any of these paths are also invisible to the scan
- * and therefore lost on exit (acceptable — sandbox shouldn't evolve Claude
- * config across sessions).
+ * `.claude/` (and the two top-level files) are populated at launch by
+ * `overlayProjectClaudeConfig`, which copies an allowlisted subset of
+ * `.claude/*`. This exclude is deliberately a **superset** of that allowlist:
+ * overlay-introduced uncommitted state never trips preservation, AND
+ * container-side writes to non-overlaid `.claude/*` paths (e.g. plugin
+ * install flows) are also discarded on exit. Acceptable — sandbox shouldn't
+ * evolve Claude config across sessions.
  */
 export async function dirtyTree(dir: string): Promise<DirtyStatus> {
   try {
