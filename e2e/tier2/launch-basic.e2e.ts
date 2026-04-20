@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as fs from "fs/promises";
-import * as path from "path";
 import * as os from "os";
 import { execa } from "execa";
 import {
   mkTmpHome,
   seedGitRepo,
   seedClaudeHome,
+  seedHostCreds,
   runCli,
   cleanupContainers,
 } from "../helpers/env";
@@ -19,14 +18,6 @@ import {
 
 const FAKE_DOCKERFILE = "e2e/fixtures/fake.Dockerfile";
 
-// On Linux, credentials come from ~/.claude/.credentials.json (not keychain).
-// Pre-create it so the credentials flow doesn't fail.
-async function seedCredentials(home: string): Promise<void> {
-  const claudeDir = path.join(home, ".claude");
-  await fs.mkdir(claudeDir, { recursive: true });
-  await fs.writeFile(path.join(claudeDir, ".credentials.json"), "{}");
-}
-
 describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
   let home: string;
   let ccairgapHome: string;
@@ -38,7 +29,7 @@ describe.skipIf(!(await dockerAvailable()))("launch-basic tier2", () => {
     ({ home, ccairgapHome, cleanup } = await mkTmpHome());
     await seedClaudeHome(home);
     if (os.platform() === "linux") {
-      await seedCredentials(home);
+      await seedHostCreds(home);
     }
     repo = await seedGitRepo(home, "myapp");
     sessionId = null;

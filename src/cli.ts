@@ -50,6 +50,7 @@ function mergeRun(cli: {
   resume?: string;
   clipboard?: boolean;
   noPreserveDirty?: boolean;
+  refreshBelowTtl?: number;
 }, cfg: ConfigFile) {
   return {
     repo: cli.repo ?? cfg.repo,
@@ -72,6 +73,7 @@ function mergeRun(cli: {
     resume: cli.resume ?? cfg.resume,
     clipboard: cli.clipboard ?? cfg.clipboard ?? true,
     noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
+    refreshBelowTtl: cli.refreshBelowTtl ?? cfg.refreshBelowTtl ?? 120,
   };
 }
 
@@ -174,6 +176,22 @@ async function main() {
         "Orphan-branch and scan-failure preservation still fire.",
     )
     .option(
+      "--refresh-below-ttl <mins>",
+      "if the host token has less than this many minutes of life remaining, " +
+        "attempt a pre-launch `claude auth login` refresh on the host (under " +
+        "proper-lockfile coordination) so the container starts with a fresh " +
+        "access token and no refresh token. 0 disables the refresh; the " +
+        "cold-start-dead refusal still fires when the token is already below " +
+        "the 5-minute floor. Default: 120.",
+      (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) {
+          throw new Error(`--refresh-below-ttl: expected non-negative number, got ${v}`);
+        }
+        return n;
+      },
+    )
+    .option(
       "-r, --resume <id-or-name>",
       "resume an existing Claude session. Accepts a session UUID OR the session's " +
         "custom title (e.g. what `claude` prints on exit). Titles are matched " +
@@ -250,6 +268,7 @@ async function main() {
           resume: opts.resume as string | undefined,
           clipboard: cliClipboard,
           noPreserveDirty: cliNoPreserveDirty,
+          refreshBelowTtl: opts.refreshBelowTtl as number | undefined,
         },
         fileCfg,
       );
@@ -333,6 +352,7 @@ async function main() {
         bare,
         resume: merged.resume,
         noPreserveDirty: merged.noPreserveDirty,
+        refreshBelowTtlMinutes: merged.refreshBelowTtl,
       });
       process.exit(result.exitCode);
     });

@@ -5,7 +5,7 @@ CLI that runs `claude --dangerously-skip-permissions` inside a Docker container 
 ## Stack
 
 - TypeScript, ESM, Node ≥ 20. Bundled via **tsup** to single `dist/cli.js` (see `tsup.config.ts`).
-- Deps: `commander` (args), `execa` (shell out to `docker`/`git`), `yaml` (config file), `shell-quote` (tokenize `--docker-run-arg`). No runtime config libs beyond that.
+- Deps: `commander` (args), `execa` (shell out to `docker`/`git`/`claude`), `yaml` (config file), `shell-quote` (tokenize `--docker-run-arg`), `proper-lockfile` (coordinate host auth refresh with host-native `claude` and peer ccairgap launches). No runtime config libs beyond that.
 - Tests: **vitest** (`*.test.ts` colocated in `src/`). Type check: `tsc --noEmit`.
 - Distribution: npm `ccairgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`, `SECURITY.md`.
 
@@ -49,7 +49,8 @@ src/
   settings.ts     settings.json read-only enumeration: env vars + extraKnownMarketplaces
   inspectFormat.ts pretty-print tables for `ccairgap inspect --pretty`
   plugins.ts      plugin marketplace directory/file-source discovery
-  credentials.ts  macOS: `security find-generic-password -s "Claude Code-credentials"` → $SESSION/creds. Linux: verify ~/.claude/.credentials.json exists.
+  credentials.ts  Read host creds (macOS keychain / Linux file), run `refreshIfLowTtl`, strip `claudeAiOauth.refreshToken`, write to $SESSION/creds/.credentials.json (0600). Uniform on both platforms. Throws `CredentialsDeadError` on hard-failure.
+  authRefresh.ts  `refreshIfLowTtl`: proper-lockfile on host ~/.claude/, invoke `claude auth login` with OAuth env vars, classify outcome (revoked / network / binary-missing / timeout / unknown), return authoritative post-attempt JSON + ttl.
   image.ts        docker build; tag = ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]> or :custom-<sha256(dockerfile)[:12]>
   paths.ts        XDG state dir resolution; CCAIRGAP_HOME override
   version.ts      cliVersion() from package.json
@@ -65,7 +66,8 @@ docs/SPEC.md      authoritative design
 - **Container never writes host repo directly.** Exit handoff runs `git fetch` on the host against `$SESSION/repos/<name>`. Don't add a flow where the container has RW on real repos.
 - **Alternates rewrite is required.** `git clone --shared` writes the host absolute path; that path is meaningless in-container. Mounting host `objects/` over `<hostPath>/.git/objects/` would shadow the session clone's RW objects. Mount at neutral `/host-git-alternates/<name>/objects/` and rewrite `alternates` file host-side.
 - **Absolute paths are preserved host↔container** so `settings.json`, marketplace refs, and transcript encoded dirs resolve identically.
-- **Creds path differs by OS.** macOS: materialize keychain item to `$SESSION/creds/.credentials.json` (0600). Linux: bind-mount `~/.claude/.credentials.json` directly. Both surface as `/host-claude-creds`.
+- **Creds path is uniform across OS.** Both macOS and Linux materialize `$SESSION/creds/.credentials.json` (0600) as a **modified** copy of host creds with `claudeAiOauth.refreshToken` deleted. The session file is bind-mounted at `/host-claude-creds`. Never add a code path that bind-mounts host `~/.claude/.credentials.json` directly or writes the raw host JSON into the session file — the container must never see a refresh token (prevents cross-container 401 races; see `docs/SPEC.md §"Authentication flow"`).
+- **Pre-launch auth refresh is lock-coordinated.** `resolveCredentials` delegates to `refreshIfLowTtl` (src/authRefresh.ts), which acquires a `proper-lockfile` on host `~/.claude/` — the same library and path Claude Code uses at `src/utils/auth.ts:1491` upstream. Refresh invokes `claude auth login` with `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` + `CLAUDE_CODE_OAUTH_SCOPES` (upstream `src/cli/handlers/auth.ts:140-186`), stdin ignored, 120s timeout. Do not replace this with a direct HTTP refresh call — the fast-path is the only supported surface that keeps write-back to keychain / file-storage in lockstep with host-native `claude`. `CredentialsDeadError` fires when refresh fails AND final ttl < 5 min, before any session dir is materialized; the 5-min floor matches Claude Code's own `isOAuthTokenExpired` buffer (`auth.ts:344-353`).
 - **`/host-claude` RO mount excludes `.credentials.json`** — creds flow solely via `/host-claude-creds` to keep entrypoint uniform.
 - **Host-abs-path plugins mount is required.** `known_marketplaces.json.installLocation` and `installed_plugins.json.installPath` store absolute host paths. The container-$HOME `plugins/cache` RO mount alone isn't enough — Claude Code's marketplace resolver stat()s the host-abs path literally. `buildMounts` adds a second RO mount of `~/.claude/plugins/` at its real host absolute path; skipped only when host `~/.claude` coincides with container `$HOME/.claude`.
 - **`rsync -rL`** in entrypoint materializes symlinks as files. Exclude session-local dirs (`projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`), `plugins/cache/` (RO-mounted separately), `.credentials.json`, `.DS_Store`.

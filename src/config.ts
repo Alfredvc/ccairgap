@@ -51,6 +51,8 @@ export interface ConfigFile {
   resume?: string;
   clipboard?: boolean;
   noPreserveDirty?: boolean;
+  /** Minutes. Host token ttl below this triggers pre-launch `claude auth login`. */
+  refreshBelowTtl?: number;
 }
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
@@ -81,6 +83,8 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "clipboard": "clipboard",
   "no-preserve-dirty": "noPreserveDirty",
   "noPreserveDirty": "noPreserveDirty",
+  "refresh-below-ttl": "refreshBelowTtl",
+  "refreshBelowTtl": "refreshBelowTtl",
 };
 
 function gitRepoRoot(cwd: string): string | undefined {
@@ -187,6 +191,13 @@ function assertBool(v: unknown, key: string): boolean {
   return v;
 }
 
+function assertNonNegativeNumber(v: unknown, key: string): number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+    throw new Error(`config.${key}: expected non-negative number`);
+  }
+  return v;
+}
+
 /** Parse + validate yaml text. Throws on unknown keys or wrong types. */
 export function parseConfig(text: string, source: string): ConfigFile {
   let doc: unknown;
@@ -273,6 +284,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "noPreserveDirty":
         cfg.noPreserveDirty = assertBool(val, "no-preserve-dirty");
+        break;
+      case "refreshBelowTtl":
+        cfg.refreshBelowTtl = assertNonNegativeNumber(val, "refresh-below-ttl");
         break;
     }
   }

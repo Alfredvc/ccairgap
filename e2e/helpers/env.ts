@@ -118,6 +118,33 @@ export async function seedClaudeHome(
 }
 
 /**
+ * Seed a valid-enough host credentials file at $home/.claude/.credentials.json.
+ * Writes a JSON with `claudeAiOauth` + a far-future `expiresAt` so the
+ * pre-launch refresh flow skips the `claude auth login` call (ttl way above
+ * threshold) but the strip step still runs. The seeded `refreshToken` is what
+ * the auth-strip test asserts is removed from the container-visible file.
+ */
+export async function seedHostCreds(
+  home: string,
+  opts?: { refreshToken?: string; accessToken?: string; ttlMs?: number },
+): Promise<void> {
+  const claudeDir = path.join(home, ".claude");
+  await fs.mkdir(claudeDir, { recursive: true });
+  const ttlMs = opts?.ttlMs ?? 8 * 60 * 60 * 1000;
+  await fs.writeFile(
+    path.join(claudeDir, ".credentials.json"),
+    JSON.stringify({
+      claudeAiOauth: {
+        accessToken: opts?.accessToken ?? "e2e-at",
+        refreshToken: opts?.refreshToken ?? "e2e-rt",
+        expiresAt: Date.now() + ttlMs,
+        scopes: ["user:inference"],
+      },
+    }),
+  );
+}
+
+/**
  * Run the ccairgap CLI (dist/cli.js) via node and capture output.
  * Does NOT throw on non-zero exit. Returns exitCode, stdout, stderr, and
  * a parsed sessionId (null if not found in the output).

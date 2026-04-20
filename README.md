@@ -92,6 +92,7 @@ npx skills add alfredvc/ccairgap
 - [Launch flags](#launch-flags)
 - [Hooks](#hooks)
 - [MCP servers](#mcp-servers)
+- [Auth refresh](#auth-refresh)
 - [Raw docker run args](#raw-docker-run-args)
 - [Config file](#config-file)
 - [Subcommands](#subcommands)
@@ -143,6 +144,7 @@ That's it. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. |
 | `--no-warn-docker-args` | warnings on | no | Suppress the warning emitted when `--docker-run-arg` contains tokens known to weaken isolation. |
 | `--no-preserve-dirty` | off | no | Skip the dirty-working-tree preservation check on exit. Intended for scripted / CI use where uncommitted container-side edits are disposable (e.g. `npm install` artifacts). Orphan-branch and scan-failure preservation still fire. |
+| `--refresh-below-ttl <mins>` | 120 | no | Host token ttl threshold (minutes) for pre-launch auth refresh. See [Auth refresh](#auth-refresh). |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See `docs/SPEC.md` §"Bare mode". |
 
 ### Notes on `--name`
@@ -203,6 +205,29 @@ If an MCP's binary isn't in your container image, or it relies on env vars not p
 Not sure what's available? `ccairgap inspect` shows every server with its source and approval state.
 
 See `docs/SPEC.md` §"MCP policy" for the full mechanism.
+
+## Auth refresh
+
+Containers never hold a refresh token. The CLI strips `claudeAiOauth.refreshToken` from every session creds file before bind-mount, so the container's Claude Code only ever has an access token to spend — it can't race host or peer containers for Anthropic's once-per-refresh-token rotation window. This removes the "multiple concurrent containers → 401" failure mode that drove this feature.
+
+To keep the access token fresh, ccairgap runs a short pre-launch refresh on the host:
+
+1. Read the host token and check remaining ttl.
+2. If ttl < `--refresh-below-ttl` minutes (default 120), acquire a `proper-lockfile` on host `~/.claude/` (same library and path Claude Code uses), invoke `claude auth login` with Claude Code's supported `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` + `CLAUDE_CODE_OAUTH_SCOPES` fast path, and re-read the authoritative post-refresh token.
+3. Strip the refresh token and materialize `$SESSION/creds/.credentials.json` (mode 0600) for bind-mount at `/host-claude-creds`.
+
+The lockfile prevents two ccairgap launches from racing each other or racing a host-native `claude` that is mid-refresh.
+
+**When refresh fails:**
+
+- **Soft failure** (token still has ≥ 5 min of life): launch proceeds with a stderr banner telling you to `/login` in the Claude TUI if the token expires mid-session. The paste-code OAuth flow works inside the container without a browser.
+- **Hard failure** (final ttl < 5 min — cold-start-dead): the CLI refuses to launch, prints the reason, and asks you to run `claude` on the host to re-login. This prevents handing you a container that would 401 on its first API call.
+
+`--refresh-below-ttl 0` disables the refresh; the cold-start-dead refusal still fires. Pass a large value (e.g. `--refresh-below-ttl 9999`) if you want every launch to refresh.
+
+`ccairgap doctor` shows the current host token ttl and OAuth scopes so you can see what containers will inherit.
+
+See `docs/SPEC.md` §"Authentication flow" for the full mechanism, failure classification, and in-container behavior.
 
 ## Raw docker run args
 
