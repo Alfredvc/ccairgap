@@ -530,16 +530,29 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // Missing file → warn + skip.
   let nodeExtraCa: { hostPath: string; containerPath: string } | undefined;
   if (env.NODE_EXTRA_CA_CERTS) {
+    let real: string | undefined;
     try {
-      const real = realpath(env.NODE_EXTRA_CA_CERTS);
-      nodeExtraCa = {
-        hostPath: real,
-        containerPath: join("/host-ca-certs", basename(real)),
-      };
+      real = realpath(env.NODE_EXTRA_CA_CERTS);
     } catch {
       console.error(
         `ccairgap: NODE_EXTRA_CA_CERTS is set to ${env.NODE_EXTRA_CA_CERTS} but the file does not exist — skipping passthrough.`,
       );
+    }
+    if (real !== undefined) {
+      const base = basename(real);
+      // Docker `-v` splits on `:` and argv delimits on `\n`, so either char in
+      // the basename would break the mount spec (colon) or the emitted argv
+      // (newline). Reject rather than silently mis-mount. Whitespace is fine:
+      // execa passes argv directly without shell interpretation.
+      if (base.includes(":") || base.includes("\n")) {
+        die(
+          `NODE_EXTRA_CA_CERTS realpath basename contains an unsafe character (':' or newline): ${JSON.stringify(base)}`,
+        );
+      }
+      nodeExtraCa = {
+        hostPath: real,
+        containerPath: join("/host-ca-certs", base),
+      };
     }
   }
 

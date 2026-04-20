@@ -482,6 +482,28 @@ exit 0
     expect(run).not.toContain("NODE_EXTRA_CA_CERTS");
   });
 
+  it("rejects NODE_EXTRA_CA_CERTS whose basename contains ':' (breaks docker -v parsing)", async () => {
+    const caFile = join(fakeHome, "weird:name.pem");
+    writeFileSync(caFile, "-----BEGIN CERTIFICATE-----\n");
+    process.env.NODE_EXTRA_CA_CERTS = caFile;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+    try {
+      await expect(
+        launch({
+          repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
+          keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+          hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
+          bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false,
+        }),
+      ).rejects.toThrow(/process\.exit\(1\)/);
+    } finally {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+      exitSpy.mockRestore();
+    }
+  });
+
   it("resolves symlinked NODE_EXTRA_CA_CERTS via realpath (container path uses the real basename)", async () => {
     const realFile = join(fakeHome, "real-ca.pem");
     const symLink = join(fakeHome, "ca-link.pem");

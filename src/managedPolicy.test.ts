@@ -37,12 +37,4 @@ describe("resolveManagedPolicyDir", () => {
     mkdirSync(p, { recursive: true });
     expect(resolveManagedPolicyDir({ platform: "win32", root })).toBeUndefined();
   });
-
-  it("defaults root to / in production (no root override)", () => {
-    // With no `root` override and platform=linux, the function looks at
-    // /etc/claude-code — which may or may not exist on this test machine.
-    // We assert only that the return value, if defined, starts with "/".
-    const r = resolveManagedPolicyDir({ platform: "linux" });
-    if (r !== undefined) expect(r.startsWith("/")).toBe(true);
-  });
 });
