@@ -3,7 +3,6 @@ import { homedir, platform } from "node:os";
 import { basename, join } from "node:path";
 import { execa } from "execa";
 import {
-  encodeCwd,
   hostClaudeDir,
   hostClaudeJson,
   outputDir as outputDirPath,
@@ -40,7 +39,7 @@ import {
   scanDangerousArgs,
 } from "./dockerRunArgs.js";
 import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } from "./resume.js";
-import { resolveResumeArg, listProjectSessions } from "./resumeResolver.js";
+import { resolveResumeArg } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { validateClaudeArgs } from "./claudeArgs.js";
 import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
@@ -781,23 +780,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   } finally {
     await clipboard.cleanup();
 
-    // Resume hint: scan $SESSION/transcripts/<encoded>/ for the newest jsonl
-    // and print its UUID + customTitle. Claude names files by the session
-    // UUID it assigns on first message — the ccairgap <id> is NOT that UUID,
-    // so users need this hint to re-enter. Best-effort; silent on failure.
-    const workspaceRepo = repoEntries[0]?.hostPath;
-    let resumeHint: { uuid: string; customTitle?: string } | undefined;
-    if (workspaceRepo !== undefined) {
-      const encoded = encodeCwd(workspaceRepo);
-      const transcriptsProjectDir = join(sessionPath, "transcripts", encoded);
-      const candidates = await listProjectSessions(transcriptsProjectDir);
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-        const newest = candidates[0]!;
-        resumeHint = { uuid: newest.uuid, customTitle: newest.customTitle };
-      }
-    }
-
     try {
       await handoff(sessionPath, cliVersion(), undefined, {
         noPreserveDirty: opts.noPreserveDirty,
@@ -805,15 +787,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     } catch (e) {
       console.error(`ccairgap: handoff failed: ${(e as Error).message}`);
       console.error(`  Recover manually: ccairgap recover ${id}`);
-    }
-
-    if (resumeHint) {
-      const titleSuffix = resumeHint.customTitle ? `    # ${resumeHint.customTitle}` : "";
-      console.error(`ccairgap: resume this session with:`);
-      console.error(`  ccairgap --resume ${resumeHint.uuid}${titleSuffix}`);
-      if (resumeHint.customTitle) {
-        console.error(`  ccairgap --resume '${resumeHint.customTitle}'`);
-      }
     }
   }
 

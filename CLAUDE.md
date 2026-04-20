@@ -37,7 +37,7 @@ src/
   subcommands.ts  list / recover / discard / doctor / inspect / init
   handoff.ts      exit trap + recover logic (git fetch sandbox branch, copy transcripts, rm session)
   resume.ts       --resume: pre-launch validation + copy of host `~/.claude/projects/<encoded>/<uuid>.jsonl` into $SESSION/transcripts/. UUID only — name→UUID resolution lives in resumeResolver.ts.
-  resumeResolver.ts --resume <id-or-name>: UUID regex passthrough; otherwise head+tail 64KiB scan of workspace transcripts for exact customTitle match (case-insensitive, Claude Code semantics). Also powers launch.ts's exit resume-hint printer.
+  resumeResolver.ts --resume <id-or-name>: UUID regex passthrough; otherwise head+tail 64KiB scan of workspace transcripts for exact customTitle match (case-insensitive, Claude Code semantics).
   manifest.ts     $SESSION/manifest.json read/write; carries "version": 1
   orphans.ts      scan $XDG_STATE_HOME for sessions without live container
   git.ts          resolve real git dir (dir / file-worktree), clone --shared, branch

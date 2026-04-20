@@ -1059,16 +1059,6 @@ On container exit (any reason — normal, error, signal), the CLI runs the hando
 
 Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairgap recover <id>` to finish it manually.
 
-**Resume hint.** After the container exits, before handoff runs, the CLI scans `$SESSION/transcripts/<encoded-workspace-cwd>/*.jsonl`, picks the newest by mtime, reads its last `customTitle` (head+tail 64 KiB scan — see §"--resume"), and emits a stderr hint:
-
-```
-ccairgap: resume this session with:
-  ccairgap --resume <uuid>    # <custom-title>
-  ccairgap --resume '<custom-title>'
-```
-
-The UUID is the one Claude Code picked (not the ccairgap `<id>`), so this is the only place a user can reliably learn it post-hoc. The title line is omitted when no `customTitle` is present. Best-effort; any read error silently suppresses the hint.
-
 ## Recovery
 
 `ccairgap list` — list orphaned sessions:
