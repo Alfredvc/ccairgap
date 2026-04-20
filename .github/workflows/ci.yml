@@ -24,3 +24,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Skill assets in sync with canonical sources
+        run: |
+          ./scripts/sync-skill-assets.sh
+          if ! git diff --exit-code -- skills/ccairgap-configure; then
+            echo "::error::Skill assets drifted from canonical sources under docs/ and docker/."
+            echo "Run scripts/sync-skill-assets.sh locally and commit the result."
+            exit 1
+          fi

@@ -1,9 +1,3 @@
-<!--
-  GENERATED FILE — do not edit.
-  Source: docs/hooks.md
-  Regenerate with: scripts/sync-skill-assets.sh
--->
-
 # Hooks
 
 All Claude Code hooks are **disabled by default** inside the ccairgap sandbox. Opt back in with `--hook-enable <glob>` (repeatable) or `hooks.enable: [<glob>, …]` in config.

@@ -1,9 +1,3 @@
-<!--
-  GENERATED FILE — do not edit.
-  Source: docs/docker-run-args.md
-  Regenerate with: scripts/sync-skill-assets.sh
--->
-
 # Raw docker run args
 
 `--docker-run-arg` is the escape hatch for `docker run` flags ccairgap does not expose as dedicated CLI flags. Most users never need one — the structured flags (`--ro`, `--mount`, `--cp`, `--sync`, `--dockerfile`) cover the common cases.

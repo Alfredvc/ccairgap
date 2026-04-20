@@ -1,6 +1,6 @@
 # ccairgap
 
-CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Keep those two authoritative — update them when behavior changes.
+CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Per-topic user docs under `docs/` (config, hooks, mcp, dockerfile, docker-run-args, clipboard, auto-memory, managed-policy). Keep those authoritative — update them when behavior changes; don't duplicate their content here.
 
 ## Stack
 
@@ -91,23 +91,9 @@ docs/SPEC.md      authoritative design
 - **Auto-memory is RO via env-var redirect.** Host auto-memory dir (resolved per Claude Code's `autoMemoryDirectory` cascade — see `docs/SPEC.md` §"Auto-memory") is bind-mounted RO at `/host-claude-memory` and Claude Code is redirected to it via `-e CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory`. Do not nest the mount under `~/.claude/projects/` (Docker Desktop nested-bind regression + handoff copy-back would silently propagate writes back to host, breaking the "host writable paths closed set" invariant). Do not inject `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` — that kills reads too. Use `--no-auto-memory` for the user-facing kill switch. Writes fail EROFS and are swallowed by Claude Code's callers.
 - **Managed-policy uses cross-OS path translation on macOS.** Host macOS path `/Library/Application Support/ClaudeCode/` is RO-mounted at Linux container path `/etc/claude-code/`. On Linux hosts the path is the same on both sides (no translation). Explicit exception to absolute-path preservation; same precedent as credentials (`/host-claude-creds`). Skipped when the host dir is absent or when the host is Windows — no MDM forwarding on Windows hosts (documented as out-of-scope in the README, consistent with ccairgap's existing POSIX-only assumptions from `rsync`/`cp`/`chmod`).
 
-## Config file
+## Config file & env vars
 
-`--config <path>` or default `<git-root>/.ccairgap/config.yaml` (fallback `<git-root>/.config/ccairgap/config.yaml`). YAML. Both kebab-case and camelCase keys accepted. Precedence: CLI > config > defaults. Scalars: CLI wins. Arrays (`extra-repo`, `ro`): concat (config first, CLI appended). Maps (`docker-build-arg`): per-key merge, CLI wins. Unknown keys + wrong types → error.
-
-**Profiles** — `--profile <name>` picks `<name>.config.yaml` under the canonical dir (or `config.yaml` for `--profile default`). Missing profile file is a hard error (unlike the silent default-walk fallback). Mutex with `--config`. Profile name regex: `[A-Za-z0-9._-]+`. No inheritance; filename lookup only. Anchor logic in `resolveConfigPaths` depends on basename of config dir (`.ccairgap` / `.config/ccairgap`), so profile files get identical workspace-anchor treatment.
-
-**Relative path resolution** — three anchors by semantic (implemented in `src/config.ts` `resolveConfigPaths` + `src/artifacts.ts`):
-- `repo`, `extra-repo`, `ro` → **workspace anchor**: git root when config is at either canonical location (`<git-root>/.ccairgap/config.yaml` or `<git-root>/.config/ccairgap/config.yaml`); falls back to `configDir` otherwise. So `repo: .` = git root, `ro: ../docs` = sibling of git root.
-- `dockerfile` → **config file's directory** (sidecar convention). `dockerfile: Dockerfile` = `.ccairgap/Dockerfile`.
-- `cp`, `sync`, `mount` → **workspace repo root** at launch (`artifacts.ts`, not `resolveConfigPaths`).
-
-Absolute paths bypass anchoring. `repo` is optional; defaults to the git root that contains the config (or cwd).
-
-## Host env vars
-
-- `CCAIRGAP_HOME` — override state dir root. Default `$XDG_STATE_HOME/ccairgap/`.
-- `CCAIRGAP_CC_VERSION` — short-form for `--docker-build-arg CLAUDE_CODE_VERSION=<val>`.
+User-facing config and env-var reference lives in [docs/config.md](docs/config.md) and `README.md` §"Environment variables". Dev-only implementation anchors: `resolveConfigPaths` in `src/config.ts` + `src/artifacts.ts` implement the three path anchors; profile anchor logic depends on basename of config dir (`.ccairgap` / `.config/ccairgap`).
 
 ## When adding features
 

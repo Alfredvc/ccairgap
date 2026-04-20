@@ -1,9 +1,3 @@
-<!--
-  GENERATED FILE — do not edit.
-  Source: docs/mcp.md
-  Regenerate with: scripts/sync-skill-assets.sh
--->
-
 # MCP servers
 
 All Claude Code MCP servers are **disabled by default** inside the ccairgap sandbox. Opt back in with `--mcp-enable <glob>` (repeatable) or `mcp.enable: [<glob>, …]` in config.

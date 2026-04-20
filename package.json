@@ -39,7 +39,9 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build",
+    "sync-skill-assets": "scripts/sync-skill-assets.sh",
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",

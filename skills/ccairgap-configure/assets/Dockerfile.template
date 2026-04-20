@@ -1,19 +1,9 @@
-# .ccairgap/Dockerfile — custom image extending the ccairgap base.
+# GENERATED FILE — do not edit.
+# Source: docker/Dockerfile
+# Regenerate with: scripts/sync-skill-assets.sh
 #
-# Usage: place next to config.yaml, then reference it:
-#   # config.yaml
-#   dockerfile: Dockerfile
-#
-# You also need entrypoint.sh next to this file — copy it from the ccairgap
-# package: `cp <node_modules>/ccairgap/docker/entrypoint.sh ./`. It's
-# about 40 lines of bash and shouldn't need editing unless you know why.
-#
-# This template is Pattern 1 from references/dockerfile-patterns.md (stock recipe
-# + your additions in the middle). Pattern 2 (`FROM ccairgap:<ver>`) is
-# shorter but requires the base image to exist locally already.
-#
-# Rebuilds are triggered only when: tag missing, --rebuild passed, or the
-# file's content hash changes.
+# To customize for your project, copy this file to <git-root>/.ccairgap/Dockerfile
+# and edit the copy. See docs/dockerfile.md for extension patterns.
 
 FROM node:20-slim
 
@@ -21,7 +11,6 @@ ARG HOST_UID=1000
 ARG HOST_GID=1000
 ARG CLAUDE_CODE_VERSION=latest
 
-# Stock apt packages — keep as-is unless you know you don't need one.
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && apt-get install -y --no-install-recommends \
       git \
@@ -31,38 +20,10 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       rsync \
       ca-certificates \
       less \
+      tzdata \
       vim \
  && rm -rf /var/lib/apt/lists/*
 
-# -----------------------------------------------------------------------------
-# YOUR ADDITIONS GO HERE.
-#
-# Examples (uncomment / adapt):
-#
-# # Python 3 + uv (common for hooks / MCPs)
-# RUN DEBIAN_FRONTEND=noninteractive apt-get update \
-#  && apt-get install -y --no-install-recommends \
-#       python3 python3-pip python3-venv \
-#  && rm -rf /var/lib/apt/lists/*
-# RUN pip3 install --break-system-packages --no-cache-dir uv
-#
-# # Build toolchain (common for native modules)
-# RUN DEBIAN_FRONTEND=noninteractive apt-get update \
-#  && apt-get install -y --no-install-recommends build-essential \
-#  && rm -rf /var/lib/apt/lists/*
-#
-# # Playwright system deps (Chromium subset) — see references/dockerfile-patterns.md
-# RUN DEBIAN_FRONTEND=noninteractive apt-get update \
-#  && apt-get install -y --no-install-recommends \
-#       libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-#       libdbus-1-3 libxkbcommon0 libx11-6 libxcomposite1 libxdamage1 \
-#       libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
-#  && rm -rf /var/lib/apt/lists/*
-# -----------------------------------------------------------------------------
-
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
-
-# User setup — DO NOT remove. Host bind-mount ownership depends on UID/GID match.
 RUN set -e; \
     if ! getent group ${HOST_GID} > /dev/null; then \
         groupadd -g ${HOST_GID} claude; \
@@ -75,21 +36,29 @@ RUN set -e; \
     fi; \
     mkdir -p /home/claude && chown -R ${HOST_UID}:${HOST_GID} /home/claude
 
-# Pre-create bind-mount targets so Docker doesn't create them root-owned.
-RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache \
- && chown -R ${HOST_UID}:${HOST_GID} /home/claude
+USER claude
+WORKDIR /home/claude
 
-# -----------------------------------------------------------------------------
-# POST-USER ADDITIONS (run as the `claude` user).
-#
-# For `npx playwright install`, pip install --user, cargo install, etc. that
-# should land in the claude user's home:
-#
-# USER claude
-# RUN npx playwright install chromium
-# USER root
-# -----------------------------------------------------------------------------
+ENV PATH=/home/claude/.local/bin:$PATH
 
+RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
+        curl -fsSL https://claude.ai/install.sh | bash; \
+    else \
+        curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
+    fi
+
+# Pre-create bind-mount target dirs so Docker doesn't auto-create them as root:root
+# before the entrypoint runs. Matches container paths:
+#   /home/claude/.claude/projects       <- $SESSION/transcripts (rw)
+#   /home/claude/.claude/plugins/cache  <- ~/.claude/plugins/cache (ro)
+RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache
+
+USER root
+# Pre-create the clipboard bridge mount point. RO bind source is the host
+# directory $SESSION/clipboard-bridge → /run/ccairgap-clipboard. Must be
+# traversable by the non-root claude user, so chown after creation.
+RUN mkdir -p /run/ccairgap-clipboard \
+ && chown ${HOST_UID}:${HOST_GID} /run/ccairgap-clipboard
 COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
 RUN chmod +x /usr/local/bin/ccairgap-entrypoint
 

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# ccairgap pre-commit hook.
+# Keeps skills/ccairgap-configure/{references,assets} in sync with the canonical
+# sources under docs/ and docker/. Regenerates, then stages the generated files
+# so the commit includes them.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [ ! -x scripts/sync-skill-assets.sh ]; then
+    echo "pre-commit: scripts/sync-skill-assets.sh missing or not executable" >&2
+    exit 1
+fi
+
+scripts/sync-skill-assets.sh >/dev/null
+
+# Re-stage any skill files the sync may have touched so they land in this commit.
+git add skills/ccairgap-configure/references skills/ccairgap-configure/assets
