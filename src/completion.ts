@@ -1,4 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import {
@@ -14,6 +15,19 @@ import { encodeCwd, hostClaudeDir, realpath, sessionsDir } from "./paths.js";
 import { listProjectSessions } from "./resumeResolver.js";
 
 const PROGRAM_NAME = "ccairgap";
+
+// Matches @pnpm/tabtab's COMPLETION_DIR + completionFileName(name, shell) layout.
+// Kept local so we don't reach into tabtab internals. Extend if tabtab adds a shell.
+const COMPLETION_FILE_EXT: Record<SupportedShell, string> = {
+  bash: "bash",
+  fish: "fish",
+  pwsh: "ps1",
+  zsh: "zsh",
+};
+
+function tabtabCompletionPath(shell: SupportedShell, name: string): string {
+  return join(homedir(), ".config", "tabtab", shell, `${name}.${COMPLETION_FILE_EXT[shell]}`);
+}
 
 /** Session id directory listing. Read-only readdir — deliberately skips docker probe so completion stays fast. */
 export function sessionIdCandidates(dir: string = sessionsDir()): string[] {
@@ -74,7 +88,20 @@ export async function installCompletion(shellArg?: string): Promise<void> {
 }
 
 export async function uninstallCompletion(): Promise<void> {
-  await tabtabUninstall({ name: PROGRAM_NAME });
+  // @pnpm/tabtab's default (no-shell) uninstall fans out to every supported shell
+  // and then unconditionally readFile()s `~/.config/tabtab/<shell>/__tabtab.<ext>`
+  // (installer.js:445). Shells that were never installed have no such file → ENOENT
+  // aborts the whole run. Only invoke per-shell for shells where ccairgap's own
+  // completion file exists.
+  const shells: SupportedShell[] = ["bash", "zsh", "fish", "pwsh"];
+  const installed = shells.filter((s) => existsSync(tabtabCompletionPath(s, PROGRAM_NAME)));
+  if (installed.length === 0) {
+    console.log(`=> No ${PROGRAM_NAME} completion found to uninstall.`);
+    return;
+  }
+  for (const shell of installed) {
+    await tabtabUninstall({ name: PROGRAM_NAME, shell });
+  }
 }
 
 /**
