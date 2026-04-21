@@ -45,7 +45,7 @@ npm i -g ccairgap
 
 **First launch:** Builds the container image (~1–2 min, one-time). Every launch after is seconds.
 
-**Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Completes subcommands, flags, session ids for `recover` / `discard`, and session titles for `-r` / `--resume`. Uninstall via `ccairgap uninstall-completion`.
+**Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Full reference: [docs/completion.md](docs/completion.md).
 
 ## Quick start
 
@@ -154,6 +154,7 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 **Launch**
 - [Launch flags](docs/flags.md)
 - [Subcommands](docs/subcommands.md)
+- [Shell completion](docs/completion.md)
 - [Host environment variables](docs/env-vars.md)
 - [Forwarding flags to claude](docs/claude-args.md)
 
