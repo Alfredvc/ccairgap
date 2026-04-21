@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.4.2](https://github.com/Alfredvc/ccairgap/compare/v0.4.1...v0.4.2) (2026-04-21)
+
+
+### Features
+
+* **cli:** add shell tab-completion via @pnpm/tabtab ([2c049e5](https://github.com/Alfredvc/ccairgap/commit/2c049e5070dfbb158e9b9f21afc1e39f0c7b1fda))
+* **entrypoint:** advise model on bypass-immune paths ([336ba24](https://github.com/Alfredvc/ccairgap/commit/336ba246161bc78de769e83fe154e34c6cc5d868))
+
+
+### Bug Fixes
+
+* **completion:** allow `--` tail on completion-server callback ([3fcf63e](https://github.com/Alfredvc/ccairgap/commit/3fcf63ecd851cae22a67da6b04fe1bdbfc80c33b))
+* **completion:** only uninstall shells where ccairgap is installed ([70377a7](https://github.com/Alfredvc/ccairgap/commit/70377a7e4fc9fdc223d0b3e6c7a2a7ef41b946b7))
+
 ## [0.4.1](https://github.com/Alfredvc/ccairgap/compare/v0.4.0...v0.4.1) (2026-04-20)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "ccairgap",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Run Claude Code with --dangerously-skip-permissions in a Docker container. Host filesystem cannot be mutated outside a small set of explicitly writable paths.",
   "license": "MIT",
   "type": "module",
