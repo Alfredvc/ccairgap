@@ -59,10 +59,28 @@ describe("splitClaudeArgs", () => {
     expect(r.cliClaudeArgs).toEqual(["--model", "opus"]);
   });
 
-  it("blocks -- passthrough on completion subcommands", () => {
-    for (const sub of ["install-completion", "uninstall-completion", "completion-server"]) {
+  it("blocks -- passthrough on install-completion / uninstall-completion subcommands", () => {
+    for (const sub of ["install-completion", "uninstall-completion"]) {
       expect(() => splitClaudeArgs(["node", "ccairgap", sub, "--", "x"])).toThrow(/process\.exit\(1\)/);
     }
+  });
+
+  it("silently drops the `--` tail on `completion-server` (tabtab callback)", () => {
+    // tabtab's generated completer shells out `ccairgap completion-server -- <words>`.
+    // Erroring on the `--` would kill tab-completion. The callback reads COMP_* env,
+    // not argv, so the tail is discarded.
+    const r = splitClaudeArgs([
+      "node",
+      "ccairgap",
+      "completion-server",
+      "--",
+      "ccairgap",
+      "--res",
+    ]);
+    expect(r.argvForCommander).toEqual(["node", "ccairgap", "completion-server"]);
+    expect(r.cliClaudeArgs).toEqual([]);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(errSpy).not.toHaveBeenCalled();
   });
 
   it("ignores options that precede the subcommand check (looks at first non-option)", () => {

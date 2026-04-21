@@ -26,6 +26,13 @@ export function splitClaudeArgs(argv: string[]): { argvForCommander: string[]; c
   if (sep < 0) return { argvForCommander: argv, cliClaudeArgs: [] };
   const before = argv.slice(2, sep);
   const firstPositional = before.find((tok) => !tok.startsWith("-"));
+  // tabtab's generated zsh/bash/fish completer invokes
+  // `ccairgap completion-server -- "${words[@]}"`. The callback reads
+  // COMP_LINE/COMP_CWORD/COMP_POINT from env, not argv, so drop the tail
+  // silently instead of erroring — erroring here kills tab-completion.
+  if (firstPositional === "completion-server") {
+    return { argvForCommander: argv.slice(0, sep), cliClaudeArgs: [] };
+  }
   if (firstPositional && SUBCOMMANDS.has(firstPositional)) {
     console.error(
       `ccairgap: -- passthrough is only valid on the default launch command, not on subcommand '${firstPositional}'`,
