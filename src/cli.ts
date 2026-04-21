@@ -6,6 +6,11 @@ import { launch } from "./launch.js";
 import { doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
 import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
 import { splitClaudeArgs } from "./cliSplit.js";
+import {
+  completionServer,
+  installCompletion,
+  uninstallCompletion,
+} from "./completion.js";
 
 function parseBuildArg(v: string, acc: Record<string, string>): Record<string, string> {
   const eq = v.indexOf("=");
@@ -447,6 +452,40 @@ async function main() {
       }
 
       inspectCmd({ repos, pretty: Boolean(opts.pretty) });
+    });
+
+  program
+    .command("install-completion [shell]")
+    .description(
+      "install shell tab-completion (bash/zsh/fish). Writes one source line " +
+        "into your shell rc via @pnpm/tabtab. Omit <shell> to be prompted.",
+    )
+    .action(async (shell?: string) => {
+      try {
+        await installCompletion(shell);
+      } catch (e) {
+        console.error(`ccairgap: ${(e as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command("uninstall-completion")
+    .description("remove ccairgap tab-completion from every supported shell rc.")
+    .action(async () => {
+      try {
+        await uninstallCompletion();
+      } catch (e) {
+        console.error(`ccairgap: ${(e as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command("completion-server", { hidden: true })
+    .description("internal: tabtab completion callback")
+    .action(async () => {
+      await completionServer(program);
     });
 
   program

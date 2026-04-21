@@ -45,6 +45,8 @@ npm i -g ccairgap
 
 **First launch:** Builds the container image (~1–2 min, one-time). Every launch after is seconds.
 
+**Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Completes subcommands, flags, session ids for `recover` / `discard`, and session titles for `-r` / `--resume`. Uninstall via `ccairgap uninstall-completion`.
+
 ## Quick start
 
 Run inside any git repo:

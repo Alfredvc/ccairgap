@@ -59,6 +59,12 @@ describe("splitClaudeArgs", () => {
     expect(r.cliClaudeArgs).toEqual(["--model", "opus"]);
   });
 
+  it("blocks -- passthrough on completion subcommands", () => {
+    for (const sub of ["install-completion", "uninstall-completion", "completion-server"]) {
+      expect(() => splitClaudeArgs(["node", "ccairgap", sub, "--", "x"])).toThrow(/process\.exit\(1\)/);
+    }
+  });
+
   it("ignores options that precede the subcommand check (looks at first non-option)", () => {
     const r = splitClaudeArgs(["node", "ccairgap", "--config", "/tmp/x.yaml", "--", "--model", "opus"]);
     expect(r.argvForCommander).toEqual(["node", "ccairgap", "--config", "/tmp/x.yaml"]);

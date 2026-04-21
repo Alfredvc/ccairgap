@@ -131,6 +131,9 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
 | `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
 | `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
+| `install-completion [<shell>]` | Install shell tab-completion for ccairgap. Writes one `source` line into `~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish` (shell picked by arg or prompt). Backed by `@pnpm/tabtab`. Shell completion script offers static subcommand + flag names plus dynamic candidates: session ids for `recover` / `discard`, custom titles for `--resume` / `-r`, shell names for `install-completion`. See §"Shell completion". |
+| `uninstall-completion` | Remove the ccairgap `source` line from every supported shell rc. Idempotent — no-op when not installed. |
+| `completion-server` | Internal tabtab callback entry. Invoked by the shell completion function with tabtab's `COMP_*` env vars; emits newline-separated candidates to stdout. Not listed in `--help`; users never call it directly. |
 
 **Examples:**
 
@@ -164,7 +167,7 @@ In order:
    - Otherwise: if `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
-2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, `inspect`, or `init`, run that handler per §Recovery / §Doctor / §"Container image customization" / §"Hook policy" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
+2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, `inspect`, `init`, `install-completion`, `uninstall-completion`, or `completion-server`, run that handler per §Recovery / §Doctor / §"Container image customization" / §"Hook policy" / §"Shell completion" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
 3. Host-binary preflight: verify `docker`, `git`, `rsync`, and `cp` are all resolvable via PATH (POSIX `command -v`). On failure, error with the list of missing binaries and exit 1 before any session-dir side effects. This catches the ENOENT-during-launch failure mode; `ccairgap doctor` performs the same check plus a `docker version` probe for the daemon.
 4. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<id>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <id>` / `ccairgap discard <id>` commands. Do not auto-recover; continue to new session setup.
 5. Resolve host credentials (see §"Authentication flow"):
@@ -1086,6 +1089,29 @@ On every normal `ccairgap` startup, orphaned sessions are detected and a warning
 - `repos[].basename` (string, required): the raw basename of the host repo path.
 - `repos[].host_path` (string, required): the absolute host path of the real repo.
 - `repos[].alternates_name` (string, optional, additive v1): unique per-repo scratch segment `<basename>-<sha256(host_path)[:8]>`. Handoff/recover/orphan-scan use this to locate `$SESSION/repos/<alternates_name>` on disk. Omitted in sessions written by older CLI builds; consumers MUST fall back to `basename` when absent.
+
+## Shell completion
+
+Backed by [`@pnpm/tabtab`](https://www.npmjs.com/package/@pnpm/tabtab) — the same library pnpm uses. Host-side only; nothing about completion crosses the container boundary.
+
+**Install.** `ccairgap install-completion [bash|zsh|fish]` calls `tabtab.install({ name: "ccairgap", completer: "ccairgap", shell })`. tabtab writes one `[[ -f <tabtab-script> ]] && source …` line into the target rc file (`~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish`) — exactly one line, no matter how many times the command is run. The shell script itself lives under `~/.config/tabtab/` and defers every completion request back to `ccairgap completion-server` via env vars.
+
+**Uninstall.** `ccairgap uninstall-completion` calls `tabtab.uninstall({ name: "ccairgap" })`, which removes the source line from every rc it finds and deletes the tabtab-managed scripts when no other program is using them. Idempotent.
+
+**Callback.** `ccairgap completion-server` is the handler the shell function invokes at completion time. It reads tabtab's `COMP_*` env vars via `parseEnv(process.env)`, decides what candidates apply to the current word, and emits them to stdout via `tabtab.log(candidates, shell, console.log)`. The subcommand is hidden from `--help` but is a real commander subcommand (so `splitClaudeArgs`'s known-subcommand guard recognizes it and rejects `-- <claude-args>` passthrough cleanly).
+
+**Candidates.** Static set = commander subcommand names + long-form flag names of the default launch command, introspected from the same `program` instance that parses real invocations (so the two never drift). Dynamic candidates extend the static set by `prev` word:
+
+| When `prev` is… | Candidates |
+|---|---|
+| `recover`, `discard` | Session ids — directory names under `$XDG_STATE_HOME/ccairgap/sessions/`, filtered to those whose container is not currently running. Reuses `scanOrphans`. |
+| `-r`, `--resume` | Custom titles of transcripts under `~/.claude/projects/<encoded-workspace-cwd>/*.jsonl`. Reuses `listProjectSessions` from `resumeResolver.ts` (head+tail 64 KiB scan per transcript). Requires a workspace repo (cwd-as-repo or previously-passed `--repo`); absent → no candidates. |
+| `install-completion` | `bash`, `zsh`, `fish`. |
+| any other flag | No dynamic completion — tabtab falls back to filesystem completion where appropriate. |
+
+**Failure mode.** Any scan error inside the callback is swallowed — completion emits nothing rather than a stacktrace. Exit code is always 0 so the shell completion function doesn't render shell-level errors during tab-press.
+
+**Host writable paths invariant is unchanged.** tabtab writes to `~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish` and `~/.config/tabtab/` only during `install-completion` / `uninstall-completion`, which are explicit user actions on the host, never reached by the launch pipeline. The callback (`completion-server`) is read-only.
 
 ## Known constraints
 

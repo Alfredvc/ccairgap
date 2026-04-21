@@ -54,6 +54,7 @@
     "test:e2e:cleanup": "docker ps -a --filter name=^/ccairgap- --format '{{.Names}}' | xargs -r docker rm -f"
   },
   "dependencies": {
+    "@pnpm/tabtab": "^0.5.4",
     "commander": "^12.1.0",
     "execa": "^9.5.1",
     "proper-lockfile": "^4.1.2",

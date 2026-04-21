@@ -9,7 +9,17 @@
  * top-level `main()` call would run the CLI on import).
  */
 
-const SUBCOMMANDS = new Set(["list", "recover", "discard", "doctor", "inspect", "init"]);
+const SUBCOMMANDS = new Set([
+  "list",
+  "recover",
+  "discard",
+  "doctor",
+  "inspect",
+  "init",
+  "install-completion",
+  "uninstall-completion",
+  "completion-server",
+]);
 
 export function splitClaudeArgs(argv: string[]): { argvForCommander: string[]; cliClaudeArgs: string[] } {
   const sep = argv.indexOf("--", 2);

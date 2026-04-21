@@ -5,7 +5,7 @@ CLI that runs `claude --dangerously-skip-permissions` inside a Docker container 
 ## Stack
 
 - TypeScript, ESM, Node ≥ 20. Bundled via **tsup** to single `dist/cli.js` (see `tsup.config.ts`).
-- Deps: `commander` (args), `execa` (shell out to `docker`/`git`/`claude`), `yaml` (config file), `shell-quote` (tokenize `--docker-run-arg`), `proper-lockfile` (coordinate host auth refresh with host-native `claude` and peer ccairgap launches). No runtime config libs beyond that.
+- Deps: `commander` (args), `execa` (shell out to `docker`/`git`/`claude`), `yaml` (config file), `shell-quote` (tokenize `--docker-run-arg`), `proper-lockfile` (coordinate host auth refresh with host-native `claude` and peer ccairgap launches), `@pnpm/tabtab` (shell completion for `install-completion` / `completion-server`). No runtime config libs beyond that.
 - Tests: **vitest** (`*.test.ts` colocated in `src/`). Type check: `tsc --noEmit`.
 - Distribution: npm `ccairgap`, bin → `dist/cli.js`. `files`: `dist`, `docker`, `README.md`, `LICENSE`, `SECURITY.md`.
 
@@ -35,6 +35,7 @@ src/
   config.ts       YAML config load + CLI-vs-config merge (CLI > config > defaults)
   launch.ts       main launch pipeline: clone, mounts, docker run, exit trap
   subcommands.ts  list / recover / discard / doctor / inspect / init
+  completion.ts   install-completion / uninstall-completion / completion-server (tabtab callback); dynamic candidates for session ids (recover/discard), resume titles (-r), shell names
   handoff.ts      exit trap + recover logic (git fetch sandbox branch, copy transcripts, rm session)
   resume.ts       --resume: pre-launch validation + copy of host `~/.claude/projects/<encoded>/<uuid>.jsonl` into $SESSION/transcripts/. UUID only — name→UUID resolution lives in resumeResolver.ts.
   resumeResolver.ts --resume <id-or-name>: UUID regex passthrough; otherwise head+tail 64KiB scan of workspace transcripts for exact customTitle match (case-insensitive, Claude Code semantics).
