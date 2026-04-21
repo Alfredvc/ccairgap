@@ -177,6 +177,34 @@ if [ -f "$CCAIRGAP_DIR/CLAUDE.md" ]; then
     cat "$CCAIRGAP_DIR/CLAUDE.md" >> "$CLAUDE_DIR/CLAUDE.md"
 fi
 
+# Bypass-immune paths advisory: baked-in every session (independent of .ccairgap/).
+# Upstream Claude Code enforces a safety gate (src/utils/permissions/permissions.ts
+# step 1g and src/utils/permissions/filesystem.ts checkPathSafetyForAutoEdit) that
+# ignores --dangerously-skip-permissions for these paths and fires an interactive
+# prompt the ccairgap session cannot answer. Inform the model of the consequence
+# (advisory, not prohibitive). Mirrors DANGEROUS_DIRECTORIES / DANGEROUS_FILES /
+# isClaudeSettingsPath upstream — grow when those change.
+cat >> "$CLAUDE_DIR/CLAUDE.md" <<'CAVEAT_EOF'
+
+# ccairgap sandbox — bypass-immune paths
+
+This session runs with `--dangerously-skip-permissions`, but Claude Code's
+upstream safety gate ignores bypass mode for the paths below: Edit/Write to
+them **will trigger an interactive permission prompt** to the host user,
+regardless of bypass.
+
+Paths that trigger the prompt:
+
+- Directories: `.git/`, `.vscode/`, `.idea/`, `.claude/`
+- Files: `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`,
+  `.zprofile`, `.profile`, `.ripgreprc`, `.mcp.json`, `.claude.json`
+- `.claude/settings.json`, `.claude/settings.local.json`, and anything under
+  `.claude/{commands,agents,skills}/` relative to the current working directory.
+
+Reading these paths is unaffected. Editing is allowed but requires the host
+user to approve each request.
+CAVEAT_EOF
+
 # settings.json: deep-merge into ~/.claude/settings.json.
 # Arrays concatenated (existing first, ccairgap appended).
 # Scalars/objects: ccairgap wins. null in ccairgap is a no-op (existing wins).
