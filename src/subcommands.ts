@@ -349,7 +349,6 @@ async function checkAuthRefresh(): Promise<DoctorCheck[]> {
       checks.push({
         name: `auth refresh (${id})`,
         ok: state.lastResult === "ok",
-        warn: state.lastResult === "fail" && state.consecutiveFailures < 3,
         detail: `${head}, expires ${clock} (${minsLeft}m)`,
       });
     } catch (e) {
