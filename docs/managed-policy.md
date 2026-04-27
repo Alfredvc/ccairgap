@@ -10,7 +10,7 @@ Enterprise / MDM-delivered Claude Code policy files are mounted read-only into t
 | Linux | `/etc/claude-code/` → `/etc/claude-code/` (same path, no translation) |
 | Windows | unsupported |
 
-The macOS path translation is an explicit exception to ccairgap's usual absolute-path preservation — same precedent as credentials (`/host-claude-creds`). Linux hosts keep identical paths on both sides.
+The macOS path translation is an explicit exception to ccairgap's usual absolute-path preservation — same precedent as credentials (`/host-claude-creds-dir`). Linux hosts keep identical paths on both sides.
 
 ## Skipped when
 

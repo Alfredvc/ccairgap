@@ -316,7 +316,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 
 | Host source | Container path | Mode | Notes |
 |-------------|----------------|------|-------|
-| `~/.claude/` (resolved) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds` row for credentials. |
+| `~/.claude/` (resolved) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds-dir` row for credentials. |
 | `~/.claude.json` (resolved) | `/host-claude-json` | ro | Fallback source only — used when the MCP-policy patched copy is absent. Entrypoint normally overlays `/host-claude-patched-json` over this and then applies the jq onboarding patch. |
 | `$SESSION/creds/` (always) | `/host-claude-creds-dir` | rw | Directory mount. CLI materializes `.credentials.json` (mode 0600, stripped of `claudeAiOauth.refreshToken`) on every launch and atomically rewrites it on each runtime refresh tick. Entrypoint `ln -sf`s `~/.claude/.credentials.json` to the mounted file so Claude Code's mtime-cache invalidation picks up host-driven rewrites. RW so atomic `rename(2)` succeeds; container writes to anything else in this dir are discarded on exit. See §"Authentication flow". |
 | `$SESSION/auth-warnings/` (always) | `/run/ccairgap-auth-warnings` | ro | Directory the host runtime auth-refresh watcher writes warning text into (atomic tmp + rename). The entrypoint's UserPromptSubmit hook reads `current.txt` (when present) and emits it as the top-level `systemMessage` field so failure surfaces inside the running TUI. |
@@ -558,7 +558,7 @@ Runs at container start. Steps:
 
 1. `mkdir -p /home/claude/.claude`
 2. Copy `/host-claude/` → `/home/claude/.claude/` with `rsync -rL --chmod=u+w` (transform symlinks into files, ensure writable in destination). Exclude these session-local entries so we don't drag host state into the container's fresh session view: `projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`. Also exclude `plugins/cache/` (RO-mounted separately at the same container path), `.credentials.json` (handled in the next step), and `.DS_Store` (macOS metadata at any depth — often has ACLs that break copies).
-3. If `/host-claude-creds` exists, `cp -L /host-claude-creds /home/claude/.claude/.credentials.json` and `chmod 600` the destination.
+3. If `/host-claude-creds-dir/.credentials.json` exists, `ln -sf /host-claude-creds-dir/.credentials.json /home/claude/.claude/.credentials.json`. The symlink (rather than `cp`) lets upstream's mtime-cache invalidation (`auth.ts:1320`) observe host-driven runtime rewrites of the bind-mounted file.
 4. Copy `~/.claude.json` source → `/home/claude/.claude.json`. The MCP-policy overlay wins: if `/host-claude-patched-json` is mounted (strips user + user-project `mcpServers` per `--mcp-enable`), use it as the source; otherwise fall back to `/host-claude-json`. See §"MCP policy".
 5. Patch `/home/claude/.claude.json` via `jq` to ensure:
    - `hasCompletedOnboarding: true`
@@ -622,7 +622,7 @@ Credentials come from the host's existing Claude Code login. At launch the CLI r
 
 Any running host `claude` mid-refresh waits for our lock, and vice versa.
 
-**Step 3 — Strip and materialize.** The authoritative post-refresh JSON is parsed, `claudeAiOauth.refreshToken` is deleted, and the result is written to `$SESSION/creds/.credentials.json` (mode 0600). That file is bind-mounted RO at `/host-claude-creds` on every platform. The `ccairgap` session dir (and so the stripped file) is deleted on exit.
+**Step 3 — Strip and materialize.** The authoritative post-refresh JSON is parsed, `claudeAiOauth.refreshToken` is deleted, and the result is written to `$SESSION/creds/.credentials.json` (mode 0600) via atomic tmp + `fsync` + `rename(2)`. The enclosing `$SESSION/creds/` directory is bind-mounted RW at `/host-claude-creds-dir` on every platform — RW so the runtime watcher's atomic rename succeeds; container writes to anything else in the dir are discarded on exit. The `ccairgap` session dir (and so the stripped file) is deleted on exit.
 
 **Step 4 — Runtime refresh.** While `docker run` is alive, the CLI ticks once per minute (`setInterval(60_000)`) on its main event loop. Each tick is wallclock-anchored (`Date.now() vs expiresAt − 30 min`) so a laptop sleep cycle catches up within one post-resume tick. When the threshold is crossed, the CLI calls the same `refreshIfLowTtl` helper used at pre-launch (with `refreshBelowMs = 31 min` so the gate fires reliably and a peer ccairgap that refreshed during our wait returns `already-fresh`), then atomically rewrites `$SESSION/creds/.credentials.json` (tmp + `fsync` + `rename(2)`). The container's Claude Code picks up the new contents through its existing `invalidateOAuthCacheIfDiskChanged` mtime check (`auth.ts:1320`) on the next API request — no in-container coordination required.
 
@@ -936,7 +936,7 @@ Host files are never mutated; all patched copies live under `$SESSION/mcp-policy
 
 **Host config copy-in:**
 - Entrypoint `rsync -rL` from `/host-claude` into container `~/.claude/`. `-L` materializes host symlinks as plain files/dirs in container RW.
-- Applies to: `settings.json`, `CLAUDE.md`, `statusline.sh`, `plugins/` (minus `cache/`), `skills/`, `commands/`, anything else in `~/.claude/` except session-specific dirs (`projects/`, `sessions/`, `todos/`, `shell-snapshots/`, `history.jsonl`), `plugins/cache/` (RO-mounted separately), and `.credentials.json` (handled via `/host-claude-creds`).
+- Applies to: `settings.json`, `CLAUDE.md`, `statusline.sh`, `plugins/` (minus `cache/`), `skills/`, `commands/`, anything else in `~/.claude/` except session-specific dirs (`projects/`, `sessions/`, `todos/`, `shell-snapshots/`, `history.jsonl`), `plugins/cache/` (RO-mounted separately), and `.credentials.json` (handled via `/host-claude-creds-dir`).
 
 **Project-scope working-tree overlay:**
 - After `git clone --shared` + `git checkout -b ccairgap/<id>`, the CLI `rsync -rL`s an allowlist of host-working-tree paths into each session clone (per `--repo` / `--extra-repo`):

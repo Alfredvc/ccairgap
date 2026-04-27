@@ -6,7 +6,7 @@ To keep the access token fresh, ccairgap runs a short pre-launch refresh on the 
 
 1. Read the host token and check remaining ttl.
 2. If ttl < `--refresh-below-ttl` minutes (default 120), acquire a `proper-lockfile` on host `~/.claude/` (same library and path Claude Code uses), invoke `claude auth login` with Claude Code's supported `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` + `CLAUDE_CODE_OAUTH_SCOPES` fast path, and re-read the authoritative post-refresh token.
-3. Strip the refresh token and materialize `$SESSION/creds/.credentials.json` (mode 0600) for bind-mount at `/host-claude-creds`.
+3. Strip the refresh token and materialize `$SESSION/creds/.credentials.json` (mode 0600) for bind-mount at `/host-claude-creds-dir`.
 
 The lockfile prevents two ccairgap launches from racing each other or racing a host-native `claude` that is mid-refresh.
 

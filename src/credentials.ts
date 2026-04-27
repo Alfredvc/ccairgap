@@ -12,7 +12,7 @@ const KEYCHAIN_ITEM = "Claude Code-credentials";
 const COLD_START_FLOOR_MS = 5 * 60 * 1000;
 
 export interface CredentialSource {
-  /** Absolute path to the file that should be bind-mounted at /host-claude-creds. */
+  /** Absolute path to the file under the dir that is bind-mounted at /host-claude-creds-dir. */
   hostPath: string;
   /** Human-readable origin for doctor / logs. */
   origin: "keychain" | "file";
