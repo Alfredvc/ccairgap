@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { platform } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { execa } from "execa";
 import { hostClaudeDir } from "./paths.js";
 import { refreshIfLowTtl, type RefreshResult } from "./authRefresh.js";
+import { writeSessionCreds } from "./sessionCredsWriter.js";
 
 const KEYCHAIN_ITEM = "Claude Code-credentials";
 
@@ -42,7 +43,7 @@ export class CredentialsDeadError extends Error {
   }
 }
 
-async function readHostCredsJson(): Promise<string> {
+export async function readHostCredsJson(): Promise<string> {
   if (platform() === "darwin") {
     try {
       const { stdout } = await execa("security", [
@@ -144,12 +145,8 @@ export async function resolveCredentials(
     throw new CredentialsDeadError(reason, classification, refreshResult.finalTtlMs);
   }
 
+  writeSessionCreds(sessionDir, stripRefreshToken(refreshResult.finalJson));
   const credsPath = join(sessionDir, "creds", ".credentials.json");
-  mkdirSync(dirname(credsPath), { recursive: true });
-  // `mode` on writeFileSync only applies at create time; chmod redundantly
-  // enforces it against a pre-existing file (e.g. rerun of an aborted launch).
-  writeFileSync(credsPath, stripRefreshToken(refreshResult.finalJson), { mode: 0o600 });
-  chmodSync(credsPath, 0o600);
 
   return {
     hostPath: credsPath,
