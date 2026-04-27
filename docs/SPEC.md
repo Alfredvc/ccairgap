@@ -72,7 +72,7 @@ When `CLAUDE_CONFIG_DIR` is set on the host, ccairgap reads that directory inste
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` (always materialized; see §"Authentication flow") and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
+1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` (always materialized; **rewritten atomically by the runtime auth-refresh watcher; see §"Authentication flow"**), `$SESSION/auth-warnings/current.txt` (runtime-watcher banner — atomic tmp+rename), `$SESSION/auth-refresh-state.json` (per-tick status for `ccairgap doctor`), and `$SESSION/hook-policy/` (patched settings + per-plugin / per-repo hook overlays; see §"Hook policy").
 2. `$XDG_STATE_HOME/ccairgap/output/` — `/output` mount inside container, plus `output/<id>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the ref `ccairgap/<id>` is created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
@@ -318,7 +318,8 @@ ccairgap --bare --config ~/my-cfg.yaml
 |-------------|----------------|------|-------|
 | `~/.claude/` (resolved) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds` row for credentials. |
 | `~/.claude.json` (resolved) | `/host-claude-json` | ro | Fallback source only — used when the MCP-policy patched copy is absent. Entrypoint normally overlays `/host-claude-patched-json` over this and then applies the jq onboarding patch. |
-| `$SESSION/creds/.credentials.json` (always) | `/host-claude-creds` | ro | Single-file mount. CLI materializes this file on every launch, stripped of `claudeAiOauth.refreshToken`. Entrypoint copies to `~/.claude/.credentials.json`, chmod 600. See §"Authentication flow". |
+| `$SESSION/creds/` (always) | `/host-claude-creds-dir` | rw | Directory mount. CLI materializes `.credentials.json` (mode 0600, stripped of `claudeAiOauth.refreshToken`) on every launch and atomically rewrites it on each runtime refresh tick. Entrypoint `ln -sf`s `~/.claude/.credentials.json` to the mounted file so Claude Code's mtime-cache invalidation picks up host-driven rewrites. RW so atomic `rename(2)` succeeds; container writes to anything else in this dir are discarded on exit. See §"Authentication flow". |
+| `$SESSION/auth-warnings/` (always) | `/run/ccairgap-auth-warnings` | ro | Directory the host runtime auth-refresh watcher writes warning text into (atomic tmp + rename). The entrypoint's UserPromptSubmit hook reads `current.txt` (when present) and emits it as the top-level `systemMessage` field so failure surfaces inside the running TUI. |
 | `$SESSION/hook-policy/user-settings.json` | `/host-claude-patched-settings.json` | ro | Single-file mount. Host-built copy of `settings.json` with `hooks` filtered per `--hook-enable` (empty list → `hooks: {}`) and `disableAllHooks: false` forced. Entrypoint overlays it on the rsync'd `~/.claude/settings.json` before the env-merge jq step. See §"Hook policy". |
 | `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled cache-backed plugin that ships a `hooks/hooks.json`. Always present (filtered = `{}` for the empty enable list). |
 | `$SESSION/hook-policy/dir-plugins/<market>/<plugin>/hooks.json` | `<pluginDir>/hooks/hooks.json` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin that ships `hooks/hooks.json`. Always present. |
@@ -353,7 +354,7 @@ Before invoking `docker run`, ccairgap resolves mount conflicts in two passes:
 1. **Marketplace pre-filter (`filterSubsumedMarketplaces`).** If a plugin marketplace path from `extraKnownMarketplaces` equals or is nested inside any `--repo`/`--extra-repo` `hostPath`, the marketplace mount is dropped. The repo's session-clone RW mount serves those files at the same container path. A stderr warning notes the drop and reminds users that the container sees HEAD-only content (uncommitted files in the marketplace tree are not visible).
 2. **Collision resolver (`resolveMountCollisions`).** Defense-in-depth at the end of `buildMounts`:
    - Any two surviving mounts sharing a container `dst` throw with both source labels (`--repo/--extra-repo`, `--ro`, `--mount`, `plugin marketplace`, etc.).
-   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `/ccairgap-dir`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`, `/etc/claude-code/`, or `/host-ca-certs/`.
+   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds-dir`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `/ccairgap-dir`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, anything under `/host-git-alternates/`, `/run/ccairgap-auth-warnings/`, `/etc/claude-code/`, or `/host-ca-certs/`.
 
 Nested mounts with distinct `dst` strings (hook/MCP single-file overlays on top of a repo, `--mount` paths inside a repo) are **allowed** — they're the intended overlay mechanism.
 
@@ -622,6 +623,16 @@ Credentials come from the host's existing Claude Code login. At launch the CLI r
 Any running host `claude` mid-refresh waits for our lock, and vice versa.
 
 **Step 3 — Strip and materialize.** The authoritative post-refresh JSON is parsed, `claudeAiOauth.refreshToken` is deleted, and the result is written to `$SESSION/creds/.credentials.json` (mode 0600). That file is bind-mounted RO at `/host-claude-creds` on every platform. The `ccairgap` session dir (and so the stripped file) is deleted on exit.
+
+**Step 4 — Runtime refresh.** While `docker run` is alive, the CLI ticks once per minute (`setInterval(60_000)`) on its main event loop. Each tick is wallclock-anchored (`Date.now() vs expiresAt − 30 min`) so a laptop sleep cycle catches up within one post-resume tick. When the threshold is crossed, the CLI calls the same `refreshIfLowTtl` helper used at pre-launch (with `refreshBelowMs = 31 min` so the gate fires reliably and a peer ccairgap that refreshed during our wait returns `already-fresh`), then atomically rewrites `$SESSION/creds/.credentials.json` (tmp + `fsync` + `rename(2)`). The container's Claude Code picks up the new contents through its existing `invalidateOAuthCacheIfDiskChanged` mtime check (`auth.ts:1320`) on the next API request — no in-container coordination required.
+
+**Mtime ownership.** The watcher records the post-write mtime; if a subsequent tick observes a different mtime it cedes control for the rest of the session (a different writer — most plausibly an in-container `/login` — owns the file now). The watcher does not re-strip in that state because the container's user just deliberately introduced a recovery refresh token.
+
+**Failure surfacing.** Three consecutive failures, or any failure with under 15 minutes of remaining ttl, writes `$SESSION/auth-warnings/current.txt` (atomic tmp + rename, so the in-container `cat` cannot read a torn file). The bind-mounted file is read by the entrypoint's UserPromptSubmit hook on the next prompt and emitted as the top-level `systemMessage` field, so the failure shows inside the TUI without competing for stderr that the alt-screen has hidden. Each tick also writes `$SESSION/auth-refresh-state.json` for `ccairgap doctor`.
+
+**`--print` caveat.** The hook fires on `UserPromptSubmit`, which never fires under `claude -p`. Walk-away `--print` runs therefore see refresh failures only as host-side stderr messages (post-mortem). The runtime watcher still ticks under `--print` so the access token stays fresh — only the in-TUI banner mechanism is interactive-only.
+
+**CLI shutdown.** The `finally` block that runs `clipboard.cleanup()` first calls `refreshHandle.stop()`, which clears the timer and awaits an in-flight refresh. Bounded latency: 120 s (the `claude auth login` timeout from `authRefresh.ts`).
 
 **UX branches.**
 

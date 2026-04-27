@@ -20,3 +20,15 @@ The lockfile prevents two ccairgap launches from racing each other or racing a h
 `ccairgap doctor` shows the current host token ttl and OAuth scopes so you can see what containers will inherit.
 
 See [SPEC.md](SPEC.md) §"Authentication flow" for the full mechanism, failure classification, and in-container behavior.
+
+## Runtime refresh
+
+While the container runs, the CLI runs a 1-minute wallclock-anchored polling tick on the host. When the access token has under 30 minutes of life remaining, it acquires the same `proper-lockfile` on host `~/.claude/`, calls `claude auth login` with the refresh-token env-var fast-path, and atomically rewrites `$SESSION/creds/.credentials.json` (write tmp + `fsync` + `rename(2)`). The container's Claude Code picks up the new token through its mtime-cache invalidation — no restart, no in-container coordination.
+
+Sleep / suspend on macOS: the polling tick re-bases on `Date.now()` (wallclock) rather than relying on `setTimeout`'s monotonic countdown surviving a sleep cycle. After a multi-hour sleep the first post-resume tick refreshes immediately.
+
+In-container `/login`: typing `/login` in Claude inside the container writes a fresh refresh-token-bearing JSON to the same file. The runtime watcher detects the mtime change, ceases polling for the rest of the session, and lets that container-scoped chain run until exit. After preserve (dirty repo, scan failure, orphan branch), the resulting refresh token sits under `$XDG_STATE_HOME/ccairgap/<id>/creds/` — `ccairgap discard <id>` removes it.
+
+Failure surfacing inside the TUI: 3 consecutive failures, or any failure under 15 minutes of remaining ttl, writes a banner to `$SESSION/auth-warnings/current.txt` which the entrypoint's UserPromptSubmit hook surfaces inside the session.
+
+`ccairgap doctor` prints one row per live session with the most recent refresh result and the current ttl.
