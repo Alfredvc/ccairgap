@@ -3,6 +3,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -271,6 +272,97 @@ export function inspectCmd(opts: { repos: string[]; pretty?: boolean }): void {
   }
 }
 
+/**
+ * Shape of `$SESSION/auth-refresh-state.json` written by the runtime
+ * watcher (`src/runtimeAuthRefresh.ts`). Doctor reads this read-only.
+ * Bumping the watcher's shape requires updating this interface.
+ */
+interface AuthRefreshState {
+  lastResult: "ok" | "fail";
+  lastClassification: string | null;
+  lastReason: string | null;
+  lastFireMs: number;
+  consecutiveFailures: number;
+  expiresAtMs: number;
+}
+
+/**
+ * Live = a session whose container is currently running. `runningContainerNames`
+ * is the same probe `ccairgap list` uses, so doctor and list stay in sync.
+ * Preserved/orphaned dirs (no live container) are excluded — their state file
+ * is stale by definition once the watcher exited.
+ */
+async function listLiveSessionDirs(): Promise<string[]> {
+  const root = sessionsDir();
+  if (!existsSync(root)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const running = await runningContainerNames();
+  const out: string[] = [];
+  for (const name of entries) {
+    if (!running.has(`ccairgap-${name}`)) continue;
+    const p = join(root, name);
+    try {
+      if (statSync(p).isDirectory()) out.push(p);
+    } catch {
+      // gone between readdir and stat — skip
+    }
+  }
+  return out;
+}
+
+/**
+ * One row per live session reporting last refresh outcome + token ttl.
+ * Returns a single "no active sessions" row when nothing is running. A live
+ * session with no state file yet (watcher just started) reports "no refresh
+ * fired yet" rather than a stale OK.
+ */
+async function checkAuthRefresh(): Promise<DoctorCheck[]> {
+  const dirs = await listLiveSessionDirs();
+  if (dirs.length === 0) {
+    return [{ name: "auth refresh", ok: true, detail: "no active sessions" }];
+  }
+  const checks: DoctorCheck[] = [];
+  for (const dir of dirs) {
+    const id = basename(dir);
+    const statePath = join(dir, "auth-refresh-state.json");
+    if (!existsSync(statePath)) {
+      checks.push({ name: `auth refresh (${id})`, ok: true, detail: "no refresh fired yet" });
+      continue;
+    }
+    try {
+      const state = JSON.parse(readFileSync(statePath, "utf8")) as AuthRefreshState;
+      const clock = Number.isFinite(state.expiresAtMs)
+        ? new Date(state.expiresAtMs).toTimeString().slice(0, 5)
+        : "??:??";
+      const minsLeft = Number.isFinite(state.expiresAtMs)
+        ? Math.max(0, Math.round((state.expiresAtMs - Date.now()) / 60_000))
+        : 0;
+      const head =
+        state.lastResult === "ok"
+          ? "last ok"
+          : `last fail (${state.lastClassification ?? "unknown"}): ${state.lastReason ?? "?"}`;
+      checks.push({
+        name: `auth refresh (${id})`,
+        ok: state.lastResult === "ok",
+        warn: state.lastResult === "fail" && state.consecutiveFailures < 3,
+        detail: `${head}, expires ${clock} (${minsLeft}m)`,
+      });
+    } catch (e) {
+      checks.push({
+        name: `auth refresh (${id})`,
+        ok: false,
+        detail: `state file unreadable: ${(e as Error).message}`,
+      });
+    }
+  }
+  return checks;
+}
+
 export async function doctor(): Promise<void> {
   const checks: DoctorCheck[] = [];
   checks.push(await checkDocker());
@@ -282,6 +374,7 @@ export async function doctor(): Promise<void> {
   checks.push(await checkHostBinary("cp"));
   checks.push(await checkImage());
   checks.push(checkClipboard());
+  for (const c of await checkAuthRefresh()) checks.push(c);
   const drift = checkSidecarDrift();
   if (drift) checks.push(drift);
 
