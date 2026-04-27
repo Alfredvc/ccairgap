@@ -26,7 +26,7 @@ export function reservedContainerPaths(
       "/output",
       "/host-claude",
       "/host-claude-json",
-      "/host-claude-creds",
+      "/host-claude-creds-dir",
       "/host-claude-patched-settings.json",
       "/host-claude-patched-json",
       "/host-claude-memory",
@@ -34,7 +34,7 @@ export function reservedContainerPaths(
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
-    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard", "/etc/claude-code", "/host-ca-certs"],
+    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard", "/run/ccairgap-auth-warnings", "/etc/claude-code", "/host-ca-certs"],
   };
 }
 
@@ -57,7 +57,8 @@ function label(src: MountSource): string {
     case "mcp-override": return `mcp override (${src.description})`;
     case "host-claude": return `~/.claude RO mount`;
     case "host-claude-json": return `~/.claude.json RO mount`;
-    case "host-creds": return `credentials RO mount`;
+    case "host-creds-dir": return `credentials RW dir mount`;
+    case "auth-warnings": return `auth-warnings RO mount`;
     case "patched-settings": return `patched user settings`;
     case "patched-claude-json": return `patched ~/.claude.json`;
     case "plugins-cache": return `plugins cache RO mount`;

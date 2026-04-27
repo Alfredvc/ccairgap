@@ -160,7 +160,7 @@ describe("resolveMountCollisions", () => {
         "/output",
         "/host-claude",
         "/host-claude-json",
-        "/host-claude-creds",
+        "/host-claude-creds-dir",
         "/host-claude-patched-settings.json",
         "/host-claude-patched-json",
         "/host-claude-memory",
@@ -168,7 +168,9 @@ describe("resolveMountCollisions", () => {
         `${HOME_IN_CONTAINER}/.claude/plugins/cache`,
       ]),
     );
-    expect(reserved.prefixes).toEqual(expect.arrayContaining(["/host-git-alternates"]));
+    expect(reserved.prefixes).toEqual(
+      expect.arrayContaining(["/host-git-alternates", "/run/ccairgap-auth-warnings"]),
+    );
   });
 
   it("blocks --ro mounting under the clipboard bridge prefix", () => {

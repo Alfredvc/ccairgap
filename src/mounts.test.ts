@@ -10,10 +10,13 @@ function baseInput(r: string) {
   mkdirSync(join(r, "claude"), { recursive: true });
   mkdirSync(join(r, "transcripts"), { recursive: true });
   mkdirSync(join(r, "output"), { recursive: true });
+  mkdirSync(join(r, "creds-dir"), { recursive: true });
+  mkdirSync(join(r, "auth-warnings"), { recursive: true });
   return {
     hostClaudeDir: join(r, "claude"),
     hostClaudeJson: join(r, "claude", ".claude.json"),
-    hostCredsFile: join(r, "claude", "creds"),
+    hostCredsDir: join(r, "creds-dir"),
+    authWarningsDir: join(r, "auth-warnings"),
     pluginsCacheDir: join(r, "claude", "nocache"), // absent → skipped
     sessionTranscriptsDir: join(r, "transcripts"),
     outputDir: join(r, "output"),
@@ -41,6 +44,38 @@ describe("buildMounts + collision resolver", () => {
   });
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("RW-mounts the host creds dir at /host-claude-creds-dir", () => {
+    const input = baseInput(root);
+    const mounts = buildMounts(input);
+    const creds = mounts.find((m) => m.source.kind === "host-creds-dir");
+    expect(creds).toBeDefined();
+    expect(creds?.src).toBe(input.hostCredsDir);
+    expect(creds?.dst).toBe("/host-claude-creds-dir");
+    expect(creds?.mode).toBe("rw");
+  });
+
+  it("RO-mounts the auth-warnings dir at /run/ccairgap-auth-warnings", () => {
+    const input = baseInput(root);
+    const mounts = buildMounts(input);
+    const aw = mounts.find((m) => m.source.kind === "auth-warnings");
+    expect(aw).toBeDefined();
+    expect(aw?.src).toBe(input.authWarningsDir);
+    expect(aw?.dst).toBe("/run/ccairgap-auth-warnings");
+    expect(aw?.mode).toBe("ro");
+  });
+
+  it("rejects a user --ro colliding with /host-claude-creds-dir", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/host-claude-creds-dir"];
+    expect(() => buildMounts(input)).toThrow(/\/host-claude-creds-dir.*reserved/);
+  });
+
+  it("rejects a user --ro under /run/ccairgap-auth-warnings prefix", () => {
+    const input = baseInput(root);
+    input.roPaths = ["/run/ccairgap-auth-warnings/inner"];
+    expect(() => buildMounts(input)).toThrow(/\/run\/ccairgap-auth-warnings/);
   });
 
   it("produces distinct /host-git-alternates dsts for two repos sharing a basename", () => {

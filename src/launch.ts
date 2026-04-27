@@ -25,7 +25,8 @@ import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
 import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
-import { resolveCredentials, CredentialsDeadError } from "./credentials.js";
+import { resolveCredentials, CredentialsDeadError, readHostCredsJson } from "./credentials.js";
+import { startRuntimeAuthRefresh } from "./runtimeAuthRefresh.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { alternatesName } from "./alternatesName.js";
 import { executeCopies, resolveArtifacts } from "./artifacts.js";
@@ -445,6 +446,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   mkdirSync(join(sessionPath, "repos"), { recursive: true });
   mkdirSync(join(sessionPath, "transcripts"), { recursive: true });
+  mkdirSync(join(sessionPath, "auth-warnings"), { recursive: true });
   mkdirSync(outputDirPath(env), { recursive: true });
 
   let setupOk = false;
@@ -659,7 +661,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     mounts = buildMounts({
       hostClaudeDir: hostClaude,
       hostClaudeJson: resolvedClaudeJson,
-      hostCredsFile: creds.hostPath,
+      hostCredsDir: join(sessionPath, "creds"),
+      authWarningsDir: join(sessionPath, "auth-warnings"),
       hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
       hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
       pluginsCacheDir: pluginsCache,
@@ -771,6 +774,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   // Step 11: exec docker run with exit-trap handoff
   let exitCode = 0;
+  const refreshHandle = startRuntimeAuthRefresh({
+    sessionDir: sessionPath,
+    lockPath: hostClaude,
+    readHostCreds: readHostCredsJson,
+  });
   try {
     const result = await execa("docker", dockerArgs, {
       stdio: "inherit",
@@ -778,6 +786,16 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     });
     exitCode = typeof result.exitCode === "number" ? result.exitCode : 1;
   } finally {
+    // Drain the runtime auth-refresh watcher BEFORE clipboard cleanup so an
+    // in-flight `claude auth login` (max 120 s, see authRefresh.ts) finishes
+    // and writes its result; then run clipboard cleanup; then handoff.
+    // Bounded latency: 120 s for the auth child, plus existing handoff time.
+    try {
+      await refreshHandle.stop();
+    } catch (e) {
+      console.error(`ccairgap: runtime refresh shutdown failed: ${(e as Error).message}`);
+    }
+
     await clipboard.cleanup();
 
     try {

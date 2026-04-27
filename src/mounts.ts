@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" | "ccairgap-dir" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds-dir" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" | "ccairgap-dir" | "auth-warnings" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -31,7 +31,10 @@ export function mountArg(m: Mount): string[] {
 export interface BuildMountsInput {
   hostClaudeDir: string;
   hostClaudeJson: string;
-  hostCredsFile: string;
+  /** Host directory containing `.credentials.json`, RW-mounted at /host-claude-creds-dir/. */
+  hostCredsDir: string;
+  /** Host directory the runtime watcher writes warning text into; RO-mounted at /run/ccairgap-auth-warnings/. */
+  authWarningsDir: string;
   /**
    * Host path of the patched settings.json produced by the hook-policy pass.
    * Mounted at `/host-claude-patched-settings.json` (single-file, RO); the
@@ -103,7 +106,18 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
 
   mounts.push({ src: i.hostClaudeDir, dst: "/host-claude", mode: "ro", source: { kind: "host-claude" } });
   mounts.push({ src: i.hostClaudeJson, dst: "/host-claude-json", mode: "ro", source: { kind: "host-claude-json" } });
-  mounts.push({ src: i.hostCredsFile, dst: "/host-claude-creds", mode: "ro", source: { kind: "host-creds" } });
+  mounts.push({
+    src: i.hostCredsDir,
+    dst: "/host-claude-creds-dir",
+    mode: "rw",
+    source: { kind: "host-creds-dir" },
+  });
+  mounts.push({
+    src: i.authWarningsDir,
+    dst: "/run/ccairgap-auth-warnings",
+    mode: "ro",
+    source: { kind: "auth-warnings" },
+  });
   if (i.hostPatchedUserSettings) {
     mounts.push({ src: i.hostPatchedUserSettings, dst: "/host-claude-patched-settings.json", mode: "ro", source: { kind: "patched-settings" } });
   }
