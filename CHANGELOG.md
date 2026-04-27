@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.4.3](https://github.com/Alfredvc/ccairgap/compare/v0.4.2...v0.4.3) (2026-04-27)
+
+
+### Features
+
+* **auth:** add atomic creds writer for session creds file ([9a7d36d](https://github.com/Alfredvc/ccairgap/commit/9a7d36dcbf65a90aa528f6584e96630308e14122))
+* **auth:** runtime auth-refresh watcher with mtime ownership check ([2bc3a1b](https://github.com/Alfredvc/ccairgap/commit/2bc3a1b4305817582babe65333380ae16a9e0326))
+* **auth:** symlink container creds at /host-claude-creds-dir; route auth warnings via title hook ([67d2145](https://github.com/Alfredvc/ccairgap/commit/67d214519d8c68a2f3a48fc27e70841155d87314))
+* **auth:** wire runtime auth-refresh watcher; switch creds mount to RW directory + auth-warnings RO mount ([87ecbf9](https://github.com/Alfredvc/ccairgap/commit/87ecbf9de3e178f0b8fcd398bd4a55899b6375f8))
+* **doctor:** per-session auth-refresh status rows ([af1da2c](https://github.com/Alfredvc/ccairgap/commit/af1da2c4c19a277b065d8d2c16734a9bdd050ee0))
+
+
+### Bug Fixes
+
+* **doctor:** remove dead WARN flag from auth-refresh checks ([48b4972](https://github.com/Alfredvc/ccairgap/commit/48b4972d774fef281ef9e8fd7959b5f8ed57ce93))
+* **e2e:** resolve smoke.sh toplevel before cd into tmp repo ([c0276d1](https://github.com/Alfredvc/ccairgap/commit/c0276d13f5d2cc97c17d23c8f78fb63b64c51c94))
+
+
+### Refactors
+
+* **auth:** use writeSessionCreds; export readHostCredsJson for runtime watcher ([e7cb927](https://github.com/Alfredvc/ccairgap/commit/e7cb9274a0fe4b092e4801adacfcf1b4805619b4))
+
 ## [0.4.2](https://github.com/Alfredvc/ccairgap/compare/v0.4.1...v0.4.2) (2026-04-21)
 
 
