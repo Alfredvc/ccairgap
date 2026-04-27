@@ -9,7 +9,7 @@ HOME_DIR="${HOME:-/home/claude}"
 CLAUDE_DIR="$HOME_DIR/.claude"
 HOST_CLAUDE="/host-claude"
 HOST_CLAUDE_JSON="/host-claude-json"
-HOST_CLAUDE_CREDS="/host-claude-creds"
+HOST_CLAUDE_CREDS_DIR="/host-claude-creds-dir"
 HOST_PATCHED_SETTINGS="/host-claude-patched-settings.json"
 HOST_PATCHED_CLAUDE_JSON="/host-claude-patched-json"
 
@@ -19,7 +19,7 @@ mkdir -p "$CLAUDE_DIR"
 # rsync with -L (transform symlinks into files) + explicit excludes handles:
 #  - session-local state that shouldn't leak between sessions
 #  - plugins/cache (RO-mounted separately at same container path)
-#  - .credentials.json (handled via /host-claude-creds)
+#  - .credentials.json (handled via /host-claude-creds-dir)
 #  - macOS .DS_Store files at any depth
 if [ -d "$HOST_CLAUDE" ]; then
     rsync -rL --chmod=u+w \
@@ -38,10 +38,13 @@ if [ -d "$HOST_CLAUDE" ]; then
         "$HOST_CLAUDE/" "$CLAUDE_DIR/"
 fi
 
-# Copy credentials from /host-claude-creds (single-file mount) into ~/.claude/.credentials.json.
-if [ -f "$HOST_CLAUDE_CREDS" ]; then
-    cp -L "$HOST_CLAUDE_CREDS" "$CLAUDE_DIR/.credentials.json"
-    chmod 600 "$CLAUDE_DIR/.credentials.json"
+# Symlink credentials from /host-claude-creds-dir/.credentials.json (directory mount).
+# The host CLI's runtime auth-refresh watcher atomically rewrites the host file
+# (write-tmp + rename), and Claude Code's mtime-cache invalidation
+# (auth.ts:1320) picks up the new contents on the next API request.
+# `ln -sf` is idempotent across re-launches.
+if [ -f "$HOST_CLAUDE_CREDS_DIR/.credentials.json" ]; then
+    ln -sf "$HOST_CLAUDE_CREDS_DIR/.credentials.json" "$CLAUDE_DIR/.credentials.json"
 fi
 
 # Clipboard bridge: when the host spawned a per-platform clipboard watcher,
@@ -141,11 +144,18 @@ if [ -n "${CCAIRGAP_NAME:-}" ]; then
 else
     TITLE="[ccairgap]"
 fi
-# jq for JSON-safe emission — raw printf would break if TITLE ever contained
-# a double-quote or backslash. Id shape is [a-z0-9-]+ today so it's safe, but
-# keep jq so future id-shape changes don't silently produce invalid JSON.
-jq -nc --arg title "$TITLE" \
-  '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}'
+WARN_FILE="/run/ccairgap-auth-warnings/current.txt"
+if [ -f "$WARN_FILE" ] && [ -s "$WARN_FILE" ]; then
+    WARN_MSG="$(cat "$WARN_FILE")"
+    # Top-level systemMessage surfaces inside the TUI alt-screen — the design
+    # spec's chosen field. The hookSpecificOutput.sessionTitle stays the
+    # rename trigger.
+    jq -nc --arg title "$TITLE" --arg warn "$WARN_MSG" \
+      '{systemMessage: $warn, hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}'
+else
+    jq -nc --arg title "$TITLE" \
+      '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", sessionTitle: $title}}'
+fi
 HOOK_EOF
 chmod +x "$TITLE_HOOK"
 
