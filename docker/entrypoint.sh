@@ -208,8 +208,7 @@ Paths that trigger the prompt:
 - Directories: `.git/`, `.vscode/`, `.idea/`, `.claude/`
 - Files: `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`,
   `.zprofile`, `.profile`, `.ripgreprc`, `.mcp.json`, `.claude.json`
-- `.claude/settings.json`, `.claude/settings.local.json`, and anything under
-  `.claude/{commands,agents,skills}/` relative to the current working directory.
+- `.claude/settings.json`, `.claude/settings.local.json`
 
 Reading these paths is unaffected. Editing is allowed but requires the host
 user to approve each request.
