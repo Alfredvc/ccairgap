@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.5.0](https://github.com/Alfredvc/ccairgap/compare/v0.4.3...v0.5.0) (2026-04-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* publish default image to GHCR; UID-portable runtime via --user
+
+### Features
+
+* publish default image to GHCR; UID-portable runtime via --user ([2f64450](https://github.com/Alfredvc/ccairgap/commit/2f64450ba0f44c9dec81f984f443b9503585f3a4))
+
 ## [0.4.3](https://github.com/Alfredvc/ccairgap/compare/v0.4.2...v0.4.3) (2026-04-27)
 
 
