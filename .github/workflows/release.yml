@@ -4,12 +4,17 @@ on:
   push:
     tags: ["v*"]
 
+# Job order is load-bearing. The npm package, once published, references the
+# default image at ghcr.io/alfredvc/ccairgap:<version>(-<hash8>) — first
+# launch on a user's machine pulls it. If npm shipped before the image
+# existed in GHCR, every fresh install would 404 until the image job caught
+# up. Image first, npm last.
+
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       hash8: ${{ steps.hash.outputs.hash8 }}
@@ -19,7 +24,6 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -41,29 +45,9 @@ jobs:
           # entrypoint.sh content concatenated, first 8 hex chars.
           hash8=$(cat docker/Dockerfile docker/entrypoint.sh | sha256sum | cut -c1-8)
           echo "hash8=$hash8" >> "$GITHUB_OUTPUT"
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Extract CHANGELOG section for this tag
-        run: |
-          version=${GITHUB_REF_NAME#v}
-          awk -v ver="$version" '
-            /^## \[/ {
-              if (p) exit
-              if (index($0, "[" ver "]") == 4) { p=1; print; next }
-            }
-            p { print }
-          ' CHANGELOG.md > RELEASE_NOTES.md
-          if [ ! -s RELEASE_NOTES.md ]; then
-            echo "::error::No CHANGELOG section found for $version"
-            exit 1
-          fi
-      - uses: softprops/action-gh-release@v2
-        with:
-          body_path: RELEASE_NOTES.md
 
   publish-image:
-    needs: publish
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -86,7 +70,7 @@ jobs:
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "image=ghcr.io/$owner/ccairgap" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
-        id: build
+        id: build-push
         with:
           context: ./docker
           file: ./docker/Dockerfile
@@ -95,10 +79,60 @@ jobs:
           # CLI pulls the version+hash form. Plain :version tag is for humans
           # browsing the registry; both refs point at the same digest.
           tags: |
-            ${{ steps.meta.outputs.image }}:${{ needs.publish.outputs.version }}-${{ needs.publish.outputs.hash8 }}
-            ${{ steps.meta.outputs.image }}:${{ needs.publish.outputs.version }}
+            ${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}-${{ needs.build.outputs.hash8 }}
+            ${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}
       - uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ steps.meta.outputs.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.build-push.outputs.digest }}
           push-to-registry: true
+      - name: Verify image is anonymously pullable
+        # The CLI pulls without auth; if the GHCR package visibility is still
+        # private (default for new packages), users hit 401. Fail the release
+        # here so the npm publish job never runs against a private image.
+        run: |
+          # `docker logout` drops the GHCR creds set by docker/login-action so
+          # the manifest probe runs anonymously — same posture a fresh user has.
+          docker logout ghcr.io
+          ref="${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}-${{ needs.build.outputs.hash8 }}"
+          if ! docker manifest inspect "$ref" >/dev/null; then
+            echo "::error::Image $ref is not anonymously pullable. Set the GHCR package visibility to Public:"
+            echo "::error::  https://github.com/users/${{ github.repository_owner }}/packages/container/ccairgap/settings"
+            exit 1
+          fi
+
+  publish-npm:
+    needs: publish-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Extract CHANGELOG section for this tag
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v ver="$version" '
+            /^## \[/ {
+              if (p) exit
+              if (index($0, "[" ver "]") == 4) { p=1; print; next }
+            }
+            p { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::No CHANGELOG section found for $version"
+            exit 1
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
