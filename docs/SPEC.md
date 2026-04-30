@@ -477,13 +477,21 @@ See `SECURITY.md` §"Clipboard passthrough risks".
 
 ## Container image
 
-**Distribution model:** the image is built locally on first use from a Dockerfile shipped inside the npm package. No registry pull. The user can substitute their own Dockerfile via `--dockerfile <path>`.
+**Distribution model:** the CLI tries three sources in order on launch:
 
-**Base:** `node:20-slim` (latest LTS).
+1. **Local image** matching the computed tag (`ccairgap:<cli-version>-<hash8>`) — use it.
+2. **Registry pull** from `ghcr.io/alfredvc/ccairgap:<cli-version>-<hash8>` (override repo with `CCAIRGAP_REGISTRY=<host>/<owner>/<repo>`). Skipped when `--rebuild` or `--dockerfile` is set, or when the tag is custom (`ccairgap:custom-*`).
+3. **Local build** from the Dockerfile shipped inside the npm package (or `--dockerfile <path>`).
+
+The published image is built and signed in `.github/workflows/release.yml`'s `publish-image` job: multi-arch (`linux/amd64`, `linux/arm64`), tagged `ghcr.io/alfredvc/ccairgap:<version>` and `:<version>-<hash8>`, with a SLSA build-provenance attestation pushed alongside the manifest. Verify with `gh attestation verify oci://ghcr.io/alfredvc/ccairgap:<tag> --owner alfredvc`. The hash is deterministic from the bundled `Dockerfile`+`entrypoint.sh` content, so a registry pull either matches the locally-computed tag byte-for-byte or fails — there is no drift surface. CLI version mismatch (user has v0.5.0, registry has v0.4.x) → pull misses → local build.
+
+**Base:** `node:24-slim` (active LTS).
 
 **Installed:**
-- Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via `ARG CLAUDE_CODE_VERSION` (default: host version detected at build time; `latest` if undetectable). Override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
+- Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via `ARG CLAUDE_CODE_VERSION` (default: host version detected at build time when building locally; `latest` for registry-built images since CI has no host claude). Override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`.
+- `python3`, `python3-pip`, `python3-venv` — common for user scripts and MCP servers. `build-essential` is intentionally **not** installed (~200MB bloat); `pip install` of packages with native deps will fail. Users who need it: `--dockerfile` a customized image.
+- `gosu` — used by the entrypoint to drop privileges from root to `claude` after the UID-fixup step (see §"Container UID portability").
 
 Apt invocation pattern (all package installs):
 ```dockerfile
@@ -497,34 +505,35 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
 
 Not installed: `tmux` (user handles tmux outside the container).
 
-**User:** non-root `claude` at UID/GID matching the host user for bind-mount compatibility. UID and GID are not baked into the Dockerfile — the CLI passes them as build args at build time:
-
-```bash
-docker build \
-  --build-arg HOST_UID=$(id -u) \
-  --build-arg HOST_GID=$(id -g) \
-  --build-arg CLAUDE_CODE_VERSION=2.1.89 \
-  -t ccairgap:<cli-version>-<hash8> .
-```
+**User:** non-root, runs as the host UID/GID. The image bakes `claude` at fixed UID/GID 1000 (renamed from `node:*-slim`'s built-in `node` user) only so the build-time `claude install` step has a non-root user to install under and so `/home/claude` exists with sensible ownership. At runtime the CLI passes `--user $(id -u):$(id -g)`, overriding the baked user — see §"Container UID portability".
 
 Dockerfile (condensed):
 ```dockerfile
-ARG HOST_UID=1000
-ARG HOST_GID=1000
 ARG CLAUDE_CODE_VERSION=latest
-# user created first so native installer lands in /home/claude/.local/bin
-RUN groupadd -g ${HOST_GID} claude \
- && useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash claude
+# node:*-slim ships a `node` user at UID/GID 1000; rename in place. Cosmetic
+# only — the runtime user is whatever --user the CLI passes.
+RUN groupmod -n claude node \
+ && usermod -l claude -d /home/claude -m -s /bin/bash node
 USER claude
+ENV HOME=/home/claude
 ENV PATH=/home/claude/.local/bin:$PATH
-RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
-        curl -fsSL https://claude.ai/install.sh | bash; \
-    else \
-        curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
-    fi
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
+USER root
+RUN chmod -R go+rwX /home/claude
+ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
 ```
 
-Docker's layer cache handles rebuild on UID/GID change — the CLI always passes the args, Docker reuses layers when the values haven't changed.
+No final `USER` — `docker run --user` from the CLI sets the runtime UID directly.
+
+### Container UID portability
+
+The container is launched with `docker run --user $(id -u):$(id -g) --cap-drop=ALL --security-opt=no-new-privileges`. There is no in-container privilege step. Two image-build details make this work for any host UID:
+
+1. **`/home/claude` is world-writable.** The Dockerfile ends with `chmod -R go+rwX /home/claude` (capital `X` adds executable only on already-executable files, so `~/.local/bin/claude` keeps its `+x`). Any runtime UID can read+execute baked content and create new files inside `$HOME`.
+
+2. **Per-session `/etc/passwd` and `/etc/group` are bind-mounted RO.** The CLI generates `$SESSION/userdb/{passwd,group}` with one entry for the runtime UID (named `claude`) and an entry for `root`, then mounts them at `/etc/passwd` and `/etc/group`. Required because libc's `getpwuid()` for an unknown UID returns NULL, and several runtime callers (Node's `os.userInfo()`, git's GECOS lookup, bash's `whoami`) abort or print "I have no name!" when that happens.
+
+Files written from the container to bind-mounted host paths (creds dir, alternates, transcripts, output, clipboard bridge) land owned by the host UID by construction — no chown step required. RO bind-mounts under `$HOME` (host plugin caches, etc.) are untouched. The whole approach is fully compatible with `--cap-drop=ALL --security-opt=no-new-privileges`; previous designs that ran an entrypoint UID-fixup step (`usermod` + `chown -R`) needed `CAP_CHOWN` and broke on Docker Desktop's gRPC-FUSE filesystem — both regressions avoided here.
 
 **Image tagging scheme:**
 

@@ -96,18 +96,62 @@ export async function buildImage(
   await execa("docker", args, { stdio: "inherit" });
 }
 
-/** Return image tag, building if missing or if rebuild requested. */
+/**
+ * Default registry repo for the published image. Override with
+ * CCAIRGAP_REGISTRY for forks / mirrors / private registries.
+ *
+ * Versioned image tag derived from the local tag (`ccairgap:X-Y` →
+ * `<registry>:X-Y`). Hash is deterministic from Dockerfile+entrypoint.sh
+ * content, so a registry pull either matches byte-for-byte or fails — there
+ * is no drift surface.
+ */
+export function registryRef(localTag: string): string | undefined {
+  if (!localTag.startsWith("ccairgap:")) return undefined;
+  const versionTag = localTag.slice("ccairgap:".length);
+  // Custom Dockerfiles produce ccairgap:custom-<hash>; never published.
+  if (versionTag.startsWith("custom-")) return undefined;
+  const repo = process.env.CCAIRGAP_REGISTRY ?? "ghcr.io/alfredvc/ccairgap";
+  return `${repo}:${versionTag}`;
+}
+
+/**
+ * Try `docker pull <ref>` then `docker tag <ref> <localTag>`. Returns true on
+ * success, false on any failure (offline, registry private, image not yet
+ * published for this version+hash, etc.). Caller falls back to local build.
+ */
+export async function tryPullImage(localTag: string, ref: string): Promise<boolean> {
+  try {
+    await execa("docker", ["pull", ref], { stdio: "inherit" });
+    await execa("docker", ["tag", ref, localTag], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Return image tag. Resolution order:
+ *  1. Local image with matching tag → use it.
+ *  2. `--rebuild` set → build locally, skip registry.
+ *  3. Default Dockerfile (not `--dockerfile`) → try registry pull.
+ *  4. Pull failed or custom Dockerfile → build locally.
+ */
 export async function ensureImage(opts: ImageBuildOptions): Promise<ResolvedImage> {
   const defaultPath = defaultDockerfile();
   const dockerfile = resolve(opts.dockerfile);
   const contextDir = dirname(dockerfile);
   const tag = computeTag(dockerfile, defaultPath);
 
-  const needsBuild = opts.rebuild || !(await imageExistsLocally(tag));
-  if (needsBuild) {
-    await buildImage(tag, contextDir, dockerfile, opts.buildArgs);
+  if (!opts.rebuild && (await imageExistsLocally(tag))) {
+    return { tag, contextDir, dockerfile };
   }
-
+  if (!opts.rebuild) {
+    const ref = registryRef(tag);
+    if (ref !== undefined && (await tryPullImage(tag, ref))) {
+      return { tag, contextDir, dockerfile };
+    }
+  }
+  await buildImage(tag, contextDir, dockerfile, opts.buildArgs);
   return { tag, contextDir, dockerfile };
 }
 

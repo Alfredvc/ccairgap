@@ -50,4 +50,4 @@ Files inside `.ccairgap/` are injected into every session, regardless of profile
   }
 }
 ```
-The command path must be valid inside the container (`node:20-slim` Linux), not on the host.
+The command path must be valid inside the container (`node:24-slim` Linux), not on the host.

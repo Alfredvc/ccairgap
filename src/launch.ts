@@ -33,6 +33,7 @@ import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { overlayProjectClaudeConfig } from "./projectClaudeOverlay.js";
 import { applyHookPolicy } from "./hooks.js";
 import { applyMcpPolicy } from "./mcp.js";
+import { writeUserdb } from "./userdb.js";
 import { requireHostBinaries } from "./binaries.js";
 import {
   formatDangerWarnings,
@@ -449,6 +450,18 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   mkdirSync(join(sessionPath, "auth-warnings"), { recursive: true });
   mkdirSync(outputDirPath(env), { recursive: true });
 
+  // Generate per-session /etc/passwd + /etc/group so libc's getpwuid/getgrgid
+  // resolve the runtime UID (which may not exist in the baked image's
+  // /etc/passwd; published image is built with claude=1000 but the container
+  // launches with --user $(id -u):$(id -g)). Mounted RO at /etc/passwd
+  // and /etc/group. See docs/SPEC.md §"Container UID portability".
+  const userdb = writeUserdb({
+    sessionDir: sessionPath,
+    uid: process.getuid?.() ?? 1000,
+    gid: process.getgid?.() ?? 1000,
+    home: "/home/claude",
+  });
+
   let setupOk = false;
   const repoEntries: RepoPlan[] = [];
   try {
@@ -512,8 +525,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const dockerfilePath = opts.dockerfile ?? defaultDockerfile();
   const defaultClaudeVersion = opts.dockerBuildArgs.CLAUDE_CODE_VERSION ?? (await hostClaudeVersion()) ?? "latest";
   const buildArgs: Record<string, string> = {
-    HOST_UID: String(process.getuid?.() ?? 1000),
-    HOST_GID: String(process.getgid?.() ?? 1000),
     CLAUDE_CODE_VERSION: defaultClaudeVersion,
     ...opts.dockerBuildArgs,
   };
@@ -685,6 +696,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         ...hookPolicyResult.overrideMounts,
         ...mcpPolicyResult.overrideMounts,
         ...clipboard.mounts,
+        { src: userdb.passwdPath, dst: "/etc/passwd", mode: "ro", source: { kind: "userdb-passwd" } },
+        { src: userdb.groupPath, dst: "/etc/group", mode: "ro", source: { kind: "userdb-group" } },
       ],
     });
   } catch (e) {
@@ -713,6 +726,16 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
   dockerArgs.push(opts.print ? "-i" : "-it");
   dockerArgs.push("--cap-drop=ALL", "--security-opt=no-new-privileges", "--name", `ccairgap-${id}`);
+  // UID-portability: container runs directly as the host UID/GID via
+  // `docker run --user`. The image bakes /home/claude as writable by any
+  // UID (chmod -R go+rwX at build time) and the CLI mounts a per-session
+  // /etc/passwd + /etc/group RO so libc lookups (Node's os.userInfo, git's
+  // GECOS, etc.) resolve. No runtime usermod/chown, no privilege drop, no
+  // CAP_CHOWN — fully compatible with cap-drop=ALL + no-new-privileges.
+  // See docs/SPEC.md §"Container UID portability".
+  const hostUid = process.getuid?.() ?? 1000;
+  const hostGid = process.getgid?.() ?? 1000;
+  dockerArgs.push("--user", `${hostUid}:${hostGid}`);
   dockerArgs.push("-e", `CCAIRGAP_CWD=${containerCwd}`);
   dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);

@@ -4,22 +4,25 @@ Use a custom Dockerfile when a workflow needs a binary not in the base image. Pa
 
 ## What the base image already has
 
-`docker/Dockerfile` — `FROM node:20-slim` plus:
+`docker/Dockerfile` — `FROM node:24-slim` plus:
 
 - `node`, `npm` (from base)
 - `@anthropic-ai/claude-code` (installed via `claude.ai/install.sh`, pinned via `CLAUDE_CODE_VERSION` build arg, default `latest`)
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `tzdata`, `vim`
+- `python3`, `python3-pip`, `python3-venv`
 
-That's it. No `python3`, no `pip`, no `uv`, no browsers, no language toolchains, no Docker client, no cloud SDKs.
+No `uv`, no browsers, no other language toolchains, no Docker client, no cloud SDKs, no `build-essential` (~200MB; opt in via custom Dockerfile if `pip install` of native-dep packages is needed).
 
 ## Required invariants for a custom Dockerfile
 
 Your custom image must keep four things working or the container won't launch / won't match host file ownership:
 
-1. **The `claude` non-root user exists at `HOST_UID:HOST_GID`.** These are passed as build args at every build. Missing or wrong UID/GID means bind-mounted files show up as root-owned on the host.
-2. **`/home/claude/.claude/projects` and `/home/claude/.claude/plugins/cache` exist and are owned by `claude`.** The CLI pre-creates these so Docker doesn't auto-create them as `root:root` before the entrypoint runs.
+1. **`/home/claude` is writable for any runtime UID.** The CLI launches the container with `docker run --user $(id -u):$(id -g)`, and the runtime UID needs to read+execute everything under `$HOME` and create new files there. The bundled Dockerfile achieves this with `chmod -R go+rwX /home/claude` near the end. Don't add a final `USER claude` directive — it's overridden by `--user`, but a stale directive is misleading.
+2. **`/home/claude/.claude/projects` and `/home/claude/.claude/plugins/cache` exist with permissive perms.** The CLI mounts under both. They must be traversable by the runtime UID.
 3. **`/usr/local/bin/ccairgap-entrypoint` exists** — copied from `entrypoint.sh` in the ccairgap package. The `ENTRYPOINT` line must point at it.
-4. **Claude Code is installed and on the `claude` user's PATH.** The base uses the native installer (`claude.ai/install.sh`).
+4. **Claude Code is installed and on the runtime PATH.** Either install via `claude.ai/install.sh` like the bundled Dockerfile does (under build-time `USER claude`), or any other method that lands the binary somewhere on `PATH`.
+
+The CLI also bind-mounts a per-session `/etc/passwd` and `/etc/group` RO so libc lookups for the runtime UID resolve to "claude" (Node's `os.userInfo()`, git's GECOS read, etc.). You don't have to do anything for this — it happens regardless of which Dockerfile you use — but be aware that any baked `/etc/passwd` modifications are overlaid at runtime.
 
 Simplest safe pattern: copy the stock Dockerfile and add your extras in the middle. The stock file lives at `<ccairgap-repo>/docker/Dockerfile` (or inside the installed npm package under `docker/`).
 
@@ -28,10 +31,8 @@ Simplest safe pattern: copy the stock Dockerfile and add your extras in the midd
 Best when you want to add packages without reasoning about the full image layout. Copy stock → add in the middle.
 
 ```dockerfile
-FROM node:20-slim
+FROM node:24-slim
 
-ARG HOST_UID=1000
-ARG HOST_GID=1000
 ARG CLAUDE_CODE_VERSION=latest
 
 # Stock apt packages, kept as-is.
@@ -46,55 +47,47 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       less \
       tzdata \
       vim \
- && rm -rf /var/lib/apt/lists/*
-
-# --- Project additions ---
-# Python 3 + pip + uv for hooks / MCP servers written in Python.
-RUN DEBIAN_FRONTEND=noninteractive apt-get update \
- && apt-get install -y --no-install-recommends \
       python3 \
       python3-pip \
       python3-venv \
  && rm -rf /var/lib/apt/lists/*
 
+# --- Project additions ---
 RUN pip3 install --break-system-packages --no-cache-dir uv
 # --- End additions ---
 
-# User setup — do NOT change; bind-mount ownership depends on it.
-RUN set -e; \
-    if ! getent group ${HOST_GID} > /dev/null; then \
-        groupadd -g ${HOST_GID} claude; \
-    fi; \
-    if ! getent passwd ${HOST_UID} > /dev/null; then \
-        useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash claude; \
-    else \
-        existing=$(getent passwd ${HOST_UID} | cut -d: -f1); \
-        usermod -l claude -d /home/claude -m -s /bin/bash -g ${HOST_GID} "$existing" || true; \
-    fi; \
-    mkdir -p /home/claude && chown -R ${HOST_UID}:${HOST_GID} /home/claude
+# node:*-slim ships a `node` user at UID/GID 1000; rename in place. The
+# user is cosmetic at runtime — the CLI launches with `--user $(id -u):$(id -g)`,
+# overriding it. See docs/SPEC.md §"Container UID portability".
+RUN groupmod -n claude node \
+ && usermod -l claude -d /home/claude -m -s /bin/bash node
+
+ENV HOME=/home/claude
+ENV PATH=/home/claude/.local/bin:$PATH
 
 USER claude
 WORKDIR /home/claude
-
-ENV PATH=/home/claude/.local/bin:$PATH
-
 RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
         curl -fsSL https://claude.ai/install.sh | bash; \
     else \
         curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
     fi
-
 RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache
 
+# Make /home/claude writable for any runtime UID. The CLI passes
+# --user $(id -u):$(id -g); that UID needs to read+execute baked content
+# and create new files inside $HOME without owning it. Capital `X`
+# preserves the executable bit on already-executable files.
 USER root
+RUN chmod -R go+rwX /home/claude
+
 RUN mkdir -p /run/ccairgap-clipboard \
- && chown ${HOST_UID}:${HOST_GID} /run/ccairgap-clipboard
-COPY --chown=claude:claude entrypoint.sh /usr/local/bin/ccairgap-entrypoint
-RUN chmod +x /usr/local/bin/ccairgap-entrypoint
+ && chmod 1777 /run/ccairgap-clipboard
+COPY entrypoint.sh /usr/local/bin/ccairgap-entrypoint
+RUN chmod 0755 /usr/local/bin/ccairgap-entrypoint
 
-USER claude
+# No final USER directive — `docker run --user` from the CLI sets it.
 WORKDIR /home/claude
-
 ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
 ```
 
@@ -125,14 +118,15 @@ Caveat: if the base tag doesn't exist locally (e.g. first run on a new machine),
 
 ## Common add-ons
 
-### Python (hooks, MCP servers, scripts)
+### Python build deps (compiling native pip packages)
+
+`python3` + `python3-pip` + `python3-venv` ship in the base image. `pip install <pkg-with-C-extensions>` will fail without a compiler — add it explicitly:
 
 ```dockerfile
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && apt-get install -y --no-install-recommends \
-      python3 \
-      python3-pip \
-      python3-venv \
+      build-essential \
+      python3-dev \
  && rm -rf /var/lib/apt/lists/*
 ```
 
@@ -141,7 +135,7 @@ Add `uv` if scripts use it:
 RUN pip3 install --break-system-packages --no-cache-dir uv
 ```
 
-`--break-system-packages` on `node:20-slim` (Debian-based) sidesteps PEP 668. For a dedicated venv instead, `ENV PATH=/opt/venv/bin:$PATH` + `python3 -m venv /opt/venv`.
+`--break-system-packages` on `node:24-slim` (Debian-based) sidesteps PEP 668. For a dedicated venv instead, `ENV PATH=/opt/venv/bin:$PATH` + `python3 -m venv /opt/venv`.
 
 ### Playwright
 
@@ -206,7 +200,8 @@ Or environment variable on the host: `CCAIRGAP_CC_VERSION=1.2.3`. Or CLI: `--doc
 
 - Built-in image tag: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>`.
 - Custom image tag: `ccairgap:custom-<sha256(dockerfile)[:12]>`. Content-addressed.
-- Rebuild triggers: tag missing locally, `--rebuild` passed, or Dockerfile content changed (hash differs).
+- Source order on launch: local image with the computed tag → registry pull from `ghcr.io/alfredvc/ccairgap:<tag>` (default-Dockerfile only) → local build. `--rebuild` skips the first two steps and forces a build. Custom Dockerfiles (`--dockerfile`) skip registry, so first launch always builds locally.
+- Override the registry repo with `CCAIRGAP_REGISTRY=<host>/<owner>/<repo>` (e.g. for forks or private mirrors).
 - Image age is never auto-rebuilt. `ccairgap doctor` warns if > 14 days old.
 
 ## When NOT to write a custom Dockerfile

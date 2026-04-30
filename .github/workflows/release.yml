@@ -10,6 +10,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      hash8: ${{ steps.hash.outputs.hash8 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +25,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Verify tag matches package.json version
+        id: version
         run: |
           pkg=$(node -p "require('./package.json').version")
           tag=${GITHUB_REF_NAME#v}
@@ -29,6 +33,14 @@ jobs:
             echo "::error::Tag v$tag does not match package.json version $pkg"
             exit 1
           fi
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+      - name: Compute Dockerfile+entrypoint hash8 (matches src/image.ts computeTag)
+        id: hash
+        run: |
+          # Mirrors computeTag in src/image.ts: sha256 of Dockerfile then
+          # entrypoint.sh content concatenated, first 8 hex chars.
+          hash8=$(cat docker/Dockerfile docker/entrypoint.sh | sha256sum | cut -c1-8)
+          echo "hash8=$hash8" >> "$GITHUB_OUTPUT"
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -49,3 +61,44 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md
+
+  publish-image:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        run: |
+          # Lowercase repo owner for ghcr (case-sensitive on GitHub, must be
+          # lowercase in registry refs).
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/$owner/ccairgap" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: ./docker
+          file: ./docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # CLI pulls the version+hash form. Plain :version tag is for humans
+          # browsing the registry; both refs point at the same digest.
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ needs.publish.outputs.version }}-${{ needs.publish.outputs.hash8 }}
+            ${{ steps.meta.outputs.image }}:${{ needs.publish.outputs.version }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.meta.outputs.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

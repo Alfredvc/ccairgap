@@ -43,7 +43,7 @@ npm i -g ccairgap
 
 **Login:** Run `claude` once on the host — ccairgap inherits the credentials automatically.
 
-**First launch:** Builds the container image (~1–2 min, one-time). Every launch after is seconds.
+**First launch:** Pulls a pre-built container image from GitHub Container Registry (`ghcr.io/alfredvc/ccairgap`) — usually ~10–30s on a decent connection. Falls back to local build (~1–2 min) when offline, when `--dockerfile` is set, or when the published image isn't available for your CLI version. Subsequent launches are seconds.
 
 **Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Full reference: [docs/completion.md](docs/completion.md).
 

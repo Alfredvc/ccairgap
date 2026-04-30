@@ -24,9 +24,45 @@ describe("docker/Dockerfile clipboard invariants", () => {
     expect(DOCKERFILE).not.toMatch(/\bwl-clipboard\b/);
   });
 
-  it("pre-creates /run/ccairgap-clipboard with HOST ownership", () => {
+  it("pre-creates /run/ccairgap-clipboard world-writable", () => {
+    // Container runs as the host UID via `docker run --user`; the bridge
+    // dir's host-source already has the correct ownership when mounted, so
+    // the in-image dir only matters when clipboard mode is off (nothing
+    // reads/writes there). 1777 keeps the no-op path side-effect-free.
     expect(DOCKERFILE).toMatch(/mkdir -p \/run\/ccairgap-clipboard/);
-    expect(DOCKERFILE).toMatch(/chown \$\{HOST_UID\}:\$\{HOST_GID\} \/run\/ccairgap-clipboard/);
+    expect(DOCKERFILE).toMatch(/chmod 1777 \/run\/ccairgap-clipboard/);
+  });
+});
+
+describe("docker/Dockerfile UID-portability invariants", () => {
+  it("does NOT bake host UID/GID as build args", () => {
+    // Published image is UID-portable: fixed build-time UID 1000, runtime
+    // override via `docker run --user`. HOST_UID/HOST_GID build args would
+    // re-introduce per-host image divergence and defeat the shared-image
+    // cache. See docs/SPEC.md §"Container UID portability".
+    expect(DOCKERFILE).not.toMatch(/\bARG HOST_UID\b/);
+    expect(DOCKERFILE).not.toMatch(/\bARG HOST_GID\b/);
+  });
+
+  it("does NOT install gosu (no runtime privilege drop in current model)", () => {
+    // Earlier UID-fixup-via-usermod design needed gosu. Current model
+    // launches the container directly as the host UID, so no drop step
+    // exists; gosu would be dead weight (and a misleading hint about how
+    // privilege is handled).
+    expect(DOCKERFILE).not.toMatch(/\bgosu\b/);
+  });
+
+  it("makes /home/claude writable for any runtime UID", () => {
+    // The CLI passes --user $(id -u):$(id -g); /home/claude is owned by
+    // the baked UID 1000 but must be writable by any UID. `go+rwX` adds
+    // rwx for dirs / rw for files (executable bit preserved by capital X).
+    expect(DOCKERFILE).toMatch(/chmod -R go\+rwX \/home\/claude/);
+  });
+
+  it("installs python3 + pip + venv (common user tooling)", () => {
+    expect(DOCKERFILE).toMatch(/\bpython3\b/);
+    expect(DOCKERFILE).toMatch(/\bpython3-pip\b/);
+    expect(DOCKERFILE).toMatch(/\bpython3-venv\b/);
   });
 });
 

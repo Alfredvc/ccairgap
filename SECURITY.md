@@ -48,11 +48,22 @@ Explicitly NOT risks in v2 (they were in v1):
 
 ### Hardening posture
 
-- `docker run --cap-drop=ALL --user <hostuid>:<hostgid> --rm`
+- `docker run --cap-drop=ALL --security-opt=no-new-privileges --user $(id -u):$(id -g) --rm`
+- Container runs as the host UID/GID directly. There is no in-container privilege step, no `usermod`/`chown`, no `gosu`. `--cap-drop=ALL` plus `no-new-privileges` is preserved end-to-end.
 - No `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount
 - Host repos RO-mounted; container-written copies live in a session clone
 - Credentials surface via a single RO bind (`/host-claude-creds`); `~/.claude/.credentials.json` is excluded from the general `/host-claude` mount
 - macOS credentials materialized from Keychain to session scratch at mode `0600`, deleted with the session on exit
+
+### Verifying the published container image
+
+The published image at `ghcr.io/alfredvc/ccairgap:<version>` carries a SLSA build-provenance attestation produced by GitHub Actions during the release workflow. Verify before use:
+
+```
+gh attestation verify oci://ghcr.io/alfredvc/ccairgap:<version> --owner alfredvc
+```
+
+A successful verification asserts the image was built by `.github/workflows/release.yml` from a tagged commit on this repository. Verification is optional — the CLI never enforces it. Users who skip it implicitly trust the GHCR registry's authentication of the image. Users who want a fully reproducible local build can pass `--rebuild` (skips the registry pull and rebuilds from the bundled `docker/Dockerfile` + `docker/entrypoint.sh` shipped in the npm package).
 
 ## Supported versions
 

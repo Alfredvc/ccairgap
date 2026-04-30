@@ -31,6 +31,8 @@ export function reservedContainerPaths(
       "/host-claude-patched-json",
       "/host-claude-memory",
       "/ccairgap-dir",
+      "/etc/passwd",
+      "/etc/group",
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
     ],
@@ -70,6 +72,8 @@ function label(src: MountSource): string {
     case "managed-policy": return `managed-policy RO mount`;
     case "node-extra-ca": return `NODE_EXTRA_CA_CERTS RO mount`;
     case "ccairgap-dir": return `.ccairgap/ RO mount`;
+    case "userdb-passwd": return `/etc/passwd RO mount`;
+    case "userdb-group": return `/etc/group RO mount`;
   }
 }
 

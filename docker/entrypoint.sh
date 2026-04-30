@@ -94,12 +94,17 @@ fi
 # MCP policy overlay wins: if the host-built patched copy is mounted (strips
 # user + user-project `mcpServers` per --mcp-enable), use it as the source so
 # the jq onboarding patch layers on top of the filtered MCP state.
+# `rm -f` before `cp`: base image may bake `/home/claude/.claude.json` owned
+# by image-baked UID 1000 (claude.ai/install.sh init). We run as the host UID
+# via `docker run --user`; `cp` over an existing file preserves the inode and
+# its UID 1000 ownership, after which `chmod u+w` would fail EPERM. Removing
+# first guarantees a fresh file owned by the runtime UID.
 if [ -f "$HOST_PATCHED_CLAUDE_JSON" ]; then
+    rm -f "$HOME_DIR/.claude.json"
     cp -L "$HOST_PATCHED_CLAUDE_JSON" "$HOME_DIR/.claude.json"
-    chmod u+w "$HOME_DIR/.claude.json"
 elif [ -f "$HOST_CLAUDE_JSON" ]; then
+    rm -f "$HOME_DIR/.claude.json"
     cp -L "$HOST_CLAUDE_JSON" "$HOME_DIR/.claude.json"
-    chmod u+w "$HOME_DIR/.claude.json"
 fi
 if [ -f "$HOME_DIR/.claude.json" ]; then
     # CCAIRGAP_TRUSTED_CWDS = newline-separated absolute paths for trust-dialog bypass.
