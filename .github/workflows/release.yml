@@ -68,8 +68,41 @@ jobs:
           # Lowercase repo owner for ghcr (case-sensitive on GitHub, must be
           # lowercase in registry refs).
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/$owner/ccairgap" >> "$GITHUB_OUTPUT"
+      - name: Probe GHCR for prior release with same Dockerfile+entrypoint hash
+        # If a previous release already pushed an image with this exact hash8
+        # (i.e. Dockerfile + entrypoint.sh unchanged), reuse that digest by
+        # retagging instead of rebuilding+repushing identical layers. Falls
+        # through to the build path on any API failure.
+        id: probe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          hash8=${{ needs.build.outputs.hash8 }}
+          existing=$(gh api --paginate \
+            "/users/${{ steps.meta.outputs.owner }}/packages/container/ccairgap/versions" \
+            --jq '.[] | .metadata.container.tags[]? | select(endswith("-'"$hash8"'"))' \
+            2>/dev/null | head -n1 || true)
+          if [ -n "$existing" ]; then
+            echo "existing=$existing" >> "$GITHUB_OUTPUT"
+            echo "Reusing prior digest from tag: $existing"
+          else
+            echo "No prior tag with -$hash8 suffix; will build."
+          fi
+      - name: Retag prior digest (no rebuild)
+        if: steps.probe.outputs.existing != ''
+        # `imagetools create` writes a new manifest list pointing at the
+        # source digest — no layer pull, no layer push. The original
+        # attestation, signed against that digest, still resolves under the
+        # new tag.
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}-${{ needs.build.outputs.hash8 }}" \
+            --tag "${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}" \
+            "${{ steps.meta.outputs.image }}:${{ steps.probe.outputs.existing }}"
       - uses: docker/build-push-action@v6
+        if: steps.probe.outputs.existing == ''
         id: build-push
         with:
           context: ./docker
@@ -82,6 +115,7 @@ jobs:
             ${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}-${{ needs.build.outputs.hash8 }}
             ${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}
       - uses: actions/attest-build-provenance@v2
+        if: steps.probe.outputs.existing == ''
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.build-push.outputs.digest }}
