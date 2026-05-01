@@ -85,6 +85,62 @@ async function orphanBranches(
 }
 
 /**
+ * Pre-scan a session dir for dirty (uncommitted) repos. Used by `recover`'s
+ * pre-check so a dirty session aborts before any side effects run. Mirrors
+ * the per-repo alternates rewrite + dirtyTree probe in `handoff()` so the
+ * scan sees the same state handoff would. Best-effort: missing/unreadable
+ * manifest, or a repo whose host path or session clone is gone, is silently
+ * skipped — those cases also don't trip handoff's dirty preservation.
+ */
+export async function scanDirtyRepos(
+  sessionDirPath: string,
+  cliVersion: string,
+): Promise<Array<{
+  hostPath: string;
+  sessionClone: string;
+  modified: number;
+  untracked: number;
+}>> {
+  const out: Array<{
+    hostPath: string;
+    sessionClone: string;
+    modified: number;
+    untracked: number;
+  }> = [];
+  if (!existsSync(sessionDirPath)) return out;
+  let manifest;
+  try {
+    manifest = readManifest(sessionDirPath, cliVersion);
+  } catch {
+    return out;
+  }
+  for (const repo of manifest.repos) {
+    const sessionClone = join(
+      sessionDirPath,
+      "repos",
+      repo.alternates_name ?? repo.basename,
+    );
+    if (!existsSync(repo.host_path) || !existsSync(sessionClone)) continue;
+    try {
+      const realGitDir = resolveGitDir(repo.host_path);
+      writeAlternates(sessionClone, join(realGitDir, "objects"));
+    } catch {
+      // best-effort — dirtyTree below will surface scan-failed if relevant
+    }
+    const status = await dirtyTree(sessionClone);
+    if (status.kind === "dirty") {
+      out.push({
+        hostPath: repo.host_path,
+        sessionClone,
+        modified: status.modified,
+        untracked: status.untracked,
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * Idempotent handoff for a session dir. Used by both exit trap and `recover`.
  * Fails open: each step runs independently, errors are logged to warnings.
  *

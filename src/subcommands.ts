@@ -20,7 +20,7 @@ import {
   sessionsDir,
   stateRoot,
 } from "./paths.js";
-import { handoff } from "./handoff.js";
+import { handoff, scanDirtyRepos } from "./handoff.js";
 import { scanOrphans } from "./orphans.js";
 import { cliVersion } from "./version.js";
 import {
@@ -68,7 +68,10 @@ export async function listOrphans(): Promise<void> {
   }
 }
 
-export async function recover(id?: string): Promise<void> {
+export async function recover(
+  id?: string,
+  opts: { force?: boolean } = {},
+): Promise<void> {
   if (!id) return listOrphans();
   const sd = sessionDirFn(id);
   if (!existsSync(sd)) {
@@ -81,7 +84,43 @@ export async function recover(id?: string): Promise<void> {
     console.error(`  Or let it exit normally — the exit trap will run handoff.`);
     process.exit(1);
   }
-  const result = await handoff(sd, cliVersion());
+  if (!opts.force) {
+    // Pre-scan for dirty repos. Without this, handoff() *would* still preserve
+    // the session dir on dirty (per its own preservation triggers), but the
+    // pre-scan exits earlier with a focused message before any fetches /
+    // transcript copies / alternates rewrites have run, and gives the user a
+    // clear `--force` opt-out for the "yes, really delete" path.
+    const dirty = await scanDirtyRepos(sd, cliVersion());
+    if (dirty.length > 0) {
+      console.error(
+        `ccairgap: session ${id} has uncommitted changes; refusing to run handoff.`,
+      );
+      for (const d of dirty) {
+        const parts: string[] = [];
+        if (d.modified > 0) {
+          parts.push(`${d.modified} tracked-file change${d.modified === 1 ? "" : "s"}`);
+        }
+        if (d.untracked > 0) {
+          parts.push(`${d.untracked} untracked entr${d.untracked === 1 ? "y" : "ies"}`);
+        }
+        console.error(`  ${d.hostPath}: ${parts.join(", ")}`);
+        console.error(`    in ${d.sessionClone}`);
+      }
+      console.error("");
+      console.error(`To save the work:`);
+      console.error(`  cd <path above>`);
+      console.error(`  git add -A && git commit`);
+      console.error(`  ccairgap recover ${id}`);
+      console.error("");
+      console.error(
+        `To discard all uncommitted changes: ccairgap recover ${id} --force`,
+      );
+      process.exit(1);
+    }
+  }
+  const result = await handoff(sd, cliVersion(), undefined, {
+    noPreserveDirty: opts.force,
+  });
   const counts = { fetched: 0, empty: 0, failed: 0 };
   for (const f of result.fetched) counts[f.status]++;
   console.log(

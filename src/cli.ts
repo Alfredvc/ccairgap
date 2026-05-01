@@ -391,8 +391,12 @@ async function main() {
   program
     .command("recover [id]")
     .description("run handoff for a session (idempotent); without <id>, same as list")
-    .action(async (id?: string) => {
-      await recover(id);
+    .option(
+      "--force",
+      "skip the dirty-working-tree refusal and discard all uncommitted changes in the session clones (destructive; orphan-branch / scan-failure preservation still fires)",
+    )
+    .action(async (id: string | undefined, opts: { force?: boolean }) => {
+      await recover(id, { force: Boolean(opts.force) });
     });
 
   program

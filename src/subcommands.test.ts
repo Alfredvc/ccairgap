@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -9,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execaSync } from "execa";
 import { writeManifest, type Manifest } from "./manifest.js";
 
 let root: string;
@@ -246,5 +248,72 @@ describe("recover live-container precheck", () => {
     }
     const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
     expect(stderr).not.toContain("docker stop ccairgap-live-abcd");
+  });
+});
+
+describe("recover dirty-tree precheck", () => {
+  // Seed a real host repo + session clone with an uncommitted edit so the
+  // pre-scan in `recover` finds dirty state. Without --force this should
+  // refuse to delete; with --force it should fall through to handoff (which
+  // under noPreserveDirty removes the session).
+  function seedDirtySession(id: string): string {
+    const hostRepo = join(root, "hostrepo");
+    mkdirSync(hostRepo, { recursive: true });
+    execaSync("git", ["init", "-q", "-b", "main"], { cwd: hostRepo });
+    execaSync("git", ["config", "user.email", "t@t"], { cwd: hostRepo });
+    execaSync("git", ["config", "user.name", "t"], { cwd: hostRepo });
+    writeFileSync(join(hostRepo, "seed.txt"), "seed\n");
+    execaSync("git", ["add", "seed.txt"], { cwd: hostRepo });
+    execaSync("git", ["commit", "-qm", "seed"], { cwd: hostRepo });
+
+    const sd = join(root, "sessions", id);
+    mkdirSync(join(sd, "repos"), { recursive: true });
+    const altName = "hostrepo-deadbeef";
+    const sc = join(sd, "repos", altName);
+    execaSync("git", ["clone", "--shared", "-q", hostRepo, sc]);
+    execaSync("git", ["-C", sc, "checkout", "-q", "-b", `ccairgap/${id}`]);
+    writeFileSync(join(sc, "seed.txt"), "edited\n");
+
+    const m: Manifest = {
+      version: 1,
+      cli_version: "test",
+      image_tag: "test:1",
+      created_at: new Date().toISOString(),
+      repos: [{ basename: "hostrepo", host_path: hostRepo, alternates_name: altName }],
+      branch: `ccairgap/${id}`,
+      claude_code: {},
+    };
+    writeManifest(sd, m);
+    return sd;
+  }
+
+  it("refuses to delete when the session clone has uncommitted changes (no --force)", async () => {
+    const id = "dirty-zzzz";
+    const sd = seedDirtySession(id);
+    stubDocker("exit 0"); // no live container
+
+    const { recover } = await import("./subcommands.js");
+    await expect(recover(id)).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("uncommitted changes");
+    expect(stderr).toContain(`ccairgap recover ${id} --force`);
+    expect(existsSync(sd)).toBe(true);
+  });
+
+  it("--force discards uncommitted changes and removes the session", async () => {
+    const id = "dirty-yyyy";
+    const sd = seedDirtySession(id);
+    stubDocker("exit 0"); // no live container
+
+    const { recover } = await import("./subcommands.js");
+    // handoff may set process.exitCode on warnings but should not throw via exit().
+    try {
+      await recover(id, { force: true });
+    } catch (e) {
+      // unexpected — fail loud
+      throw e;
+    }
+    expect(existsSync(sd)).toBe(false);
   });
 });
