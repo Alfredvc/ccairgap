@@ -39,7 +39,25 @@ export function realpath(p: string): string {
   return realpathSync(p);
 }
 
-/** Encode an absolute cwd into the Claude transcripts dir name: /a/b/c -> -a-b-c. */
+/**
+ * Mirror of Claude Code's `sanitizePath` (upstream `src/utils/sessionStoragePortable.ts`):
+ * replace every non-alphanumeric char with `-`. For paths whose sanitized form would
+ * exceed MAX_SANITIZED_LENGTH (200), truncate and append `-<djb2(name).toString(36)>`.
+ * djb2 (not Bun.hash) because ccairgap runs on Node — matches upstream's Node fallback.
+ */
+const MAX_SANITIZED_LENGTH = 200;
+
+function djb2Hash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
 export function encodeCwd(abs: string): string {
-  return abs.replace(/\//g, "-");
+  const sanitized = abs.replace(/[^a-zA-Z0-9]/g, "-");
+  if (sanitized.length <= MAX_SANITIZED_LENGTH) return sanitized;
+  const hash = Math.abs(djb2Hash(abs)).toString(36);
+  return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${hash}`;
 }

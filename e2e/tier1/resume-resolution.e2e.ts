@@ -25,7 +25,7 @@ import * as fs from "fs/promises";
 
 /** Encode a repo path the same way paths.ts#encodeCwd does. */
 function encodeCwd(abs: string): string {
-  return abs.replace(/\//g, "-");
+  return abs.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
 /**
