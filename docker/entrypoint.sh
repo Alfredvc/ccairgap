@@ -15,12 +15,39 @@ HOST_PATCHED_CLAUDE_JSON="/host-claude-patched-json"
 
 mkdir -p "$CLAUDE_DIR"
 
+# Detect Python virtualenvs anywhere under ~/.claude/ (most commonly inside
+# skill or agent dirs). They're excluded from the rsync below because
+# `bin/python*` is an absolute symlink into the host's interpreter (pyenv,
+# system python, uv-managed) — `rsync -L` follows the link, the target path
+# doesn't exist in the container, and the whole transfer aborts (exit 23).
+# Even if we copied them, the binaries are host-OS/arch and won't run on
+# the Linux container Python. Skill authors must make their skills
+# container-compatible (system python3, lazy `pip install`, or `uv run`).
+VENVS_FOUND=()
+if [ -d "$HOST_CLAUDE" ]; then
+    while IFS= read -r venv; do
+        VENVS_FOUND+=("${venv#$HOST_CLAUDE/}")
+    done < <(find "$HOST_CLAUDE" -maxdepth 5 -type d \( -name .venv -o -name venv \) 2>/dev/null)
+fi
+if [ ${#VENVS_FOUND[@]} -gt 0 ]; then
+    echo "ccairgap: skipping host Python virtualenvs (not portable to container):" >&2
+    for v in "${VENVS_FOUND[@]}"; do
+        echo "  ~/.claude/$v" >&2
+    done
+    echo "  Containing skills/agents will load, but their venv binaries will not run." >&2
+    echo "  Make Python skills container-compatible: system python3, lazy pip install, or uv run." >&2
+fi
+
 # Copy host ~/.claude/ into container ~/.claude/.
 # rsync with -L (transform symlinks into files) + explicit excludes handles:
 #  - session-local state that shouldn't leak between sessions
 #  - plugins/cache (RO-mounted separately at same container path)
 #  - .credentials.json (handled via /host-claude-creds-dir)
 #  - macOS .DS_Store files at any depth
+#  - Python venvs (see VENVS_FOUND block above)
+# Exit code 23 ("some files/attrs not transferred") is tolerated with a
+# warning so a stray broken symlink (outside the venv pattern) does not
+# block session startup. Other exit codes still abort.
 if [ -d "$HOST_CLAUDE" ]; then
     rsync -rL --chmod=u+w \
         --exclude='projects' \
@@ -35,7 +62,16 @@ if [ -d "$HOST_CLAUDE" ]; then
         --exclude='plugins/cache' \
         --exclude='.credentials.json' \
         --exclude='.DS_Store' \
-        "$HOST_CLAUDE/" "$CLAUDE_DIR/"
+        --exclude='**/.venv/' \
+        --exclude='**/venv/' \
+        "$HOST_CLAUDE/" "$CLAUDE_DIR/" || {
+            rc=$?
+            if [ "$rc" -eq 23 ]; then
+                echo "ccairgap: warning — some files in ~/.claude/ could not be copied (likely broken symlinks). Continuing." >&2
+            else
+                exit "$rc"
+            fi
+        }
 fi
 
 # Symlink credentials from /host-claude-creds-dir/.credentials.json (directory mount).

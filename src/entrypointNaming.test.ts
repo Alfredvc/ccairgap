@@ -111,3 +111,21 @@ printf '%s' "$TITLE"
     expect(runBash(titleScript, {})).toBe("[ccairgap]");
   });
 });
+
+describe("entrypoint.sh ~/.claude rsync venv handling", () => {
+  it("excludes **/.venv/ and **/venv/ from the host-claude rsync", () => {
+    expect(entrypoint).toMatch(/--exclude='\*\*\/\.venv\/'/);
+    expect(entrypoint).toMatch(/--exclude='\*\*\/venv\/'/);
+  });
+
+  it("scans for venv dirs and warns the user before rsync", () => {
+    expect(entrypoint).toContain("VENVS_FOUND=()");
+    expect(entrypoint).toMatch(/find "\$HOST_CLAUDE" -maxdepth 5 -type d \\\( -name \.venv -o -name venv \\\)/);
+    expect(entrypoint).toContain("skipping host Python virtualenvs");
+  });
+
+  it("tolerates rsync exit code 23 with a warning, aborts on others", () => {
+    // Block guards that any rc != 23 propagates via `exit "$rc"`.
+    expect(entrypoint).toMatch(/if \[ "\$rc" -eq 23 \]; then[\s\S]*?else[\s\S]*?exit "\$rc"/);
+  });
+});
