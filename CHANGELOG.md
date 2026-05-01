@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.5.2](https://github.com/Alfredvc/ccairgap/compare/v0.5.1...v0.5.2) (2026-05-01)
+
+
+### Bug Fixes
+
+* **entrypoint:** tolerate host Python venvs in ~/.claude rsync ([a2e591a](https://github.com/Alfredvc/ccairgap/commit/a2e591a8e6bb61c1a08d1e531c015ac95ef74a12))
+
 ## [0.5.1](https://github.com/Alfredvc/ccairgap/compare/v0.5.0...v0.5.1) (2026-05-01)
 
 
