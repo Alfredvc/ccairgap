@@ -14,6 +14,12 @@ export interface HandoffResult {
   id: string;
   fetched: Array<{ hostPath: string; branch: string; status: FetchStatus }>;
   transcriptsCopied: number;
+  /**
+   * Per-file paths (relative to `~/.claude/projects/`) of the transcript
+   * jsonl files copied out. Logged via `logger` inline as they're copied
+   * so users get visibility into which sessions were rescued.
+   */
+  transcriptFiles: string[];
   removed: boolean;
   preserved: boolean;
   warnings: string[];
@@ -160,6 +166,7 @@ export async function handoff(
   const warnings: string[] = [];
   const fetched: HandoffResult["fetched"] = [];
   let transcriptsCopied = 0;
+  const transcriptFiles: string[] = [];
   let removed = false;
 
   if (!existsSync(sessionDirPath)) {
@@ -169,6 +176,7 @@ export async function handoff(
       id,
       fetched,
       transcriptsCopied,
+      transcriptFiles: [],
       removed,
       preserved: false,
       warnings,
@@ -186,6 +194,7 @@ export async function handoff(
         id,
         fetched,
         transcriptsCopied,
+        transcriptFiles: [],
         removed,
         preserved: false,
         warnings,
@@ -197,6 +206,7 @@ export async function handoff(
       id,
       fetched,
       transcriptsCopied,
+      transcriptFiles: [],
       removed,
       preserved: false,
       warnings,
@@ -325,7 +335,11 @@ export async function handoff(
     }
   }
 
-  // Transcripts copy-out (unchanged).
+  // Transcripts copy-out. After each successful per-encoded-dir cp, enumerate
+  // the top-level entries (jsonl files plus any sidecar dirs Claude Code may
+  // ship later) and stream them through `logger` so users see exactly which
+  // transcript files were rescued — addresses opaque "N transcript dirs
+  // copied" summaries when a session covered multiple workspaces.
   const transcriptsDir = join(sessionDirPath, "transcripts");
   if (existsSync(transcriptsDir)) {
     const hostProjects = join(homedir(), ".claude", "projects");
@@ -337,6 +351,15 @@ export async function handoff(
         await execa("mkdir", ["-p", dst]);
         await execa("cp", ["-r", `${src}/.`, dst]);
         transcriptsCopied++;
+        try {
+          for (const f of readdirSync(src)) {
+            const rel = join(entry, f);
+            transcriptFiles.push(rel);
+            logger(`[handoff] transcript copied: ${join(dst, f)}`);
+          }
+        } catch {
+          // best-effort enumeration — copy already succeeded
+        }
       } catch (e) {
         warnings.push(
           `transcript copy failed for ${entry}: ${(e as Error).message}`,
@@ -375,6 +398,7 @@ export async function handoff(
     id,
     fetched,
     transcriptsCopied,
+    transcriptFiles,
     removed,
     preserved,
     warnings,

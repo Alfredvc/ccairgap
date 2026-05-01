@@ -288,6 +288,38 @@ describe("handoff — dirty tree preservation", () => {
     expect(r.warnings.join("\n")).toContain("could not scan session clone");
   });
 
+  it("logs each transcript file copied and surfaces them in the result", async () => {
+    // Override HOME so the cp -r lands inside the test sandbox instead of
+    // the developer's real ~/.claude/projects/.
+    const fakeHome = join(root, "fakehome");
+    mkdirSync(fakeHome, { recursive: true });
+    const savedHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      seedSession({ sessionDir, hostRepo, altName, branch });
+      const encoded = "-Users-test-project-foo";
+      const td = join(sessionDir, "transcripts", encoded);
+      mkdirSync(td, { recursive: true });
+      writeFileSync(join(td, "alpha.jsonl"), "{}\n");
+      writeFileSync(join(td, "beta.jsonl"), "{}\n");
+
+      const logs: string[] = [];
+      const r = await handoff(sessionDir, "test", (m) => logs.push(m));
+
+      expect(r.transcriptsCopied).toBe(1);
+      expect(r.transcriptFiles.sort()).toEqual([
+        join(encoded, "alpha.jsonl"),
+        join(encoded, "beta.jsonl"),
+      ]);
+      const joined = logs.join("\n");
+      expect(joined).toContain(`transcript copied: ${join(fakeHome, ".claude", "projects", encoded, "alpha.jsonl")}`);
+      expect(joined).toContain(`transcript copied: ${join(fakeHome, ".claude", "projects", encoded, "beta.jsonl")}`);
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+  });
+
   it("multi-repo: one dirty → whole session preserved, warning names the dirty repo", async () => {
     const hostA = join(root, "repo-a");
     const hostB = join(root, "repo-b");
