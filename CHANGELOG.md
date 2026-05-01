@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.5.1](https://github.com/Alfredvc/ccairgap/compare/v0.5.0...v0.5.1) (2026-05-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* recover refuses on dirty session; --force discards
+
+### Features
+
+* **handoff:** log each transcript file copied ([5a0c4dc](https://github.com/Alfredvc/ccairgap/commit/5a0c4dc2775942cb4c25add822aab61bf7f6570b))
+* recover refuses on dirty session; --force discards ([ee17ab9](https://github.com/Alfredvc/ccairgap/commit/ee17ab968c123925beaa813295a850f8dcc72ac9))
+
 ## [0.5.0](https://github.com/Alfredvc/ccairgap/compare/v0.4.3...v0.5.0) (2026-04-30)
 
 
