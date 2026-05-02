@@ -276,6 +276,12 @@ In addition to `config.yaml`, the `.ccairgap/` directory acts as a **ccairgap-sc
 
 **`null` semantics.** A `null` value in `.ccairgap/settings.json` leaves the existing setting unchanged (no-op). To leave a setting unchanged, omit the key.
 
+The same file vocabulary is honored at user-wide scope (`~/.config/ccairgap/`)
+with user-wide-first / project-second ordering. The user-wide allowlist is
+narrower (no `commands`/`agents`/`hooks` at user-wide — those flow via the
+existing `~/.claude/` RO mount + entrypoint rsync). User-wide hooks/MCP via
+`settings.json`/`mcp.json` bypass policy filters by design.
+
 ### User-wide config layer
 
 A second config layer lives at `$XDG_CONFIG_HOME/ccairgap/` (default
@@ -303,12 +309,6 @@ Anything else hard-errors at integration-file load.
 Relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` in user-wide
 `config.yaml` are a hard error (no workspace anchor); `dockerfile` anchors
 on the user-wide config dir.
-
-The same file vocabulary is honored at user-wide scope (`~/.config/ccairgap/`)
-with user-wide-first / project-second ordering. The user-wide allowlist is
-narrower (no `commands`/`agents`/`hooks` at user-wide — those flow via the
-existing `~/.claude/` RO mount + entrypoint rsync). User-wide hooks/MCP via
-`settings.json`/`mcp.json` bypass policy filters by design.
 
 ## Bare mode
 
