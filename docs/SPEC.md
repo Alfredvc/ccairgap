@@ -276,6 +276,40 @@ In addition to `config.yaml`, the `.ccairgap/` directory acts as a **ccairgap-sc
 
 **`null` semantics.** A `null` value in `.ccairgap/settings.json` leaves the existing setting unchanged (no-op). To leave a setting unchanged, omit the key.
 
+### User-wide config layer
+
+A second config layer lives at `$XDG_CONFIG_HOME/ccairgap/` (default
+`~/.config/ccairgap/`). Loaded before project config; precedence is
+**defaults < user-wide-integrations < user-wide-config < project < CLI**.
+
+User-wide files:
+
+| Path | Role |
+|---|---|
+| `config.yaml` | Persistent defaults (every `ConfigFile` key allowed). |
+| `<name>.config.yaml` | Reserved (user-wide profiles not loaded). |
+| `integrations/*.yaml` | Per-tool drop-ins; `hooks.enable` / `mcp.enable` / `docker-run-arg` only. |
+| `CLAUDE.md` | Appended to in-container `~/.claude/CLAUDE.md` before the project block. |
+| `settings.json` | Deep-merged into `~/.claude/settings.json` (post policy filter — bypasses `--hook-enable`). |
+| `mcp.json` | `mcpServers` merged into `~/.claude.json` (bypasses `--mcp-enable`). |
+| `skills/` | Rsynced into `~/.claude/skills/`. |
+| `Dockerfile` | Sidecar; opt-in via `dockerfile:` config key. |
+
+Integration files have a structural deny-by-default top-level-key allowlist
+(`hooks`, `mcp`, `docker-run-arg`) and a stricter `docker-run-arg` safe-flag
+allowlist (`-e`/`--env`, `--add-host`, `--label`, `--dns`, `--dns-search`).
+Anything else hard-errors at integration-file load.
+
+Relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` in user-wide
+`config.yaml` are a hard error (no workspace anchor); `dockerfile` anchors
+on the user-wide config dir.
+
+The same file vocabulary is honored at user-wide scope (`~/.config/ccairgap/`)
+with user-wide-first / project-second ordering. The user-wide allowlist is
+narrower (no `commands`/`agents`/`hooks` at user-wide — those flow via the
+existing `~/.claude/` RO mount + entrypoint rsync). User-wide hooks/MCP via
+`settings.json`/`mcp.json` bypass policy filters by design.
+
 ## Bare mode
 
 `--bare` launches a container with nothing pre-wired beyond Claude's own config (`~/.claude` RO mount, credentials, plugins cache, `~/.claude.json`). It is the escape hatch for users who want to opt out of every ccairgap convenience and mount exactly what they want.
@@ -312,6 +346,15 @@ cd /tmp
 ccairgap --bare --config ~/my-cfg.yaml
 ```
 
+**User-wide layer and `--bare`:**
+
+- `--bare` skips the user-wide layer's `config.yaml` and `integrations/*.yaml`
+  (launch config). It does NOT skip user-wide `CLAUDE.md` / `settings.json` /
+  `mcp.json` / `skills/` (session environment) — same launch-config-vs-session-environment
+  split as project `.ccairgap/`.
+- `--no-user-config` is the non-`--bare` kill switch for the entire user-wide
+  layer (config + injection mount).
+
 ## Container mount manifest
 
 | Host source | Container path | Mode | Notes |
@@ -333,6 +376,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/transcripts/` | `/home/claude/.claude/projects/` | rw | Transcripts write target. |
 | `<effective-host-memory-dir>` (resolved per Claude Code's `autoMemoryDirectory` cascade — see §"Auto-memory") | `/host-claude-memory` | ro | Host auto-memory dir surfaced to Claude Code via `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory` env var. Skipped when the host dir is absent, when no workspace repo is present, or when `--no-auto-memory` is set. Writes fail EROFS; reads (`MEMORY.md`, topic files) succeed. |
 | macOS: `/Library/Application Support/ClaudeCode/` / Linux: `/etc/claude-code/` | `/etc/claude-code/` | ro | Managed-policy directory: managed `CLAUDE.md`, `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`, `managed-mcp.json`. Only present when the host dir exists (MDM / enterprise). macOS host path translates to Linux container path — the in-container binary always runs Linux and consults only `/etc/claude-code/`. Skipped on Linux when the dir is absent; skipped entirely on Windows hosts. Interaction with ccairgap's MCP policy: `managed-mcp.json` is **not** filtered by `--mcp-enable`, matching Claude Code's precedence where managed policy overrides user flags. |
+| `~/.config/ccairgap/` (resolved) | `/ccairgap-user-dir` | ro | User-wide ccairgap-scope Claude config dir. Skipped when absent. Entrypoint applies its CLAUDE.md / settings.json / mcp.json / skills/ before the project `/ccairgap-dir` overlay. |
 | `<workspace-root>/.ccairgap/` | `/ccairgap-dir` | ro | ccairgap-scope Claude config dir. Skipped when absent. |
 | `$NODE_EXTRA_CA_CERTS` on host (when set + file exists) | `/host-ca-certs/<basename>` | ro | Corporate TLS CA bundle. The env var is forwarded as `-e NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>`. Mounted at a neutral container path rather than the host-absolute path so it does not overmount the base image's own CA trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). Symlinks resolved via `realpath()`. Stderr warning + skip when the env var points at a missing file. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |

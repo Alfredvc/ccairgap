@@ -2,7 +2,7 @@
 
 Any launch flag can live in a YAML file. Default load path: `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap prints a warning to stderr and uses the primary). Override with `--config <path>` or `--profile <name>`.
 
-Precedence: **CLI > config > built-in defaults.** Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`): concat, config first, CLI appended (no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins.
+Precedence: **CLI > project config > user-wide config (`config.yaml` > `integrations/`) > built-in defaults.** Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`): concat, config first, CLI appended (no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins.
 
 Both kebab-case (matches CLI flag names) and camelCase keys are accepted — kebab is preferred because it mirrors the flags. Unknown keys or wrong types abort launch with a clear error. The CLI validator in `src/config.ts` is source of truth; this page mirrors it.
 
@@ -170,3 +170,100 @@ Notably absent (by design):
 - No `volumes` key distinct from `ro`/`cp`/`sync`/`mount` — those cover the structured cases; exotic mounts go through `docker-run-arg`.
 - No hook disable list (only enable) — default is "all disabled", enable is the only opt-in.
 - No MCP disable list (only enable) — default is "all disabled", enable is the only opt-in. Same model as hooks.
+
+## User-wide config
+
+A second config layer loaded before the project config. Location: `$XDG_CONFIG_HOME/ccairgap/` (default `~/.config/ccairgap/`). Scaffold it with `ccairgap init --user`.
+
+### Load order
+
+**defaults < user-wide-integrations < user-wide-config < project < CLI**
+
+- `~/.config/ccairgap/integrations/*.yaml` are loaded first (alphabetical order), then
+- `~/.config/ccairgap/config.yaml`, then
+- `<git-root>/.ccairgap/config.yaml` (or profile variant), then
+- CLI flags.
+
+Scalars: higher-precedence layer wins. Arrays: lower-precedence first, then appended by higher layers. Maps: per-key merge, higher-precedence wins.
+
+### File vocabulary
+
+| Path | Role |
+|---|---|
+| `config.yaml` | Persistent defaults — every `ConfigFile` key is accepted, with the exception of relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` (hard error; no workspace anchor at user-wide scope). `dockerfile:` anchors on the user-wide config dir. |
+| `<name>.config.yaml` | **Reserved.** User-wide profiles are not loaded. Writing one emits a stderr warning and an informational `doctor` row. Profiles (`--profile <name>`) only swap the project layer. |
+| `integrations/*.yaml` | Per-tool drop-ins; see "Integration drop-ins" below. |
+| `CLAUDE.md` | Appended to in-container `~/.claude/CLAUDE.md` before the project `.ccairgap/CLAUDE.md` block. |
+| `settings.json` | Deep-merged into `~/.claude/settings.json` after policy filtering; bypasses `--hook-enable` by design. |
+| `mcp.json` | `mcpServers` merged into `~/.claude.json`; bypasses `--mcp-enable` by design. |
+| `skills/` | Rsynced into `~/.claude/skills/`. |
+| `Dockerfile` | Custom Dockerfile sidecar; opt-in via `dockerfile: Dockerfile` in `config.yaml`. |
+
+### Integration drop-ins
+
+Files in `integrations/*.yaml` are tool-specific config fragments. They are strictly allowlisted — only the following top-level keys are accepted:
+
+| Key | Semantics |
+|---|---|
+| `hooks.enable` | `[string]` — glob patterns; merged at lower precedence than `config.yaml`. |
+| `mcp.enable` | `[string]` — glob patterns; merged at lower precedence than `config.yaml`. |
+| `docker-run-arg` | `[string]` — raw docker tokens; safe-flag allowlist enforced (see below). |
+
+Any other top-level key hard-errors at load time.
+
+**`docker-run-arg` safe-flag allowlist.** Integration files may only emit the following docker flags:
+
+- `-e` / `--env` / `--env=` — environment variables
+- `--add-host` — extra `/etc/hosts` entries
+- `--label` — container labels
+- `--dns` — DNS server
+- `--dns-search` — DNS search domain
+
+Flags that affect isolation (`-v`, `--user`, `--cap-add`, `--name`, `--entrypoint`, `--privileged`, `--network`, etc.) hard-error. User-authored `~/.config/ccairgap/config.yaml` uses the existing warning-only dangerous-arg scanner — not the strict allowlist.
+
+### Profile interaction
+
+`--profile <name>` swaps the **project** layer only (`<git-root>/.ccairgap/<name>.config.yaml`). The user-wide layer is always `config.yaml` — there is no user-wide profile concept. Writing a `<name>.config.yaml` in `~/.config/ccairgap/` is reserved; it emits a stderr warning and appears in `ccairgap doctor`.
+
+### `--bare` and `--no-user-config`
+
+- `--bare` skips the user-wide `config.yaml` and `integrations/*.yaml` (launch config). It does **not** skip the user-wide `CLAUDE.md` / `settings.json` / `mcp.json` / `skills/` injection (session environment).
+- `--no-user-config` is the non-`--bare` kill switch for the entire user-wide layer: skips both launch-config loading and the `/ccairgap-user-dir` injection mount.
+
+### Examples
+
+**Scaffold the user-wide dir:**
+```bash
+ccairgap init --user
+```
+
+**`~/.config/ccairgap/config.yaml` — persistent user defaults:**
+```yaml
+# Pin Claude Code version for all projects.
+docker-build-arg:
+  CLAUDE_CODE_VERSION: "1.2.3"
+
+# Always enable the python3 auto-approve hook.
+hooks:
+  enable:
+    - "python3 *"
+
+# Disable clipboard passthrough globally.
+clipboard: false
+
+# Absolute paths work; relative repo/extra-repo/ro/cp/sync/mount are hard errors here.
+ro:
+  - /opt/shared-reference-data
+```
+
+**`~/.config/ccairgap/integrations/my-tool.yaml` — per-tool drop-in:**
+```yaml
+# Enable an MCP server provided by my-tool.
+mcp:
+  enable:
+    - "my-tool-mcp"
+
+# Expose my-tool's API key to all containers.
+docker-run-arg:
+  - "-e MY_TOOL_API_KEY=abc123"
+```
