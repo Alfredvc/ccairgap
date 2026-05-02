@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execaSync } from "execa";
 import { writeManifest, type Manifest } from "./manifest.js";
+import { resolveUserWideDir } from "./userConfig.js";
 
 let root: string;
 let fakeBinDir: string;
@@ -315,5 +316,150 @@ describe("recover dirty-tree precheck", () => {
       throw e;
     }
     expect(existsSync(sd)).toBe(false);
+  });
+});
+
+describe("checkUserWideConfig", () => {
+  // The private `checkUserWideConfig` is exercised through the exported `doctor()`
+  // aggregate function, following the same pattern as the auth-refresh tests above.
+  // We redirect the user-wide dir to a temp location via XDG_CONFIG_HOME so the
+  // tests never touch the real ~/.config/ccairgap/.
+
+  let userWideRoot: string;
+  let savedXdg: string | undefined;
+  let savedHome: string | undefined;
+
+  // Stub docker to pass every doctor check that is unrelated to user-wide config.
+  // No running containers → `checkAuthRefresh` returns the "no active sessions" row.
+  function stubAllDoctorDeps(): void {
+    const script = [
+      'case "$1" in',
+      '  version) echo "27.0.0" ;;',
+      "  ps) : ;;",
+      "  image)",
+      '    case "$2" in',
+      '      inspect) echo "2099-01-01T00:00:00Z" ;;',
+      "      ls) : ;;",
+      "    esac",
+      "    ;;",
+      "esac",
+    ].join("\n");
+    stubDocker(script);
+  }
+
+  beforeEach(() => {
+    userWideRoot = realpathSync(mkdtempSync(join(tmpdir(), "airgap-uwc-")));
+    savedXdg = process.env.XDG_CONFIG_HOME;
+    savedHome = process.env.HOME;
+    // Point XDG_CONFIG_HOME to our temp dir so resolveUserWideDir resolves to
+    // userWideRoot/ccairgap — fully isolated from the developer's real config.
+    process.env.XDG_CONFIG_HOME = userWideRoot;
+  });
+
+  afterEach(() => {
+    if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = savedXdg;
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    rmSync(userWideRoot, { recursive: true, force: true });
+  });
+
+  /** Resolve where checkUserWideConfig will look, mirroring its own logic. */
+  function userWideDir(): string {
+    return resolveUserWideDir({ env: process.env, home: process.env.HOME ?? userWideRoot });
+  }
+
+  it("returns an absent row when user-wide dir does not exist", async () => {
+    // userWideRoot/ccairgap is never created — dir is absent.
+    stubAllDoctorDeps();
+    const dir = userWideDir();
+    expect(existsSync(dir)).toBe(false);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+      expect(lines).toMatch(new RegExp(`\\[OK\\] user-wide config: .+ \\(absent\\)`));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("reports bypass files present in user-wide dir as [OK] rows", async () => {
+    const dir = userWideDir();
+    mkdirSync(dir, { recursive: true });
+    // Write two bypass files and a skills/ subdir.
+    writeFileSync(join(dir, "settings.json"), "{}");
+    writeFileSync(join(dir, "CLAUDE.md"), "# notes");
+    mkdirSync(join(dir, "skills"), { recursive: true });
+
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+      expect(lines).toMatch(/\[OK\] user-wide bypass files:/);
+      // All three artifacts should be mentioned in the detail string.
+      expect(lines).toMatch(/settings\.json/);
+      expect(lines).toMatch(/CLAUDE\.md/);
+      expect(lines).toMatch(/skills\//);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("reports integrations/*.yaml count as [OK]", async () => {
+    const dir = userWideDir();
+    const integrationsDir = join(dir, "integrations");
+    mkdirSync(integrationsDir, { recursive: true });
+    writeFileSync(join(integrationsDir, "work.yaml"), "hooks:\n  enable: []\n");
+    writeFileSync(join(integrationsDir, "personal.yaml"), "hooks:\n  enable: []\n");
+    // A non-yaml file should not be counted.
+    writeFileSync(join(integrationsDir, "notes.txt"), "ignored");
+
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+      expect(lines).toMatch(/\[OK\] user-wide integrations: 2 file\(s\)/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("WARNs on <name>.config.yaml files in the user-wide dir", async () => {
+    const dir = userWideDir();
+    mkdirSync(dir, { recursive: true });
+    // This is the reserved-profile pattern: <name>.config.yaml where name != "config".
+    writeFileSync(join(dir, "work.config.yaml"), "hooks:\n  enable: []\n");
+    // config.yaml itself is allowed and must not trigger the warning.
+    writeFileSync(join(dir, "config.yaml"), "");
+
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+      expect(lines).toMatch(/\[WARN\] user-wide reserved profile files:/);
+      expect(lines).toMatch(/work\.config\.yaml/);
+      // config.yaml itself must not be listed as a reserved file in the warn row.
+      // The warn line will contain "work.config.yaml"; assert it is NOT the
+      // plain "config.yaml" entry (i.e. no occurrence of "config.yaml" that is
+      // not preceded by another word-char, which would indicate the bare name).
+      const warnLine = lines
+        .split("\n")
+        .find((l) => l.includes("user-wide reserved profile files"));
+      expect(warnLine).toBeDefined();
+      // "config.yaml" preceded by a word boundary (not part of "work.config.yaml")
+      // should not appear in the warn line.
+      expect(warnLine).not.toMatch(/(?<![A-Za-z0-9._-])config\.yaml/);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
