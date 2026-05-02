@@ -110,4 +110,35 @@ describe("formatInspectPretty config section", () => {
     expect(output).toContain("--network=none, --memory=2g");
     expect(output).toContain("user-wide, project");
   });
+
+  it("shows correct provenance (not 'undefined') for hooks and mcp rows", async () => {
+    // mergeLayers stores provenance under the dotted keys "hooks.enable" and
+    // "mcp.enable", but the merged object has top-level "hooks" / "mcp" keys.
+    // renderConfig must bridge that gap; this is the regression guard.
+    const { formatInspectPretty } = await import("./inspectFormat.js");
+    const layered: LayeredResult = {
+      merged: {
+        hooks: { enable: ["my-hook"] },
+        mcp: { enable: ["my-server"] },
+      },
+      provenance: {
+        "hooks.enable": ["project"],
+        "mcp.enable": ["user-wide", "project"],
+      },
+    };
+    const output = formatInspectPretty({
+      hooks: [],
+      mcpServers: [],
+      env: [],
+      marketplaces: [],
+      config: layered,
+    });
+    expect(output).toContain("RESOLVED CONFIG");
+    // provenance columns must NOT show the string "undefined"
+    expect(output).not.toContain("undefined");
+    // hooks row should show the project source
+    expect(output).toContain("project");
+    // mcp row should show both sources
+    expect(output).toContain("user-wide, project");
+  });
 });

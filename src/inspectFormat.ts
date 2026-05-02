@@ -202,7 +202,10 @@ export interface FormatInspectInput {
 function renderConfig(layered: import("./configLayered.js").LayeredResult): string {
   const rows: string[][] = [];
   for (const [key, val] of Object.entries(layered.merged)) {
-    const prov = layered.provenance[key];
+    // hooks and mcp provenance is stored under the dotted key "<parent>.enable"
+    // because mergeLayers tracks enablement arrays at that granularity.
+    const provKey = key === "hooks" || key === "mcp" ? `${key}.enable` : key;
+    const prov = layered.provenance[provKey];
     rows.push([
       key,
       Array.isArray(val) ? val.join(", ") : typeof val === "object" ? JSON.stringify(val) : String(val),
