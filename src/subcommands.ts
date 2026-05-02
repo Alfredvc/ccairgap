@@ -277,11 +277,15 @@ function checkClipboard(): DoctorCheck {
  * (user settings, enabled plugins, per-repo project config, `~/.claude.json`).
  * Read-only; no session created. JSON to stdout.
  *
- * Output shape: `{ hooks, mcpServers, env, marketplaces }`. Managed-settings
+ * Output shape: `{ hooks, mcpServers, env, marketplaces, config? }`. Managed-settings
  * tiers (OS-level policy files, MDM, server-delivered) are intentionally
  * omitted — they aren't mounted into the container.
  */
-export function inspectCmd(opts: { repos: string[]; pretty?: boolean }): void {
+export function inspectCmd(opts: {
+  repos: string[];
+  pretty?: boolean;
+  config?: import("./configLayered.js").LayeredResult;
+}): void {
   const hcd = realpath(hostClaudeDirFn());
   const claudeJsonPath = hostClaudeJsonFn();
   const pluginsCache = join(hcd, "plugins", "cache");
@@ -307,9 +311,16 @@ export function inspectCmd(opts: { repos: string[]; pretty?: boolean }): void {
   const env = enumerateEnv({ hostClaudeDir: hcd, repos });
   const marketplaces = enumerateMarketplaces({ hostClaudeDir: hcd, repos });
   if (opts.pretty) {
-    console.log(formatInspectPretty({ hooks, mcpServers, env, marketplaces }));
+    console.log(formatInspectPretty({ hooks, mcpServers, env, marketplaces, config: opts.config }));
   } else {
-    console.log(JSON.stringify({ hooks, mcpServers, env, marketplaces }, null, 2));
+    const payload: Record<string, unknown> = { hooks, mcpServers, env, marketplaces };
+    if (opts.config) {
+      payload.config = {
+        merged: opts.config.merged,
+        provenance: opts.config.provenance,
+      };
+    }
+    console.log(JSON.stringify(payload, null, 2));
   }
 }
 

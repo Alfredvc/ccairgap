@@ -191,17 +191,41 @@ function renderMarketplaces(markets: MarketplaceRecord[]): string {
   return `${sectionTitle("MARKETPLACES", markets.length)}\n${renderTable(cols, rows)}`;
 }
 
-export function formatInspectPretty(input: {
+export interface FormatInspectInput {
   hooks: HookRecord[];
   mcpServers: McpRecord[];
   env: EnvRecord[];
   marketplaces: MarketplaceRecord[];
-}): string {
-  return [
+  config?: import("./configLayered.js").LayeredResult;
+}
+
+function renderConfig(layered: import("./configLayered.js").LayeredResult): string {
+  const rows: string[][] = [];
+  for (const [key, val] of Object.entries(layered.merged)) {
+    const prov = layered.provenance[key];
+    rows.push([
+      key,
+      Array.isArray(val) ? val.join(", ") : typeof val === "object" ? JSON.stringify(val) : String(val),
+      Array.isArray(prov) ? prov.join(", ") : typeof prov === "object" ? JSON.stringify(prov) : String(prov),
+    ]);
+  }
+  if (rows.length === 0) return `${sectionTitle("RESOLVED CONFIG", 0)}\n  (none)`;
+  return `${sectionTitle("RESOLVED CONFIG", rows.length)}\n${renderTable(
+    [{ header: "key" }, { header: "value", cap: 60 }, { header: "from", cap: 40 }],
+    rows,
+  )}`;
+}
+
+export function formatInspectPretty(input: FormatInspectInput): string {
+  const parts = [
     renderHooks(input.hooks),
     renderMcp(input.mcpServers),
     renderEnv(input.env),
     renderMarketplaces(input.marketplaces),
-    "",
-  ].join("\n");
+  ];
+  if (input.config) {
+    parts.push(renderConfig(input.config));
+  }
+  parts.push("");
+  return parts.join("\n");
 }

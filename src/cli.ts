@@ -480,7 +480,7 @@ async function main() {
         }
       }
 
-      inspectCmd({ repos, pretty: Boolean(opts.pretty) });
+      inspectCmd({ repos, pretty: Boolean(opts.pretty), config: layered });
     });
 
   program
