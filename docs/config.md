@@ -221,6 +221,8 @@ Any other top-level key hard-errors at load time.
 
 Flags that affect isolation (`-v`, `--user`, `--cap-add`, `--name`, `--entrypoint`, `--privileged`, `--network`, etc.) hard-error. User-authored `~/.config/ccairgap/config.yaml` uses the existing warning-only dangerous-arg scanner — not the strict allowlist.
 
+**`-e`/`--env` token-form restriction.** The integration validator accepts the two-token form (`-e KEY=VAL`) and the `=`-joined form (`--env=KEY=VAL` or `-e=KEY=VAL`), but rejects the clustered short-flag form `-eKEY=VAL` (no space, no `=` separator). Rewrite any `-eKEY=VAL` tokens as `-e KEY=VAL`. This restriction applies only to integration drop-ins; `docker-run-arg` in `config.yaml` and the CLI `--docker-run-arg` flag accept all forms Docker accepts.
+
 ### Profile interaction
 
 `--profile <name>` swaps the **project** layer only (`<git-root>/.ccairgap/<name>.config.yaml`). The user-wide layer is always `config.yaml` — there is no user-wide profile concept. Writing a `<name>.config.yaml` in `~/.config/ccairgap/` is reserved; it emits a stderr warning and appears in `ccairgap doctor`.
