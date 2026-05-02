@@ -208,6 +208,7 @@ function renderConfig(layered: import("./configLayered.js").LayeredResult): stri
     const prov = layered.provenance[provKey];
     rows.push([
       key,
+      // Object values assumed to be Record<string, string-coercible> (today only dockerBuildArg).
       Array.isArray(val)
         ? val.join(", ")
         : val !== null && typeof val === "object"
@@ -215,6 +216,7 @@ function renderConfig(layered: import("./configLayered.js").LayeredResult): stri
               .map(([k, v]) => `${k}=${String(v)}`)
               .join("\n")
           : String(val),
+      // Object values assumed to be Record<string, string-coercible> (today only dockerBuildArg).
       Array.isArray(prov)
         ? prov.join(", ")
         : prov !== null && typeof prov === "object"
