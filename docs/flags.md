@@ -27,6 +27,7 @@
 | `--no-auto-memory` | — | no | Skip the auto-memory RO mount. See [auto-memory.md](auto-memory.md). |
 | `--no-clipboard` | — | no | Disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See [SPEC.md](SPEC.md) §"Bare mode". |
+| `--no-user-config` | off | no | Skip the user-wide layer (`~/.config/ccairgap/` config.yaml + integrations/ + CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations that want a hermetic launch without going full `--bare`. See [config.md](config.md) §"User-wide config". |
 | `-- <claude-args…>` | — | no | Tokens after `--` are forwarded verbatim to `claude` inside the container. See [claude-args.md](claude-args.md). |
 
 ## Notes on `--name`
