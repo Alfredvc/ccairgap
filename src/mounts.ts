@@ -8,7 +8,27 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds-dir" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" | "ccairgap-dir" | "ccairgap-user-dir" | "auth-warnings" | "userdb-passwd" | "userdb-group" }
+  | {
+      kind:
+        | "host-claude"
+        | "host-claude-json"
+        | "host-creds-dir"
+        | "patched-settings"
+        | "patched-claude-json"
+        | "plugins-cache"
+        | "plugins-host-path"
+        | "transcripts"
+        | "output"
+        | "clipboard-bridge"
+        | "auto-memory"
+        | "managed-policy"
+        | "node-extra-ca"
+        | "ccairgap-dir"
+        | "ccairgap-user-dir"
+        | "auth-warnings"
+        | "userdb-passwd"
+        | "userdb-group";
+    }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
@@ -111,8 +131,18 @@ export interface BuildMountsInput {
 export function buildMounts(i: BuildMountsInput): Mount[] {
   const mounts: Mount[] = [];
 
-  mounts.push({ src: i.hostClaudeDir, dst: "/host-claude", mode: "ro", source: { kind: "host-claude" } });
-  mounts.push({ src: i.hostClaudeJson, dst: "/host-claude-json", mode: "ro", source: { kind: "host-claude-json" } });
+  mounts.push({
+    src: i.hostClaudeDir,
+    dst: "/host-claude",
+    mode: "ro",
+    source: { kind: "host-claude" },
+  });
+  mounts.push({
+    src: i.hostClaudeJson,
+    dst: "/host-claude-json",
+    mode: "ro",
+    source: { kind: "host-claude-json" },
+  });
   mounts.push({
     src: i.hostCredsDir,
     dst: "/host-claude-creds-dir",
@@ -126,10 +156,20 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     source: { kind: "auth-warnings" },
   });
   if (i.hostPatchedUserSettings) {
-    mounts.push({ src: i.hostPatchedUserSettings, dst: "/host-claude-patched-settings.json", mode: "ro", source: { kind: "patched-settings" } });
+    mounts.push({
+      src: i.hostPatchedUserSettings,
+      dst: "/host-claude-patched-settings.json",
+      mode: "ro",
+      source: { kind: "patched-settings" },
+    });
   }
   if (i.hostPatchedClaudeJson) {
-    mounts.push({ src: i.hostPatchedClaudeJson, dst: "/host-claude-patched-json", mode: "ro", source: { kind: "patched-claude-json" } });
+    mounts.push({
+      src: i.hostPatchedClaudeJson,
+      dst: "/host-claude-patched-json",
+      mode: "ro",
+      source: { kind: "patched-claude-json" },
+    });
   }
 
   if (existsSync(i.pluginsCacheDir)) {
@@ -215,10 +255,20 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     });
   }
 
-  mounts.push({ src: i.outputDir, dst: "/output", mode: "rw", source: { kind: "output" } });
+  mounts.push({
+    src: i.outputDir,
+    dst: "/output",
+    mode: "rw",
+    source: { kind: "output" },
+  });
 
   for (const r of i.repos) {
-    mounts.push({ src: r.sessionClonePath, dst: r.hostPath, mode: "rw", source: { kind: "repo", hostPath: r.hostPath } });
+    mounts.push({
+      src: r.sessionClonePath,
+      dst: r.hostPath,
+      mode: "rw",
+      source: { kind: "repo", hostPath: r.hostPath },
+    });
 
     // Host objects are mounted at a NEUTRAL container path so they don't overlay
     // the session clone's own (RW) .git/objects/. The alternates file in the
@@ -230,7 +280,11 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
         src: objDir,
         dst: `/host-git-alternates/${r.alternatesName}/objects`,
         mode: "ro",
-        source: { kind: "alternates", repoHostPath: r.hostPath, category: "objects" },
+        source: {
+          kind: "alternates",
+          repoHostPath: r.hostPath,
+          category: "objects",
+        },
       });
     }
 
@@ -240,23 +294,39 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
         src: lfsDir,
         dst: `/host-git-alternates/${r.alternatesName}/lfs/objects`,
         mode: "ro",
-        source: { kind: "alternates", repoHostPath: r.hostPath, category: "lfs" },
+        source: {
+          kind: "alternates",
+          repoHostPath: r.hostPath,
+          category: "lfs",
+        },
       });
     }
   }
 
   for (const p of i.roPaths) {
-    mounts.push({ src: p, dst: p, mode: "ro", source: { kind: "ro", path: p } });
+    mounts.push({
+      src: p,
+      dst: p,
+      mode: "ro",
+      source: { kind: "ro", path: p },
+    });
   }
 
   for (const p of i.pluginMarketplaces) {
-    mounts.push({ src: p, dst: p, mode: "ro", source: { kind: "marketplace", path: p } });
+    mounts.push({
+      src: p,
+      dst: p,
+      mode: "ro",
+      source: { kind: "marketplace", path: p },
+    });
   }
 
   if (i.extraMounts) {
     for (const m of i.extraMounts) mounts.push(m);
   }
 
-  const resolved = resolveMountCollisions(mounts, { homeInContainer: i.homeInContainer });
+  const resolved = resolveMountCollisions(mounts, {
+    homeInContainer: i.homeInContainer,
+  });
   return resolved.mounts;
 }
