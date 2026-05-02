@@ -447,16 +447,33 @@ async function main() {
     .option("--repo <path>", "host repo whose .claude/settings.json[.local] and .mcp.json should be included. Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo to include. Repeatable.", collect, [])
     .option("--pretty", "render human-readable tables instead of JSON")
+    .option(
+      "--bare",
+      "launch a naked container: skip config-file loading and cwd-as-workspace inference. " +
+        "The user must mount any repo via --repo (or reference material via --ro). Claude config " +
+        "(~/.claude, credentials, plugins) flows as usual. Relative --cp/--sync/--mount paths " +
+        "anchor on cwd. --config still loads when explicit.",
+    )
+    .option(
+      "--no-user-config",
+      "skip the user-wide layer (~/.config/ccairgap/ config.yaml + integrations/ + " +
+        "CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations " +
+        "that want a hermetic launch without going full --bare.",
+    )
     .action((opts) => {
       if (opts.config && opts.profile) {
         console.error("ccairgap: --config and --profile are mutually exclusive");
         process.exit(1);
       }
+      const bare = Boolean(opts.bare);
+      // commander auto-inverts `--no-X` boolean flags into the positive key. So
+      // `--no-user-config` produces opts.userConfig === false; default is true.
+      const userConfigEnabled = opts.userConfig !== false;
       const { layered } = loadAllLayers({
         configPath: opts.config,
         profile: opts.profile,
-        bare: false,
-        userConfigEnabled: true,
+        bare,
+        userConfigEnabled,
       });
       const fileCfg: ConfigFile = layered.merged;
 
