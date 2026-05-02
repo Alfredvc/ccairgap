@@ -510,11 +510,13 @@ async function main() {
       "--force",
       "overwrite existing Dockerfile / entrypoint.sh / config.yaml (destructive; no merge)",
     )
+    .option("--user", "scaffold user-wide config at ~/.config/ccairgap/ instead of project dir")
     .action((opts) => {
       try {
         initCmd({
           configPath: opts.config,
           force: Boolean(opts.force),
+          user: Boolean(opts.user),
         });
       } catch (e) {
         console.error(`ccairgap: ${(e as Error).message}`);

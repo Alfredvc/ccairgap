@@ -10,6 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execa, execaSync } from "execa";
 import {
@@ -37,6 +38,7 @@ import { enumerateEnv, enumerateMarketplaces } from "./settings.js";
 import { formatInspectPretty } from "./inspectFormat.js";
 import { detectClipboardMode, isWsl2, hasCommand } from "./clipboardBridge.js";
 import { runningContainerNames } from "./sessionId.js";
+import { resolveUserWideDir } from "./userConfig.js";
 
 /**
  * Return true if a container named `ccairgap-<id>` is currently running.
@@ -499,6 +501,10 @@ export interface InitOptions {
   force: boolean;
   /** Override cwd for testing. */
   cwd?: string;
+  /** Scaffold user-wide layer at $HOME/.config/ccairgap/ instead of project dir. */
+  user?: boolean;
+  /** Override env for testing (HOME / XDG_CONFIG_HOME). */
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }
 
 /** Resolve the target directory for `ccairgap init`. */
@@ -538,6 +544,10 @@ export function resolveInitTarget(opts: InitOptions): string {
 
 /** Write bundled Dockerfile + entrypoint.sh + a minimal config.yaml. */
 export function initCmd(opts: InitOptions): void {
+  if (opts.user) {
+    initUserWide(opts);
+    return;
+  }
   const targetDir = resolveInitTarget(opts);
   const targets = {
     dockerfile: join(targetDir, "Dockerfile"),
@@ -567,4 +577,39 @@ export function initCmd(opts: InitOptions): void {
     `\nedit ${basename(targets.dockerfile)} to customize; next \`ccairgap\` ` +
       `launch rebuilds as \`ccairgap:custom-<hash>\`.`,
   );
+}
+
+function initUserWide(opts: InitOptions): void {
+  const env = opts.env ?? process.env;
+  const home = env.HOME ?? homedir();
+  const dir = resolveUserWideDir({ env, home });
+  const cfgPath = join(dir, "config.yaml");
+  const integrationsDir = join(dir, "integrations");
+
+  if (!opts.force && existsSync(cfgPath)) {
+    throw new Error(
+      `refusing to overwrite existing ${cfgPath}\nRe-run with --force to overwrite.`,
+    );
+  }
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(integrationsDir, { recursive: true });
+  writeFileSync(cfgPath, defaultUserWideConfigYaml());
+  console.log(`wrote ${cfgPath}`);
+  console.log(`created ${integrationsDir}/`);
+}
+
+function defaultUserWideConfigYaml(): string {
+  return [
+    "# ccairgap user-wide config — see docs/config.md §\"User-wide config\".",
+    "# Persistent defaults applied to every launch (defaults < user-wide < project < CLI).",
+    "# Relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` paths are NOT allowed here",
+    "# (no workspace anchor); use absolute paths.",
+    "#",
+    "# Examples:",
+    "# extra-repo:",
+    "#   - /Users/me/src/reference",
+    "# docker-run-arg:",
+    "#   - \"-e MY_TOKEN=abc\"",
+    "",
+  ].join("\n");
 }

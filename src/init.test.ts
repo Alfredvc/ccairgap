@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -160,5 +161,35 @@ describe("initCmd", () => {
 
     initCmd({ cwd: repo, force: false });
     expect(existsSync(target)).toBe(true);
+  });
+});
+
+describe("initCmd --user", () => {
+  let home: string;
+  beforeEach(() => { home = mkdtempSync(join(tmpdir(), "uw-init-")); });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it("creates ~/.config/ccairgap/ with config.yaml + integrations/", () => {
+    initCmd({ user: true, force: false, env: { HOME: home } });
+    const dir = join(home, ".config", "ccairgap");
+    expect(existsSync(join(dir, "config.yaml"))).toBe(true);
+    expect(statSync(join(dir, "integrations")).isDirectory()).toBe(true);
+  });
+
+  it("--user without --force refuses to overwrite existing config.yaml", () => {
+    const dir = join(home, ".config", "ccairgap");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "config.yaml"), "existing\n");
+    expect(() =>
+      initCmd({ user: true, force: false, env: { HOME: home } }),
+    ).toThrow(/refusing to overwrite/);
+  });
+
+  it("--user --force overwrites", () => {
+    const dir = join(home, ".config", "ccairgap");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "config.yaml"), "existing\n");
+    initCmd({ user: true, force: true, env: { HOME: home } });
+    expect(readFileSync(join(dir, "config.yaml"), "utf8")).not.toBe("existing\n");
   });
 });
