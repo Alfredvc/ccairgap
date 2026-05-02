@@ -769,6 +769,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // hook-dedup fires and the TUI rename paints. --name only affects the id's
   // prefix (handled in generateId), not this env var.
   dockerArgs.push("-e", `CCAIRGAP_NAME=${id}`);
+  // Mirror of CCAIRGAP_DIR. Always set to the fixed container path so the
+  // entrypoint can default to it; entrypoint no-ops when the source mount is
+  // absent (the `[ -d "$SRC" ]` guard inside apply_ccairgap_overlay).
+  dockerArgs.push("-e", "CCAIRGAP_USER_DIR=/ccairgap-user-dir");
   // Resume: entrypoint appends `-r "$CCAIRGAP_RESUME"` to the claude exec.
   // Always pass the resolved UUID — claude -r accepts both UUID and title,
   // but we've already copied <uuid>.jsonl into transcripts/, so the UUID

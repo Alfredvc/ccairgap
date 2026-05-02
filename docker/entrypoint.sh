@@ -215,18 +215,73 @@ jq --arg hook "$TITLE_HOOK" '.env = (.env // {}) + {
 mv "$TMP_SETTINGS" "$SETTINGS"
 
 # .ccairgap/ scope overlay: CLAUDE.md, settings.json, mcp.json, skills/
+# Two layers: user-wide (~/.config/ccairgap/, mounted at /ccairgap-user-dir)
+# applied FIRST, then project (<repo>/.ccairgap/, mounted at /ccairgap-dir).
 # All injections are additive (never replace). Injected after the hook-policy
 # overlay and main jq pass, so ccairgap hooks/settings are higher priority and
 # bypass --hook-enable / --mcp-enable — same design as the built-in title hook.
+# Order rationale: user-wide first so project wins on scalar collision.
+CCAIRGAP_USER_DIR="${CCAIRGAP_USER_DIR:-/ccairgap-user-dir}"
 CCAIRGAP_DIR="/ccairgap-dir"
 
-# CLAUDE.md: append to ~/.claude/CLAUDE.md (user-scope in container).
-# A blank line separates the host's existing content from the ccairgap addition.
-# Creates ~/.claude/CLAUDE.md if it doesn't exist yet.
-if [ -f "$CCAIRGAP_DIR/CLAUDE.md" ]; then
-    printf '\n' >> "$CLAUDE_DIR/CLAUDE.md"
-    cat "$CCAIRGAP_DIR/CLAUDE.md" >> "$CLAUDE_DIR/CLAUDE.md"
-fi
+apply_ccairgap_overlay() {
+    local SRC="$1"
+    [ -d "$SRC" ] || return 0
+
+    # CLAUDE.md: append to ~/.claude/CLAUDE.md.
+    if [ -f "$SRC/CLAUDE.md" ]; then
+        printf '\n' >> "$CLAUDE_DIR/CLAUDE.md"
+        cat "$SRC/CLAUDE.md" >> "$CLAUDE_DIR/CLAUDE.md"
+    fi
+
+    # settings.json: deep-merge into ~/.claude/settings.json.
+    # Arrays concatenated (existing first, overlay appended).
+    # Scalars/objects: overlay wins. null in overlay is a no-op (existing wins).
+    # Requires jq >= 1.6 (node:20-slim ships 1.6).
+    if [ -f "$SRC/settings.json" ]; then
+        local TMP_S
+        TMP_S="$(mktemp)"
+        jq -s '
+          def mergecc(a; b):
+            if b == null then a
+            elif a == null then b
+            elif ((a | type) == "array" and (b | type) == "array") then (a + b)
+            elif ((a | type) == "object" and (b | type) == "object") then
+              (((a | keys) + (b | keys)) | unique) as $keys |
+              reduce $keys[] as $k ({}; . + {($k): mergecc(a[$k]; b[$k])})
+            else b
+            end;
+          mergecc(.[0]; .[1])
+        ' "$SETTINGS" "$SRC/settings.json" > "$TMP_S"
+        mv "$TMP_S" "$SETTINGS"
+    fi
+
+    # mcp.json: merge mcpServers into ~/.claude.json (user-scope MCP).
+    # Creates ~/.claude.json as {} when absent (e.g. fresh unauthenticated install).
+    # jq `+` on objects: right-side (overlay) wins on server-name collision.
+    # Bypasses --mcp-enable by design — injected after the MCP-policy pass.
+    if [ -f "$SRC/mcp.json" ]; then
+        [ -f "$HOME_DIR/.claude.json" ] || echo '{}' > "$HOME_DIR/.claude.json"
+        local TMP_J
+        TMP_J="$(mktemp)"
+        jq -s '
+          .[0].mcpServers = ((.[0].mcpServers // {}) + (.[1].mcpServers // {}))
+        ' "$HOME_DIR/.claude.json" "$SRC/mcp.json" > "$TMP_J"
+        mv "$TMP_J" "$HOME_DIR/.claude.json"
+    fi
+
+    # skills/: rsync into ~/.claude/skills/ so Claude Code discovers them at user scope.
+    # Claude Code's skills scanner reads one level deep: each immediate subdirectory of
+    # ~/.claude/skills/ must contain a SKILL.md to be registered as a skill.
+    # Name collision: overlay wins (rsync overwrites existing dir).
+    if [ -d "$SRC/skills" ]; then
+        mkdir -p "$CLAUDE_DIR/skills"
+        rsync -rL --chmod=u+w "$SRC/skills/" "$CLAUDE_DIR/skills/"
+    fi
+}
+
+apply_ccairgap_overlay "$CCAIRGAP_USER_DIR"
+apply_ccairgap_overlay "$CCAIRGAP_DIR"
 
 # Bypass-immune paths advisory: baked-in every session (independent of .ccairgap/).
 # Upstream Claude Code enforces a safety gate (src/utils/permissions/permissions.ts
@@ -235,6 +290,8 @@ fi
 # prompt the ccairgap session cannot answer. Inform the model of the consequence
 # (advisory, not prohibitive). Mirrors DANGEROUS_DIRECTORIES / DANGEROUS_FILES /
 # isClaudeSettingsPath upstream — grow when those change.
+# Per SPEC §"Entrypoint" step 9: appended after the .ccairgap/ overlay so it is
+# always the last block in ~/.claude/CLAUDE.md regardless of user-supplied content.
 cat >> "$CLAUDE_DIR/CLAUDE.md" <<'CAVEAT_EOF'
 
 # ccairgap sandbox — bypass-immune paths
@@ -254,49 +311,6 @@ Paths that trigger the prompt:
 Reading these paths is unaffected. Editing is allowed but requires the host
 user to approve each request.
 CAVEAT_EOF
-
-# settings.json: deep-merge into ~/.claude/settings.json.
-# Arrays concatenated (existing first, ccairgap appended).
-# Scalars/objects: ccairgap wins. null in ccairgap is a no-op (existing wins).
-# Requires jq >= 1.6 (node:20-slim ships 1.6).
-if [ -f "$CCAIRGAP_DIR/settings.json" ]; then
-    TMP_SETTINGS="$(mktemp)"
-    jq -s '
-      def mergecc(a; b):
-        if b == null then a
-        elif a == null then b
-        elif ((a | type) == "array" and (b | type) == "array") then (a + b)
-        elif ((a | type) == "object" and (b | type) == "object") then
-          (((a | keys) + (b | keys)) | unique) as $keys |
-          reduce $keys[] as $k ({}; . + {($k): mergecc(a[$k]; b[$k])})
-        else b
-        end;
-      mergecc(.[0]; .[1])
-    ' "$SETTINGS" "$CCAIRGAP_DIR/settings.json" > "$TMP_SETTINGS"
-    mv "$TMP_SETTINGS" "$SETTINGS"
-fi
-
-# mcp.json: merge mcpServers into ~/.claude.json (user-scope MCP).
-# Creates ~/.claude.json as {} when absent (e.g. fresh unauthenticated install).
-# jq `+` on objects: right-side (ccairgap) wins on server-name collision.
-# Bypasses --mcp-enable by design — injected after the MCP-policy pass.
-if [ -f "$CCAIRGAP_DIR/mcp.json" ]; then
-    [ -f "$HOME_DIR/.claude.json" ] || echo '{}' > "$HOME_DIR/.claude.json"
-    TMP_JSON="$(mktemp)"
-    jq -s '
-      .[0].mcpServers = ((.[0].mcpServers // {}) + (.[1].mcpServers // {}))
-    ' "$HOME_DIR/.claude.json" "$CCAIRGAP_DIR/mcp.json" > "$TMP_JSON"
-    mv "$TMP_JSON" "$HOME_DIR/.claude.json"
-fi
-
-# skills/: rsync into ~/.claude/skills/ so Claude Code discovers them at user scope.
-# Claude Code's skills scanner reads one level deep: each immediate subdirectory of
-# ~/.claude/skills/ must contain a SKILL.md to be registered as a skill.
-# Name collision: ccairgap wins (rsync overwrites existing dir).
-if [ -d "$CCAIRGAP_DIR/skills" ]; then
-    mkdir -p "$CLAUDE_DIR/skills"
-    rsync -rL --chmod=u+w "$CCAIRGAP_DIR/skills/" "$CLAUDE_DIR/skills/"
-fi
 
 # Git identity from host (CLI reads host git config and passes via env).
 # Host-side fallback ensures these are set even when host has no config.
