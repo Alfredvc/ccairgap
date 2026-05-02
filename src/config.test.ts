@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -549,5 +550,86 @@ describe("resolveUserWideConfigPaths", () => {
         CFG,
       ),
     ).toEqual({ repo: "/abs/repo", dockerfile: "/abs/Dockerfile" });
+  });
+});
+
+describe("dotfiles-repo realpath collision", () => {
+  let root: string;
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "ccairgap-dot-")));
+    execaSync("git", ["init", "-q", root], { stdio: "ignore" });
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("skips project-layer load when its realpath equals the user-wide config", () => {
+    const userWide = mkdtempSync(join(tmpdir(), "ccairgap-uwd-"));
+    writeFileSync(join(userWide, "config.yaml"), "name: shared\n");
+    // Symlink <root>/.config/ccairgap → user-wide dir.
+    mkdirSync(join(root, ".config"));
+    symlinkSync(userWide, join(root, ".config", "ccairgap"));
+    const warnings: string[] = [];
+    const path = resolveConfigPath(undefined, root, undefined, {
+      userWideConfigPath: join(userWide, "config.yaml"),
+      warn: (m) => warnings.push(m),
+    });
+    expect(path).toBeUndefined();
+    expect(warnings.some((w) => /also reachable as a project-layer config/.test(w))).toBe(true);
+  });
+
+  it("warns + skips when <root>/.ccairgap is a symlink to user-wide dir", () => {
+    const userWide = mkdtempSync(join(tmpdir(), "ccairgap-uwd-"));
+    writeFileSync(join(userWide, "config.yaml"), "name: shared\n");
+    symlinkSync(userWide, join(root, ".ccairgap"));
+    const warnings: string[] = [];
+    const path = resolveConfigPath(undefined, root, undefined, {
+      userWideConfigPath: join(userWide, "config.yaml"),
+      warn: (m) => warnings.push(m),
+    });
+    expect(path).toBeUndefined();
+    expect(warnings.length).toBe(1);
+  });
+
+  it("loads project layer when no symlink coincidence", () => {
+    mkdirSync(join(root, ".ccairgap"));
+    writeFileSync(join(root, ".ccairgap", "config.yaml"), "name: proj\n");
+    const path = resolveConfigPath(undefined, root, undefined, {
+      userWideConfigPath: "/nowhere/config.yaml",
+    });
+    expect(path).toBe(join(root, ".ccairgap", "config.yaml"));
+  });
+
+  it("--profile error path: project profile resolves to user-wide → clearer error", () => {
+    const userWide = mkdtempSync(join(tmpdir(), "ccairgap-uwd-"));
+    mkdirSync(join(userWide, "extra"));
+    writeFileSync(join(userWide, "web.config.yaml"), "name: w\n");
+    symlinkSync(userWide, join(root, ".ccairgap"));
+    expect(() =>
+      resolveConfigPath(undefined, root, "web", {
+        userWideConfigPath: join(userWide, "config.yaml"),
+      }),
+    ).toThrow(/user-wide profiles are reserved and unused/);
+  });
+
+  it("user-wide config path provided but file does not exist → no warning, no skip", () => {
+    mkdirSync(join(root, ".ccairgap"));
+    writeFileSync(join(root, ".ccairgap", "config.yaml"), "name: proj\n");
+    const warnings: string[] = [];
+    const path = resolveConfigPath(undefined, root, undefined, {
+      userWideConfigPath: "/no/such/userwide/config.yaml",
+      warn: (m) => warnings.push(m),
+    });
+    expect(path).toBe(join(root, ".ccairgap", "config.yaml"));
+    expect(warnings).toEqual([]);
+  });
+
+  it("project-layer candidate is a broken symlink → safeRealpath swallows, fall through to alternate", () => {
+    // primary = broken symlink; alternate = real file. Should land on alternate.
+    symlinkSync("/no/such/target", join(root, ".ccairgap"));
+    mkdirSync(join(root, ".config", "ccairgap"), { recursive: true });
+    writeFileSync(join(root, ".config", "ccairgap", "config.yaml"), "name: alt\n");
+    const path = resolveConfigPath(undefined, root, undefined, {
+      userWideConfigPath: "/no/such/userwide/config.yaml",
+    });
+    expect(path).toBe(join(root, ".config", "ccairgap", "config.yaml"));
   });
 });

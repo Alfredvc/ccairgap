@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execaSync } from "execa";
 import { parse as parseYaml } from "yaml";
@@ -121,6 +121,13 @@ export function resolveCcairgapDir(cwd: string = process.cwd()): string | undefi
   return existsSync(dir) ? dir : undefined;
 }
 
+export interface ResolveConfigPathOptions {
+  /** Realpath of the user-wide config.yaml; used to detect dotfiles-repo collisions. */
+  userWideConfigPath?: string;
+  /** Warning sink. Defaults to console.error. */
+  warn?: (msg: string) => void;
+}
+
 /**
  * Resolve config file to load.
  *  - `explicit` and `profile` are mutually exclusive (enforced at CLI layer).
@@ -135,6 +142,7 @@ export function resolveConfigPath(
   explicit: string | undefined,
   cwd: string = process.cwd(),
   profile?: string,
+  opts: ResolveConfigPathOptions = {},
 ): string | undefined {
   if (explicit) {
     const p = isAbsolute(explicit) ? explicit : resolve(cwd, explicit);
@@ -159,10 +167,39 @@ export function resolveConfigPath(
   }
   const primary = join(root, primaryRel);
   const alternate = join(root, alternateRel);
+
+  // Dotfiles collision: when cwd's git repo is the user's home (yadm/chezmoi),
+  // either project-layer candidate may realpath-equal the user-wide config (or
+  // resolve into the user-wide config directory for profile variants).
+  // Skip the project layer in that case so we don't double-load.
+  const warn = opts.warn ?? ((m: string) => console.error(m));
+  const userWideDir = opts.userWideConfigPath
+    ? safeRealpath(dirname(opts.userWideConfigPath))
+    : undefined;
+  if (userWideDir) {
+    for (const candidate of [primary, alternate]) {
+      const candidateReal = safeRealpath(candidate);
+      if (!candidateReal) continue;
+      if (dirname(candidateReal) === userWideDir) {
+        if (profile && profile !== "default") {
+          throw new Error(
+            `--profile ${profile}: project-layer config resolved to a user-wide path; user-wide profiles are reserved and unused`,
+          );
+        }
+        warn(
+          `ccairgap: ${opts.userWideConfigPath} is also reachable as a project-layer config ` +
+            `(cwd is inside a git repo whose ${candidate === primary ? primaryRel : alternateRel} ` +
+            `resolves to the same path); loading it once at user-wide layer only.`,
+        );
+        return undefined;
+      }
+    }
+  }
+
   const primaryExists = existsSync(primary);
   const alternateExists = existsSync(alternate);
   if (primaryExists && alternateExists) {
-    console.error(
+    warn(
       `ccairgap: warning: both ${primaryRel} and ${alternateRel} ` +
         `found; using ${primaryRel}`,
     );
@@ -175,6 +212,18 @@ export function resolveConfigPath(
     );
   }
   return undefined;
+}
+
+function safeRealpath(p: string | undefined): string | undefined {
+  if (!p) return undefined;
+  try {
+    return realpathSync(p);
+  } catch {
+    // Missing files / broken symlinks → "not equal" (per spec): the affected
+    // file would already fail downstream existsSync, so a missing realpath
+    // never short-circuits the legitimate project-layer load.
+    return undefined;
+  }
 }
 
 function assertStringArray(v: unknown, key: string): string[] {
