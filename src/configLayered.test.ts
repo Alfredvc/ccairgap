@@ -88,6 +88,8 @@ describe("loadAllLayers", () => {
   let xdgBase: string;
   /** <xdgBase>/ccairgap — the actual user-wide config dir. */
   let userWideDir: string;
+  /** Separate temp dir used as HOME so it is distinct from XDG_CONFIG_HOME. */
+  let homeDir: string;
   /** Temp root for a minimal git repo acting as the project. */
   let projectDir: string;
 
@@ -95,6 +97,7 @@ describe("loadAllLayers", () => {
     xdgBase = mkdtempSync(join(tmpdir(), "ccairgap-xdg-"));
     userWideDir = join(xdgBase, "ccairgap");
     mkdirSync(userWideDir, { recursive: true });
+    homeDir = mkdtempSync(join(tmpdir(), "ccairgap-home-"));
     projectDir = mkdtempSync(join(tmpdir(), "ccairgap-proj-"));
     // Initialise a git repo so resolveConfigPath can find the git root.
     execSync("git init", { cwd: projectDir, stdio: "ignore" });
@@ -102,12 +105,13 @@ describe("loadAllLayers", () => {
 
   afterEach(() => {
     rmSync(xdgBase, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });
   });
 
   /** Env that steers loadAllLayers to our temp dirs. */
   function env(): Record<string, string> {
-    return { XDG_CONFIG_HOME: xdgBase, HOME: xdgBase };
+    return { XDG_CONFIG_HOME: xdgBase, HOME: homeDir };
   }
 
   it("bare: true — skips integrations and user-wide config; explicit --config still loads project layer", () => {
