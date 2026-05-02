@@ -102,3 +102,73 @@ export function formatDangerWarnings(hits: DangerousHit[]): string[] {
       `ccairgap: warning: --docker-run-arg includes "${h.token}" — ${h.reason}. Container isolation is weaker than default. Suppress with --no-warn-docker-args.`,
   );
 }
+
+/**
+ * Stricter safe-flag allowlist for `docker-run-arg` tokens sourced from
+ * integration drop-in files. Anything that can change container isolation
+ * (volumes, capabilities, user, network, name, entrypoint) hard-errors.
+ * Tokens already shell-tokenized via `parseDockerRunArgs`.
+ */
+export function validateIntegrationDockerRunArgs(
+  tokens: string[],
+  sourceFile: string,
+): void {
+  const SAFE_VALUE_FLAGS = new Set([
+    "-e", "--env",
+    "--add-host",
+    "--label",
+    "--dns", "--dns-search",
+  ]);
+  const SAFE_EQ_PREFIXES = [
+    "-e=", "--env=",
+    "--add-host=",
+    "--label=",
+    "--dns=", "--dns-search=",
+  ];
+  const KV_FLAGS = new Set(["-e", "--env"]);
+
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i]!;
+
+    let matched: { kind: "value-pair" | "eq-form" | "no-arg" } | undefined;
+    let valueForKv: string | undefined;
+    let flagShown = tok;
+
+    if (SAFE_VALUE_FLAGS.has(tok)) {
+      const next = tokens[i + 1];
+      if (next === undefined) {
+        throw new Error(
+          `--docker-run-arg in ${sourceFile}: '${tok}' missing value`,
+        );
+      }
+      matched = { kind: "value-pair" };
+      valueForKv = next;
+      i += 2;
+    } else {
+      const eqHit = SAFE_EQ_PREFIXES.find((p) => tok.startsWith(p));
+      if (eqHit) {
+        matched = { kind: "eq-form" };
+        valueForKv = tok.slice(eqHit.length);
+        flagShown = eqHit.slice(0, -1);
+        i += 1;
+      }
+    }
+
+    if (!matched) {
+      throw new Error(
+        `--docker-run-arg in ${sourceFile}: flag '${tok}' not in safe allowlist ` +
+          `(allowed: -e/--env, --add-host, --label, --dns, --dns-search). ` +
+          `Live RW host binds, capability/uid changes, and other isolation-affecting ` +
+          `flags must be added to ~/.config/ccairgap/config.yaml by the user, not by ` +
+          `tool installers.`,
+      );
+    }
+
+    if (KV_FLAGS.has(flagShown) && (valueForKv === undefined || !valueForKv.includes("="))) {
+      throw new Error(
+        `--docker-run-arg in ${sourceFile}: -e/--env: expected KEY=VAL, got '${valueForKv}'`,
+      );
+    }
+  }
+}

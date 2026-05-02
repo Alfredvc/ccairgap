@@ -3,6 +3,7 @@ import {
   formatDangerWarnings,
   parseDockerRunArgs,
   scanDangerousArgs,
+  validateIntegrationDockerRunArgs,
 } from "./dockerRunArgs.js";
 
 describe("parseDockerRunArgs", () => {
@@ -87,5 +88,59 @@ describe("formatDangerWarnings", () => {
     const lines = formatDangerWarnings([{ token: "--privileged", reason: "grants all" }]);
     expect(lines[0]).toMatch(/--no-warn-docker-args/);
     expect(lines[0]).toMatch(/--privileged/);
+  });
+});
+
+describe("validateIntegrationDockerRunArgs", () => {
+  it("accepts -e KEY=VAL, --env KEY=VAL, --env=KEY=VAL", () => {
+    expect(() =>
+      validateIntegrationDockerRunArgs(
+        ["-e", "FOO=1", "--env", "BAR=2", "--env=BAZ=3"],
+        "switchboard.yaml",
+      ),
+    ).not.toThrow();
+  });
+
+  it("accepts --add-host, --label, --dns, --dns-search", () => {
+    expect(() =>
+      validateIntegrationDockerRunArgs(
+        ["--add-host", "x:1.2.3.4", "--label", "k=v", "--dns", "8.8.8.8", "--dns-search", "ex.com"],
+        "f.yaml",
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects --privileged", () => {
+    expect(() =>
+      validateIntegrationDockerRunArgs(["--privileged"], "f.yaml"),
+    ).toThrow(/flag '--privileged' not in safe allowlist/);
+  });
+
+  it("rejects -v / --volume / --mount", () => {
+    for (const flag of ["-v", "--volume", "--mount"]) {
+      expect(() =>
+        validateIntegrationDockerRunArgs([flag, "/:/host"], "f.yaml"),
+      ).toThrow(/not in safe allowlist/);
+    }
+  });
+
+  it("rejects --user, --name, --entrypoint, --cap-add, --network", () => {
+    for (const flag of ["--user", "--name", "--entrypoint", "--cap-add", "--network"]) {
+      expect(() =>
+        validateIntegrationDockerRunArgs([flag, "x"], "f.yaml"),
+      ).toThrow(/not in safe allowlist/);
+    }
+  });
+
+  it("rejects bare value with no preceding flag (-e KEY without =VAL)", () => {
+    expect(() =>
+      validateIntegrationDockerRunArgs(["-e", "KEY"], "f.yaml"),
+    ).toThrow(/-e\/--env: expected KEY=VAL/);
+  });
+
+  it("error message names the source file", () => {
+    expect(() =>
+      validateIntegrationDockerRunArgs(["--privileged"], "switchboard.yaml"),
+    ).toThrow(/switchboard\.yaml/);
   });
 });
