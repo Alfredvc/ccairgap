@@ -141,4 +141,28 @@ describe("formatInspectPretty config section", () => {
     // mcp row should show both sources
     expect(output).toContain("user-wide, project");
   });
+
+  it("renders plain object values as K=V per line (not JSON) in RESOLVED CONFIG", async () => {
+    // Regression: dockerBuildArg (and other map-valued config keys) used to be
+    // formatted via JSON.stringify, producing {"FOO":"1","BAR":"2"} which then
+    // hard-cut at 60 chars with no clean break point. The new format renders one
+    // KEY=VALUE entry per line so wrapCell preserves each entry intact.
+    const { formatInspectPretty } = await import("./inspectFormat.js");
+    const layered: LayeredResult = {
+      merged: { dockerBuildArg: { FOO: "1", BAR: "2" } },
+      provenance: { dockerBuildArg: "project" },
+    };
+    const output = formatInspectPretty({
+      hooks: [],
+      mcpServers: [],
+      env: [],
+      marketplaces: [],
+      config: layered,
+    });
+    expect(output).toContain("RESOLVED CONFIG");
+    expect(output).toContain("FOO=1");
+    expect(output).toContain("BAR=2");
+    // Must NOT fall back to JSON format
+    expect(output).not.toContain('{"FOO"');
+  });
 });

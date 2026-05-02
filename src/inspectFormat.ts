@@ -208,8 +208,20 @@ function renderConfig(layered: import("./configLayered.js").LayeredResult): stri
     const prov = layered.provenance[provKey];
     rows.push([
       key,
-      Array.isArray(val) ? val.join(", ") : typeof val === "object" ? JSON.stringify(val) : String(val),
-      Array.isArray(prov) ? prov.join(", ") : typeof prov === "object" ? JSON.stringify(prov) : String(prov),
+      Array.isArray(val)
+        ? val.join(", ")
+        : val !== null && typeof val === "object"
+          ? Object.entries(val as Record<string, unknown>)
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .join("\n")
+          : String(val),
+      Array.isArray(prov)
+        ? prov.join(", ")
+        : prov !== null && typeof prov === "object"
+          ? Object.entries(prov as Record<string, unknown>)
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .join("\n")
+          : String(prov),
     ]);
   }
   if (rows.length === 0) return `${sectionTitle("RESOLVED CONFIG", 0)}\n  (none)`;
