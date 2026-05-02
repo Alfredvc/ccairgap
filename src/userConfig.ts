@@ -57,7 +57,7 @@ export function loadIntegrationsDir(integrationsDir: string): IntegrationFile[] 
   } catch {
     return [];
   }
-  const yamlFiles = names.filter((n) => n.endsWith(".yaml")).sort();
+  const yamlFiles = names.filter((n) => n.endsWith(".yaml")).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   const out: IntegrationFile[] = [];
   for (const filename of yamlFiles) {
     const path = join(integrationsDir, filename);
@@ -90,7 +90,7 @@ function enforceIntegrationKeyAllowlist(cfg: ConfigFile, source: string): void {
     if (!INTEGRATION_ALLOWED_KEYS.has(k)) {
       throw new Error(
         `${source}: key '${k}' not allowed in integration files ` +
-          `(only ~/.config/ccairgap/config.yaml may set it); ` +
+          `(only the user-wide config.yaml may set it); ` +
           `see docs/config.md#user-wide-config`,
       );
     }
