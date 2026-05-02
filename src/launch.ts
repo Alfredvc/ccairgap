@@ -136,6 +136,13 @@ export interface LaunchOptions {
    * refresh (cold-start-dead still refuses). See `docs/SPEC.md §Authentication flow`.
    */
   refreshBelowTtlMinutes: number;
+  /**
+   * Resolved host `~/.config/ccairgap/` path, or `undefined` to skip the
+   * user-wide mount. Set to `undefined` when `--no-user-config` is active.
+   * Under plain `--bare` this is still passed through so user-wide CLAUDE.md /
+   * settings.json / mcp.json / skills/ continue to inject at session level.
+   */
+  userWideDir?: string;
 }
 
 export interface LaunchResult {
@@ -687,6 +694,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       managedPolicyHostDir: managedPolicyDir,
       nodeExtraCa,
       ccairgapDir,
+      userWideDir: opts.userWideDir,
       // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
       // MCP-policy overrides are nested single-file overlays (RO) on top of the
       // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts

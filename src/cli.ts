@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
 import { doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
-import { loadConfig, resolveConfigPaths, type ConfigFile } from "./config.js";
+import { type ConfigFile } from "./config.js";
+import { loadAllLayers } from "./configLayered.js";
 import { splitClaudeArgs } from "./cliSplit.js";
 import {
   completionServer,
@@ -224,23 +225,34 @@ async function main() {
         "(~/.claude, credentials, plugins) flows as usual. Relative --cp/--sync/--mount paths " +
         "anchor on cwd. --config still loads when explicit.",
     )
+    .option(
+      "--no-user-config",
+      "skip the user-wide layer (~/.config/ccairgap/ config.yaml + integrations/ + " +
+        "CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations " +
+        "that want a hermetic launch without going full --bare.",
+    )
     .action(async (opts, cmd) => {
       const bare = Boolean(opts.bare);
+      // commander auto-inverts `--no-X` boolean flags into the positive key. So
+      // `--no-user-config` produces opts.userConfig === false; default is true.
+      const userConfigEnabled = opts.userConfig !== false;
 
       if (opts.config && opts.profile) {
         console.error("ccairgap: --config and --profile are mutually exclusive");
         process.exit(1);
       }
 
-      // Load config file (if any). Paths inside config resolve relative to config file dir.
-      // Under --bare, skip the default-path walk entirely — only an explicit --config/--profile loads.
-      let fileCfg: ConfigFile = {};
-      if (!bare || opts.config || opts.profile) {
-        const loaded = loadConfig(opts.config, process.cwd(), opts.profile);
-        if (loaded.path) {
-          fileCfg = resolveConfigPaths(loaded.config, loaded.path);
-        }
-      }
+      // Load all config layers (user-wide integrations → user-wide config.yaml →
+      // project config.yaml). Under --bare without explicit --config/--profile the
+      // project layer is skipped; with --no-user-config the user-wide layer is
+      // skipped entirely (both config.yaml and integrations/).
+      const { layered, userWideDir } = loadAllLayers({
+        configPath: opts.config,
+        profile: opts.profile,
+        bare,
+        userConfigEnabled,
+      });
+      const fileCfg: ConfigFile = layered.merged;
 
       // dockerBuildArg only counts as "set via CLI" if non-empty (commander default is {}).
       const cliBuildArg: Record<string, string> | undefined =
@@ -377,6 +389,15 @@ async function main() {
         claudeArgs: merged.claudeArgs,
         noAutoMemory: merged.noAutoMemory,
         refreshBelowTtlMinutes: merged.refreshBelowTtl,
+        // --bare suppresses launch-config (config.yaml + integrations) but keeps
+        // the user-wide overlay mount active so user-wide CLAUDE.md / settings.json /
+        // mcp.json / skills/ continue to inject (session-environment, not launch-config).
+        // --no-user-config is the full kill switch — skips both layers.
+        // Gate by existence: loadAllLayers always returns the resolved path even when
+        // the dir is absent.
+        userWideDir: !userConfigEnabled
+          ? undefined
+          : (existsSync(userWideDir) ? userWideDir : undefined),
       });
       process.exit(result.exitCode);
     });
@@ -431,9 +452,13 @@ async function main() {
         console.error("ccairgap: --config and --profile are mutually exclusive");
         process.exit(1);
       }
-      let fileCfg: ConfigFile = {};
-      const loaded = loadConfig(opts.config, process.cwd(), opts.profile);
-      if (loaded.path) fileCfg = resolveConfigPaths(loaded.config, loaded.path);
+      const { layered } = loadAllLayers({
+        configPath: opts.config,
+        profile: opts.profile,
+        bare: false,
+        userConfigEnabled: true,
+      });
+      const fileCfg: ConfigFile = layered.merged;
 
       const repo: string | undefined = (opts.repo as string | undefined) ?? fileCfg.repo;
       const extraRepos: string[] = [

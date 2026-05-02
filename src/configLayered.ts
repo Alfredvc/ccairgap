@@ -1,4 +1,17 @@
-import type { ConfigFile } from "./config.js";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  parseConfig,
+  resolveConfigPath,
+  resolveConfigPaths,
+  type ConfigFile,
+} from "./config.js";
+import {
+  loadIntegrationsDir,
+  loadUserWideConfig,
+  resolveUserWideDir,
+} from "./userConfig.js";
 
 /**
  * Provenance source for a key/element in the merged config.
@@ -134,4 +147,71 @@ export function mergeLayers(input: LayeredInput): LayeredResult {
   }
 
   return { merged: out, provenance: prov };
+}
+
+export interface LoadAllLayersOptions {
+  /** Explicit --config <path>, if set. */
+  configPath?: string;
+  /** Explicit --profile <name>, if set. */
+  profile?: string;
+  /** True when --bare passed: skips user-wide and project launch-config. */
+  bare: boolean;
+  /** True unless --no-user-config: when false, skips the entire user-wide layer. */
+  userConfigEnabled: boolean;
+  /** Override cwd for tests. */
+  cwd?: string;
+  /** Override env for tests. */
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}
+
+export interface LoadedAllLayers {
+  layered: LayeredResult;
+  /** Resolved user-wide directory (independent of whether config.yaml was loaded). Used to gate the `/ccairgap-user-dir` mount. */
+  userWideDir: string;
+  /** Path of the loaded project config.yaml, if any. */
+  projectPath?: string;
+}
+
+/**
+ * Single source of truth for layered config loading. Used by both the
+ * launch action and the inspect action so they share precedence semantics.
+ */
+export function loadAllLayers(opts: LoadAllLayersOptions): LoadedAllLayers {
+  const env = opts.env ?? process.env;
+  const cwd = opts.cwd ?? process.cwd();
+  const home = (env.HOME as string | undefined) ?? homedir();
+  const userWideDir = resolveUserWideDir({ env, home });
+
+  let integrations: Array<{ filename: string; config: ConfigFile }> = [];
+  let userWide: ConfigFile | undefined;
+  let userWideCfgPath: string | undefined;
+  if (!opts.bare && opts.userConfigEnabled) {
+    integrations = loadIntegrationsDir(join(userWideDir, "integrations")).map(
+      (e) => ({ filename: e.filename, config: e.config }),
+    );
+    const r = loadUserWideConfig(userWideDir, { activeProfile: opts.profile });
+    if (r) {
+      userWide = r.config;
+      userWideCfgPath = r.path;
+    }
+  }
+
+  let project: ConfigFile | undefined;
+  let projectPath: string | undefined;
+  if (!opts.bare || opts.configPath || opts.profile) {
+    const path = resolveConfigPath(opts.configPath, cwd, opts.profile, {
+      userWideConfigPath: userWideCfgPath,
+    });
+    if (path) {
+      // resolveConfigPath has already done discovery (with dotfiles-collision
+      // check); parse the file directly. Calling loadConfig here would retrigger
+      // resolveConfigPath without the userWideConfigPath option and double-warn.
+      const text = readFileSync(path, "utf8");
+      project = resolveConfigPaths(parseConfig(text, path), path);
+      projectPath = path;
+    }
+  }
+
+  const layered = mergeLayers({ integrations, userWide, project });
+  return { layered, userWideDir, projectPath };
 }
