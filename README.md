@@ -113,6 +113,38 @@ npx skills add alfredvc/ccairgap
 
 Then in Claude: *"configure ccairgap for this repo"*. Source: [`skills/ccairgap-configure/`](skills/ccairgap-configure).
 
+## User-wide config
+
+Persistent defaults that apply across all projects. Scaffold with:
+
+```bash
+ccairgap init --user
+```
+
+Config dir: `~/.config/ccairgap/` (or `$XDG_CONFIG_HOME/ccairgap/`).
+
+**File vocabulary:**
+
+| Path | Role |
+|---|---|
+| `config.yaml` | Defaults for every launch — all `config.yaml` keys accepted; relative `repo`/`ro`/etc. are a hard error (no workspace anchor). |
+| `integrations/*.yaml` | Per-tool drop-ins; allowlisted keys only: `hooks.enable`, `mcp.enable`, `docker-run-arg` (safe-flag subset). |
+| `CLAUDE.md` | Appended to in-container `~/.claude/CLAUDE.md` before the project block. |
+| `settings.json` | Deep-merged into `~/.claude/settings.json`. |
+| `mcp.json` | `mcpServers` merged into `~/.claude.json`. |
+| `skills/` | Rsynced into `~/.claude/skills/`. |
+| `Dockerfile` | Opt-in custom image sidecar (`dockerfile: Dockerfile` in `config.yaml`). |
+
+**Layer order:** defaults < user-wide integrations < user-wide config < project < CLI
+
+Integration drop-ins let third-party tools self-register hooks, MCP servers, or safe docker args without touching the user's `config.yaml`.
+
+**Hermetic overrides:**
+- `--no-user-config` — skip the entire user-wide layer (launch config + session environment).
+- `--bare` — skip user-wide and project launch config (session environment still injected).
+
+Full spec: [docs/config.md — User-wide config](docs/config.md#user-wide-config).
+
 ## How it works
 
 Claude runs inside a Docker container with full permissions, but the container can barely see your machine. Your real repo is mounted read-only; wherever the container wants to write, it writes into a lightweight throwaway clone of your repo that shares objects with the original without touching it. When Claude exits, ccairgap runs `git fetch` on the host, pulling whatever committed work the container produced back into your real repo as a fresh `ccairgap/<id>` branch. Nothing else lands anywhere.
@@ -161,6 +193,7 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 **Config**
 - [Configuration file](docs/config.md)
 - [`.ccairgap/` — ccairgap-scope Claude config](docs/ccairgap-dir.md)
+- [User-wide config](docs/config.md#user-wide-config)
 
 **Integrations**
 - [Hooks](docs/hooks.md)
