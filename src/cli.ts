@@ -393,11 +393,9 @@ async function main() {
         // the user-wide overlay mount active so user-wide CLAUDE.md / settings.json /
         // mcp.json / skills/ continue to inject (session-environment, not launch-config).
         // --no-user-config is the full kill switch — skips both layers.
-        // Gate by existence: loadAllLayers always returns the resolved path even when
-        // the dir is absent.
-        userWideDir: !userConfigEnabled
-          ? undefined
-          : (existsSync(userWideDir) ? userWideDir : undefined),
+        // Existence gate lives in mounts.ts (buildMounts skips the mount when the dir
+        // is absent); loadAllLayers always returns the resolved path even when absent.
+        userWideDir: userConfigEnabled ? userWideDir : undefined,
       });
       process.exit(result.exitCode);
     });
