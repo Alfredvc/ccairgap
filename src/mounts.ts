@@ -93,6 +93,13 @@ export interface BuildMountsInput {
    */
   nodeExtraCa?: { hostPath: string; containerPath: string };
   ccairgapDir?: string;
+  /**
+   * Resolved host path of `~/.config/ccairgap/`. RO-mounted at
+   * `/ccairgap-user-dir`. Skipped when absent. Entrypoint applies its
+   * CLAUDE.md / settings.json / mcp.json / skills/ before the project
+   * `/ccairgap-dir` overlay.
+   */
+  userWideDir?: string;
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
 }
@@ -187,6 +194,15 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       dst: i.nodeExtraCa.containerPath,
       mode: "ro",
       source: { kind: "node-extra-ca" },
+    });
+  }
+
+  if (i.userWideDir && existsSync(i.userWideDir)) {
+    mounts.push({
+      src: i.userWideDir,
+      dst: "/ccairgap-user-dir",
+      mode: "ro",
+      source: { kind: "ccairgap-user-dir" },
     });
   }
 

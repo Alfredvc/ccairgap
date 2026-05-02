@@ -271,3 +271,47 @@ describe("buildMounts + collision resolver", () => {
     expect(() => buildMounts(input)).toThrow(/\/ccairgap-dir.*reserved/);
   });
 });
+
+describe("buildMounts user-wide dir", () => {
+  it("emits /ccairgap-user-dir RO mount when userWideDir set + exists", () => {
+    const dir = mkdtempSync(join(tmpdir(), "uwd-"));
+    const mounts = buildMounts({
+      // minimal happy-path inputs
+      userWideDir: dir,
+      hostClaudeDir: "/h/.claude",
+      hostClaudeJson: "/h/.claude.json",
+      hostCredsDir: "/s/creds",
+      authWarningsDir: "/s/auth",
+      pluginsCacheDir: "/h/.claude/plugins/cache",
+      sessionTranscriptsDir: "/s/transcripts",
+      outputDir: "/s/out",
+      repos: [],
+      roPaths: [],
+      pluginMarketplaces: [],
+      homeInContainer: "/home/claude",
+    });
+    const m = mounts.find((x) => x.dst === "/ccairgap-user-dir");
+    expect(m).toBeDefined();
+    expect(m!.mode).toBe("ro");
+    expect(m!.src).toBe(dir);
+    rmSync(dir, { recursive: true });
+  });
+
+  it("skips mount when userWideDir absent", () => {
+    const mounts = buildMounts({
+      userWideDir: "/no/such/dir",
+      hostClaudeDir: "/h/.claude",
+      hostClaudeJson: "/h/.claude.json",
+      hostCredsDir: "/s/creds",
+      authWarningsDir: "/s/auth",
+      pluginsCacheDir: "/h/.claude/plugins/cache",
+      sessionTranscriptsDir: "/s/transcripts",
+      outputDir: "/s/out",
+      repos: [],
+      roPaths: [],
+      pluginMarketplaces: [],
+      homeInContainer: "/home/claude",
+    });
+    expect(mounts.find((m) => m.dst === "/ccairgap-user-dir")).toBeUndefined();
+  });
+});
