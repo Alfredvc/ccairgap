@@ -8,7 +8,7 @@ import { resolveMountCollisions } from "./mountCollisions.js";
  * distinguish ccairgap-owned mounts from user-supplied ones.
  */
 export type MountSource =
-  | { kind: "host-claude" | "host-claude-json" | "host-creds-dir" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" | "ccairgap-dir" | "auth-warnings" | "userdb-passwd" | "userdb-group" }
+  | { kind: "host-claude" | "host-claude-json" | "host-creds-dir" | "patched-settings" | "patched-claude-json" | "plugins-cache" | "plugins-host-path" | "transcripts" | "output" | "clipboard-bridge" | "auto-memory" | "managed-policy" | "node-extra-ca" | "ccairgap-dir" | "ccairgap-user-dir" | "auth-warnings" | "userdb-passwd" | "userdb-group" }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }

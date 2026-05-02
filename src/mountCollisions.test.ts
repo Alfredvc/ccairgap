@@ -195,3 +195,26 @@ describe("resolveMountCollisions", () => {
     ).toThrow(/reserved prefix \/run\/ccairgap-clipboard.*--ro \/tmp\/a/);
   });
 });
+
+describe("ccairgap-user-dir reservation", () => {
+  it("includes /ccairgap-user-dir in reserved exact set", () => {
+    const r = reservedContainerPaths({ homeInContainer: "/home/claude" });
+    expect(r.exact).toContain("/ccairgap-user-dir");
+  });
+
+  it("blocks user --ro at /ccairgap-user-dir", () => {
+    expect(() =>
+      resolveMountCollisions(
+        [
+          {
+            src: "/host/x",
+            dst: "/ccairgap-user-dir",
+            mode: "ro",
+            source: { kind: "ro", path: "/host/x" },
+          },
+        ],
+        { homeInContainer: "/home/claude" },
+      ),
+    ).toThrow(/reserved container path/);
+  });
+});
