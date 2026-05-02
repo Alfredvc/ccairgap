@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadIntegrationsDir, resolveUserWideDir } from "./userConfig.js";
+import { loadIntegrationsDir, loadUserWideConfig, resolveUserWideDir } from "./userConfig.js";
 
 describe("resolveUserWideDir", () => {
   it("uses XDG_CONFIG_HOME when set", () => {
@@ -125,5 +125,51 @@ describe("loadIntegrationsDir", () => {
   it("type mismatch in hooks.enable names the file", () => {
     writeFileSync(join(dir, "bad.yaml"), "hooks:\n  enable: 'not-array'\n");
     expect(() => loadIntegrationsDir(dir)).toThrow(/bad\.yaml/);
+  });
+});
+
+describe("loadUserWideConfig", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ccairgap-uw-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("returns undefined when dir absent", () => {
+    expect(loadUserWideConfig("/no/such/dir")).toBeUndefined();
+  });
+
+  it("returns undefined when config.yaml absent", () => {
+    expect(loadUserWideConfig(dir)).toBeUndefined();
+  });
+
+  it("loads + path-resolves config.yaml", () => {
+    writeFileSync(
+      join(dir, "config.yaml"),
+      "extra-repo: [/abs/path]\ndockerfile: Dockerfile\n",
+    );
+    const r = loadUserWideConfig(dir)!;
+    expect(r.path).toBe(join(dir, "config.yaml"));
+    expect(r.config.extraRepo).toEqual(["/abs/path"]);
+    expect(r.config.dockerfile).toBe(join(dir, "Dockerfile"));
+  });
+
+  it("hard-errors on relative repo", () => {
+    writeFileSync(join(dir, "config.yaml"), "repo: relative/path\n");
+    expect(() => loadUserWideConfig(dir)).toThrow(/relative paths not allowed/);
+  });
+
+  it("warns when <name>.config.yaml exists for active profile", () => {
+    writeFileSync(join(dir, "web.config.yaml"), "name: foo\n");
+    const warnings: string[] = [];
+    loadUserWideConfig(dir, { activeProfile: "web", warn: (s) => warnings.push(s) });
+    expect(warnings.some((w) => /web\.config\.yaml exists but user-wide profiles are not loaded/.test(w))).toBe(true);
+  });
+
+  it("does not warn when activeProfile undefined", () => {
+    writeFileSync(join(dir, "web.config.yaml"), "name: foo\n");
+    const warnings: string[] = [];
+    loadUserWideConfig(dir, { warn: (s) => warnings.push(s) });
+    expect(warnings).toEqual([]);
   });
 });

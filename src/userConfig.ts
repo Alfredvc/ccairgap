@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type ConfigFile } from "./config.js";
+import { parseConfig, resolveUserWideConfigPaths, type ConfigFile } from "./config.js";
 import {
   parseDockerRunArgs,
   validateIntegrationDockerRunArgs,
@@ -94,5 +94,58 @@ function enforceIntegrationKeyAllowlist(cfg: ConfigFile, source: string): void {
           `see docs/config.md#user-wide-config`,
       );
     }
+  }
+}
+
+export interface LoadUserWideConfigOptions {
+  /** Profile active at project layer; used to warn when a reserved user-wide profile file exists. */
+  activeProfile?: string;
+  /** Sink for stderr-style warnings; defaults to console.error. */
+  warn?: (msg: string) => void;
+}
+
+export interface LoadedUserWideConfig {
+  path: string;
+  config: ConfigFile;
+}
+
+/**
+ * Load `<userWideDir>/config.yaml` if present, run path resolution
+ * (relative repo/extra-repo/ro/cp/sync/mount → hard error;
+ * relative dockerfile → resolved against config dir).
+ *
+ * Side-effect: if `activeProfile` matches a `<name>.config.yaml` present in the
+ * dir, emit a one-shot warning that user-wide profiles are reserved/unused.
+ */
+export function loadUserWideConfig(
+  userWideDir: string,
+  opts: LoadUserWideConfigOptions = {},
+): LoadedUserWideConfig | undefined {
+  const warn = opts.warn ?? ((m: string) => console.error(m));
+  const cfgPath = join(userWideDir, "config.yaml");
+  if (!existsSync(cfgPath)) {
+    maybeWarnReservedProfile(userWideDir, opts.activeProfile, warn);
+    return undefined;
+  }
+  const text = readFileSync(cfgPath, "utf8");
+  const parsed = parseConfig(text, cfgPath);
+  const resolved = resolveUserWideConfigPaths(parsed, cfgPath);
+  maybeWarnReservedProfile(userWideDir, opts.activeProfile, warn);
+  return { path: cfgPath, config: resolved };
+}
+
+function maybeWarnReservedProfile(
+  userWideDir: string,
+  profile: string | undefined,
+  warn: (m: string) => void,
+): void {
+  if (!profile || profile === "default") return;
+  const reserved = join(userWideDir, `${profile}.config.yaml`);
+  if (existsSync(reserved)) {
+    warn(
+      `ccairgap: warning: ${reserved} exists but user-wide profiles are not loaded — ` +
+        `only the project-layer profile is applied. Move user-wide defaults into ` +
+        `${join(userWideDir, "config.yaml")} or use --config <abs-path> to load this file explicitly.`,
+    );
   }
 }
