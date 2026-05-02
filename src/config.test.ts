@@ -13,6 +13,7 @@ import {
   parseConfig,
   resolveConfigPath,
   resolveConfigPaths,
+  resolveUserWideConfigPaths,
   resolveCcairgapDir,
 } from "./config.js";
 
@@ -515,5 +516,38 @@ describe("resolveCcairgapDir", () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe("resolveUserWideConfigPaths", () => {
+  const CFG = "/home/u/.config/ccairgap/config.yaml";
+
+  it("hard-errors on relative repo", () => {
+    expect(() =>
+      resolveUserWideConfigPaths({ repo: "foo" }, CFG),
+    ).toThrow(/repo: relative paths not allowed in user-wide config/);
+  });
+
+  it("hard-errors on relative extra-repo, ro, cp, sync, mount", () => {
+    for (const key of ["extraRepo", "ro", "cp", "sync", "mount"] as const) {
+      expect(() =>
+        resolveUserWideConfigPaths({ [key]: ["bar"] } as any, CFG),
+      ).toThrow(new RegExp(`relative paths not allowed in user-wide config`));
+    }
+  });
+
+  it("anchors relative dockerfile on config dir", () => {
+    expect(
+      resolveUserWideConfigPaths({ dockerfile: "Dockerfile" }, CFG).dockerfile,
+    ).toBe("/home/u/.config/ccairgap/Dockerfile");
+  });
+
+  it("passes absolute values through unchanged", () => {
+    expect(
+      resolveUserWideConfigPaths(
+        { repo: "/abs/repo", dockerfile: "/abs/Dockerfile" },
+        CFG,
+      ),
+    ).toEqual({ repo: "/abs/repo", dockerfile: "/abs/Dockerfile" });
   });
 });

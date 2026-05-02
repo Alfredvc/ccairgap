@@ -349,6 +349,53 @@ function assertMcpBlock(v: unknown): { enable?: string[] } {
   return out;
 }
 
+/**
+ * Resolve config-file paths for the user-wide layer (`~/.config/ccairgap/`).
+ * Workspace-space keys (`repo`, `extra-repo`, `ro`, `cp`, `sync`, `mount`)
+ * have NO valid anchor at user-wide scope (no git root) — relative values
+ * are a hard error. `dockerfile` anchors on the config-file directory
+ * (sidecar convention). Absolute paths pass through.
+ */
+export function resolveUserWideConfigPaths(
+  cfg: ConfigFile,
+  configPath: string,
+): ConfigFile {
+  const configDir = dirname(configPath);
+  const out: ConfigFile = { ...cfg };
+
+  const checkRelArray = (key: string, arr: string[] | undefined): void => {
+    if (!arr) return;
+    for (const v of arr) {
+      if (!isAbsolute(v)) {
+        throw new Error(
+          `${key}: relative paths not allowed in user-wide config (no workspace anchor); use an absolute path`,
+        );
+      }
+    }
+  };
+  const checkRelScalar = (key: string, v: string | undefined): void => {
+    if (v && !isAbsolute(v)) {
+      throw new Error(
+        `${key}: relative paths not allowed in user-wide config (no workspace anchor); use an absolute path`,
+      );
+    }
+  };
+
+  checkRelScalar("repo", cfg.repo);
+  checkRelArray("extra-repo", cfg.extraRepo);
+  checkRelArray("ro", cfg.ro);
+  checkRelArray("cp", cfg.cp);
+  checkRelArray("sync", cfg.sync);
+  checkRelArray("mount", cfg.mount);
+
+  if (cfg.dockerfile) {
+    out.dockerfile = isAbsolute(cfg.dockerfile)
+      ? cfg.dockerfile
+      : resolve(configDir, cfg.dockerfile);
+  }
+  return out;
+}
+
 /** Load config from disk. Returns {} if no file. Throws on parse/validate error. */
 export function loadConfig(
   explicit: string | undefined,
