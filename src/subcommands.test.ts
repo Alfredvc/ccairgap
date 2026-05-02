@@ -386,10 +386,10 @@ describe("checkUserWideConfig", () => {
     }
   });
 
-  it("reports bypass files present in user-wide dir as [OK] rows", async () => {
+  it("reports both policy-bypass and overlay rows when a mix of files are present", async () => {
     const dir = userWideDir();
     mkdirSync(dir, { recursive: true });
-    // Write two bypass files and a skills/ subdir.
+    // Write one policy-bypass file and one overlay file plus skills/.
     writeFileSync(join(dir, "settings.json"), "{}");
     writeFileSync(join(dir, "CLAUDE.md"), "# notes");
     mkdirSync(join(dir, "skills"), { recursive: true });
@@ -400,11 +400,64 @@ describe("checkUserWideConfig", () => {
       const { doctor } = await import("./subcommands.js");
       await doctor();
       const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
-      expect(lines).toMatch(/\[OK\] user-wide bypass files:/);
-      // All three artifacts should be mentioned in the detail string.
+
+      // Row A: policy bypass row should appear and mention settings.json.
+      expect(lines).toMatch(/\[OK\] user-wide policy bypass:/);
       expect(lines).toMatch(/settings\.json/);
-      expect(lines).toMatch(/CLAUDE\.md/);
-      expect(lines).toMatch(/skills\//);
+      // Row A must NOT claim bypass framing for overlay-only files.
+      const bypassLine = lines.split("\n").find((l) => l.includes("user-wide policy bypass"));
+      expect(bypassLine).toBeDefined();
+      expect(bypassLine).toMatch(/bypass --hook-enable\/--mcp-enable/);
+      expect(bypassLine).not.toMatch(/CLAUDE\.md/);
+      expect(bypassLine).not.toMatch(/skills\//);
+
+      // Row B: overlay row should appear and mention CLAUDE.md and skills/.
+      expect(lines).toMatch(/\[OK\] user-wide overlay files:/);
+      const overlayLine = lines.split("\n").find((l) => l.includes("user-wide overlay files"));
+      expect(overlayLine).toBeDefined();
+      expect(overlayLine).toMatch(/no policy bypass/);
+      expect(overlayLine).toMatch(/CLAUDE\.md/);
+      expect(overlayLine).toMatch(/skills\//);
+      // Overlay row must NOT mention settings.json.
+      expect(overlayLine).not.toMatch(/settings\.json/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("emits only Row B (overlay) when only overlay files are present", async () => {
+    const dir = userWideDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "CLAUDE.md"), "# notes");
+
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+
+      expect(lines).toMatch(/\[OK\] user-wide overlay files:/);
+      expect(lines).not.toMatch(/user-wide policy bypass/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("emits only Row A (policy bypass) when only bypass files are present", async () => {
+    const dir = userWideDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "mcp.json"), "{}");
+
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+
+      expect(lines).toMatch(/\[OK\] user-wide policy bypass:/);
+      expect(lines).not.toMatch(/user-wide overlay files/);
     } finally {
       logSpy.mockRestore();
     }

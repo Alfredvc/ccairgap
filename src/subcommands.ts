@@ -504,15 +504,24 @@ function checkUserWideConfig(): DoctorCheck[] {
   }
   const checks: DoctorCheck[] = [];
 
-  // Surface presence of bypass-class files (settings.json/mcp.json/CLAUDE.md/skills/Dockerfile).
-  const bypass = ["settings.json", "mcp.json", "CLAUDE.md", "Dockerfile"];
-  const present = bypass.filter((f) => existsSync(join(dir, f)));
-  if (existsSync(join(dir, "skills"))) present.push("skills/");
-  if (present.length > 0) {
+  // Row A: actual policy bypass files (settings.json, mcp.json).
+  const bypassFiles = ["settings.json", "mcp.json"].filter((f) => existsSync(join(dir, f)));
+  if (bypassFiles.length > 0) {
     checks.push({
-      name: "user-wide bypass files",
+      name: "user-wide policy bypass",
       ok: true,
-      detail: `${present.join(", ")} under ${dir} (user-authored; bypass --hook-enable/--mcp-enable)`,
+      detail: `${bypassFiles.join(", ")} under ${dir} (user-authored; bypass --hook-enable/--mcp-enable)`,
+    });
+  }
+
+  // Row B: overlay files that are not policy bypasses (CLAUDE.md, Dockerfile, skills/).
+  const overlayFiles = ["CLAUDE.md", "Dockerfile"].filter((f) => existsSync(join(dir, f)));
+  if (existsSync(join(dir, "skills"))) overlayFiles.push("skills/");
+  if (overlayFiles.length > 0) {
+    checks.push({
+      name: "user-wide overlay files",
+      ok: true,
+      detail: `${overlayFiles.join(", ")} under ${dir} (applied via user-wide overlay; no policy bypass)`,
     });
   }
 
