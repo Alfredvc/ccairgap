@@ -274,9 +274,35 @@ apply_ccairgap_overlay() {
     # Claude Code's skills scanner reads one level deep: each immediate subdirectory of
     # ~/.claude/skills/ must contain a SKILL.md to be registered as a skill.
     # Name collision: overlay wins (rsync overwrites existing dir).
+    # Venv excludes + exit-23 tolerance mirror the main ~/.claude/ rsync block above.
     if [ -d "$SRC/skills" ]; then
         mkdir -p "$CLAUDE_DIR/skills"
-        rsync -rL --chmod=u+w "$SRC/skills/" "$CLAUDE_DIR/skills/"
+        # Detect Python virtualenvs inside overlay skills — same rationale as the
+        # main ~/.claude/ rsync block: absolute symlinks into host pyenv/system
+        # python don't exist in the container and rsync -L would abort (exit 23).
+        local OVERLAY_VENVS_FOUND=()
+        while IFS= read -r venv; do
+            OVERLAY_VENVS_FOUND+=("${venv#$SRC/skills/}")
+        done < <(find "$SRC/skills" -maxdepth 5 -type d \( -name .venv -o -name venv \) 2>/dev/null)
+        if [ ${#OVERLAY_VENVS_FOUND[@]} -gt 0 ]; then
+            echo "ccairgap: skipping host Python virtualenvs in overlay skills ($SRC):" >&2
+            for v in "${OVERLAY_VENVS_FOUND[@]}"; do
+                echo "  $v" >&2
+            done
+            echo "  Containing skills will load, but their venv binaries will not run." >&2
+        fi
+        local rc=0
+        rsync -rL --chmod=u+w \
+            --exclude='**/.venv/' \
+            --exclude='**/venv/' \
+            "$SRC/skills/" "$CLAUDE_DIR/skills/" || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            if [ "$rc" -eq 23 ]; then
+                echo "ccairgap: warning — some files in overlay skills ($SRC) could not be copied (likely broken symlinks). Continuing." >&2
+            else
+                exit "$rc"
+            fi
+        fi
     fi
 }
 
