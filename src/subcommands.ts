@@ -428,6 +428,7 @@ export async function doctor(): Promise<void> {
   for (const c of await checkAuthRefresh()) checks.push(c);
   const drift = checkSidecarDrift();
   if (drift) checks.push(drift);
+  for (const c of checkUserWideConfig()) checks.push(c);
 
   let anyFail = false;
   for (const c of checks) {
@@ -492,6 +493,66 @@ function checkSidecarDrift(): DoctorCheck | undefined {
       `(CLI v${cliVersion()}). Re-run \`ccairgap init --force\` to reset, or ` +
       `keep local edits.`,
   };
+}
+
+function checkUserWideConfig(): DoctorCheck[] {
+  const env = process.env;
+  const home = env.HOME ?? homedir();
+  const dir = resolveUserWideDir({ env, home });
+  if (!existsSync(dir)) {
+    return [{ name: "user-wide config", ok: true, detail: `${dir} (absent)` }];
+  }
+  const checks: DoctorCheck[] = [];
+
+  // Surface presence of bypass-class files (settings.json/mcp.json/CLAUDE.md/skills/Dockerfile).
+  const bypass = ["settings.json", "mcp.json", "CLAUDE.md", "Dockerfile"];
+  const present = bypass.filter((f) => existsSync(join(dir, f)));
+  if (existsSync(join(dir, "skills"))) present.push("skills/");
+  if (present.length > 0) {
+    checks.push({
+      name: "user-wide bypass files",
+      ok: true,
+      detail: `${present.join(", ")} under ${dir} (user-authored; bypass --hook-enable/--mcp-enable)`,
+    });
+  }
+
+  // Reserved <name>.config.yaml files: informational.
+  const integrationsDir = join(dir, "integrations");
+  let integrationFiles: string[] = [];
+  try {
+    integrationFiles = (existsSync(integrationsDir) ? readdirSync(integrationsDir) : []).filter(
+      (n) => n.endsWith(".yaml"),
+    );
+  } catch {
+    /* ignore */
+  }
+  if (integrationFiles.length > 0) {
+    checks.push({
+      name: "user-wide integrations",
+      ok: true,
+      detail: `${integrationFiles.length} file(s) under ${integrationsDir}`,
+    });
+  }
+
+  // Reserved profile files (warn).
+  let reserved: string[] = [];
+  try {
+    reserved = readdirSync(dir).filter(
+      (n) => /^[A-Za-z0-9._-]+\.config\.yaml$/.test(n) && n !== "config.yaml",
+    );
+  } catch {
+    /* ignore */
+  }
+  if (reserved.length > 0) {
+    checks.push({
+      name: "user-wide reserved profile files",
+      ok: true,
+      warn: true,
+      detail: `${reserved.join(", ")} under ${dir} are reserved (user-wide profiles are not loaded — only project-layer profiles apply)`,
+    });
+  }
+
+  return checks;
 }
 
 /** Default config.yaml content written by `ccairgap init`. */
