@@ -182,9 +182,13 @@ export function loadAllLayers(opts: LoadAllLayersOptions): LoadedAllLayers {
   const home = (env.HOME as string | undefined) ?? homedir();
   const userWideDir = resolveUserWideDir({ env, home });
 
+  // Always compute the user-wide config path so resolveConfigPath's
+  // dotfiles-collision check fires even under --no-user-config / --bare.
+  // The load gate below only governs whether we actually read + merge those layers.
+  const userWideCfgPath = join(userWideDir, "config.yaml");
+
   let integrations: Array<{ filename: string; config: ConfigFile }> = [];
   let userWide: ConfigFile | undefined;
-  let userWideCfgPath: string | undefined;
   if (!opts.bare && opts.userConfigEnabled) {
     integrations = loadIntegrationsDir(join(userWideDir, "integrations")).map(
       (e) => ({ filename: e.filename, config: e.config }),
@@ -192,7 +196,6 @@ export function loadAllLayers(opts: LoadAllLayersOptions): LoadedAllLayers {
     const r = loadUserWideConfig(userWideDir, { activeProfile: opts.profile });
     if (r) {
       userWide = r.config;
-      userWideCfgPath = r.path;
     }
   }
 

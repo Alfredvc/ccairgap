@@ -256,6 +256,45 @@ describe("loadAllLayers", () => {
     expect(result!.layered.provenance.name).toBe("user-wide");
   });
 
+  it("dotfiles-realpath collision warns under --no-user-config (userConfigEnabled: false)", () => {
+    // Regression: collision detection must fire even when --no-user-config is passed,
+    // because the check only needs the user-wide path — not whether we load that layer.
+    writeFileSync(join(userWideDir, "config.yaml"), "name: user-wide-name\n");
+
+    // Make project's .ccairgap a symlink pointing at the user-wide dir.
+    symlinkSync(userWideDir, join(projectDir, ".ccairgap"));
+
+    const warnings: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((msg: string) => {
+      warnings.push(msg);
+    });
+
+    let result: ReturnType<typeof loadAllLayers>;
+    try {
+      result = loadAllLayers({
+        bare: false,
+        userConfigEnabled: false,
+        cwd: projectDir,
+        env: env(),
+      });
+    } finally {
+      errSpy.mockRestore();
+    }
+
+    // Collision warning fires even though user-wide layer was not loaded.
+    expect(warnings.some((w) => /loading it once at user-wide layer only/.test(w))).toBe(true);
+
+    // Project layer was skipped due to collision.
+    expect(result!.projectPath).toBeUndefined();
+
+    // No user-wide provenance (user-wide layer was not loaded).
+    const allProvValues = Object.values(result!.layered.provenance).flat();
+    for (const v of allProvValues) {
+      expect(v).not.toBe("user-wide");
+      expect(String(v)).not.toMatch(/^user-wide-integration:/);
+    }
+  });
+
   it("profile threading — project layer loads <name>.config.yaml instead of config.yaml", () => {
     // Create both config.yaml (should NOT be loaded) and web.config.yaml (SHOULD be loaded).
     mkdirSync(join(projectDir, ".ccairgap"), { recursive: true });
