@@ -58,34 +58,34 @@ describe("loadIntegrationsDir", () => {
   });
 
   it("rejects forbidden top-level keys (repo, name, mount, cp, etc.)", () => {
-    for (const [yamlKey, normKey] of [
-      ["repo", "repo"],
-      ["name", "name"],
-      ["mount", "mount"],
-      ["cp", "cp"],
-      ["sync", "sync"],
-      ["extra-repo", "extraRepo"],
-      ["ro", "ro"],
-      ["base", "base"],
-      ["dockerfile", "dockerfile"],
-      ["docker-build-arg", "dockerBuildArg"],
-      ["rebuild", "rebuild"],
-      ["print", "print"],
-      ["resume", "resume"],
-      ["clipboard", "clipboard"],
-      ["no-auto-memory", "noAutoMemory"],
-      ["no-preserve-dirty", "noPreserveDirty"],
-      ["warn-docker-args", "warnDockerArgs"],
-      ["claude-args", "claudeArgs"],
-      ["keep-container", "keepContainer"],
-      ["refresh-below-ttl", "refreshBelowTtl"],
-    ] as const) {
+    for (const entry of [
+      { yamlKey: "repo", normKey: "repo", value: "foo" },
+      { yamlKey: "name", normKey: "name", value: "foo" },
+      { yamlKey: "mount", normKey: "mount", value: "[]" },
+      { yamlKey: "cp", normKey: "cp", value: "[]" },
+      { yamlKey: "sync", normKey: "sync", value: "[]" },
+      { yamlKey: "extra-repo", normKey: "extraRepo", value: "[]" },
+      { yamlKey: "ro", normKey: "ro", value: "[]" },
+      { yamlKey: "base", normKey: "base", value: "foo" },
+      { yamlKey: "dockerfile", normKey: "dockerfile", value: "foo" },
+      { yamlKey: "docker-build-arg", normKey: "dockerBuildArg", value: "{}" },
+      { yamlKey: "rebuild", normKey: "rebuild", value: "true" },
+      { yamlKey: "print", normKey: "print", value: "foo" },
+      { yamlKey: "resume", normKey: "resume", value: "foo" },
+      { yamlKey: "clipboard", normKey: "clipboard", value: "true" },
+      { yamlKey: "no-auto-memory", normKey: "noAutoMemory", value: "true" },
+      { yamlKey: "no-preserve-dirty", normKey: "noPreserveDirty", value: "true" },
+      { yamlKey: "warn-docker-args", normKey: "warnDockerArgs", value: "true" },
+      { yamlKey: "claude-args", normKey: "claudeArgs", value: "[]" },
+      { yamlKey: "keep-container", normKey: "keepContainer", value: "true" },
+      { yamlKey: "refresh-below-ttl", normKey: "refreshBelowTtl", value: "10" },
+    ]) {
       writeFileSync(
         join(dir, "x.yaml"),
-        `${yamlKey}: ${yamlKey === "extra-repo" || yamlKey === "ro" || yamlKey === "cp" || yamlKey === "sync" || yamlKey === "mount" || yamlKey === "claude-args" ? "[]" : yamlKey === "docker-build-arg" ? "{}" : yamlKey === "rebuild" || yamlKey === "clipboard" || yamlKey === "no-auto-memory" || yamlKey === "no-preserve-dirty" || yamlKey === "warn-docker-args" || yamlKey === "keep-container" ? "true" : yamlKey === "refresh-below-ttl" ? "10" : "foo"}\n`,
+        `${entry.yamlKey}: ${entry.value}\n`,
       );
       expect(() => loadIntegrationsDir(dir)).toThrow(
-        new RegExp(`key '${normKey}' not allowed in integration files`),
+        new RegExp(`key '${entry.normKey}' not allowed in integration files`),
       );
     }
   });
