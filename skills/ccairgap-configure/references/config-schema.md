@@ -8,7 +8,7 @@
 
 Any launch flag can live in a YAML file. Default load path: `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap prints a warning to stderr and uses the primary). Override with `--config <path>` or `--profile <name>`.
 
-Precedence: **CLI > config > built-in defaults.** Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`): concat, config first, CLI appended (no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins.
+Precedence: **CLI > project config > user-wide config (`config.yaml` > `integrations/`) > built-in defaults.** Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`): concat, config first, CLI appended (no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins.
 
 Both kebab-case (matches CLI flag names) and camelCase keys are accepted — kebab is preferred because it mirrors the flags. Unknown keys or wrong types abort launch with a clear error. The CLI validator in `src/config.ts` is source of truth; this page mirrors it.
 

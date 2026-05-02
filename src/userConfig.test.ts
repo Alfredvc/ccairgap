@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mergeLayers } from "./configLayered.js";
 import { loadIntegrationsDir, loadUserWideConfig, resolveUserWideDir } from "./userConfig.js";
 
 describe("resolveUserWideDir", () => {
@@ -171,5 +172,41 @@ describe("loadUserWideConfig", () => {
     const warnings: string[] = [];
     loadUserWideConfig(dir, { warn: (s) => warnings.push(s) });
     expect(warnings).toEqual([]);
+  });
+});
+
+describe("end-to-end layered load", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ccairgap-e2e-"));
+    mkdirSync(join(dir, "integrations"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("integrations + config.yaml + project merge with correct provenance", () => {
+    writeFileSync(
+      join(dir, "integrations", "switchboard.yaml"),
+      "hooks:\n  enable: ['switchboard-*']\ndocker-run-arg:\n  - '-e SB=1'\n",
+    );
+    writeFileSync(
+      join(dir, "config.yaml"),
+      "extra-repo: [/abs/ref]\ndocker-run-arg:\n  - '-e USER=1'\n",
+    );
+    const integrations = loadIntegrationsDir(join(dir, "integrations"));
+    const userWide = loadUserWideConfig(dir);
+    const projectCfg = { dockerRunArg: ["-e PROJ=1"] };
+    const result = mergeLayers({
+      integrations: integrations.map((e) => ({ filename: e.filename, config: e.config })),
+      userWide: userWide?.config,
+      project: projectCfg,
+    });
+    expect(result.merged.hooks?.enable).toEqual(["switchboard-*"]);
+    expect(result.merged.extraRepo).toEqual(["/abs/ref"]);
+    expect(result.merged.dockerRunArg).toEqual(["-e SB=1", "-e USER=1", "-e PROJ=1"]);
+    expect(result.provenance.dockerRunArg).toEqual([
+      "user-wide-integration:switchboard.yaml",
+      "user-wide",
+      "project",
+    ]);
   });
 });

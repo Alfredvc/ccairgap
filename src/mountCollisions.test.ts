@@ -217,4 +217,39 @@ describe("ccairgap-user-dir reservation", () => {
       ),
     ).toThrow(/reserved container path/);
   });
+
+  it("user --ro /ccairgap-user-dir hard-errors with named source", () => {
+    expect(() =>
+      resolveMountCollisions(
+        [
+          {
+            src: "/host/x",
+            dst: "/ccairgap-user-dir",
+            mode: "ro",
+            source: { kind: "ro", path: "/host/x" },
+          },
+        ],
+        { homeInContainer: "/home/claude" },
+      ),
+    ).toThrow(/\/ccairgap-user-dir is a reserved container path.*--ro \/host\/x cannot use it/);
+  });
+
+  it("user --mount /ccairgap-user-dir/sub also fails reserved-prefix-style guard (exact-only — must use exact match)", () => {
+    // Exact-match reservation. A nested path like /ccairgap-user-dir/sub does NOT
+    // share a reserved prefix (only /host-git-alternates/ et al. are prefix-reserved).
+    // This test documents that exact-only behavior is intentional, mirroring /ccairgap-dir.
+    expect(() =>
+      resolveMountCollisions(
+        [
+          {
+            src: "/host/y",
+            dst: "/ccairgap-user-dir/sub",
+            mode: "rw",
+            source: { kind: "artifact", flag: "mount", raw: "/host/y" },
+          },
+        ],
+        { homeInContainer: "/home/claude" },
+      ),
+    ).not.toThrow();
+  });
 });
