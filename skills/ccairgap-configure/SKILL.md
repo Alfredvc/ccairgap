@@ -7,8 +7,10 @@ description: Configure `ccairgap` (ccairgap) for a specific project or workflow 
 
 `ccairgap` runs Claude Code with `--dangerously-skip-permissions` inside a Docker container. Two configuration surfaces handle almost every real request:
 
-1. **`.ccairgap/config.yaml`** — same keys as CLI flags. Default path `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap warns and uses the primary).
+1. **`.ccairgap/config.yaml`** — project-scoped, same keys as CLI flags. Default path `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap warns and uses the primary). **This is where almost every change belongs — anything tied to a specific repo (gitignored mounts, repo-specific hooks/MCPs, per-repo Dockerfile).**
 2. **Custom `Dockerfile`** — extend the bundled `node:20-slim` base when a workflow needs binaries not shipped by default (Python, Playwright, language toolchains, MCP server binaries). Referenced via `dockerfile:` in config.
+
+A user-wide layer (`~/.config/ccairgap/`, scaffolded via `ccairgap init --user`) also exists for cross-project defaults — but **default to project config**. Only suggest user-wide when the user explicitly says they want a setting across every project, or for third-party integration drop-ins (`integrations/*.yaml`, allowlisted to `hooks.enable` / `mcp.enable` / safe `docker-run-arg`). Most users never need it. Full layer reference: `references/config-schema.md`.
 
 There is a third surface — `--docker-run-arg` — but it is an escape hatch, not a recommendation you should reach for. See "When `docker-run-arg` is *not* the answer" below. **Do not propose it unless the user has explicitly described a need it addresses.**
 
