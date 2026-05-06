@@ -288,7 +288,7 @@ describe("handoff — dirty tree preservation", () => {
     expect(r.warnings.join("\n")).toContain("could not scan session clone");
   });
 
-  it("logs each transcript file copied and surfaces them in the result", async () => {
+  it("logs one line per main session id and skips sidecar dirs", async () => {
     // Override HOME so the cp -r lands inside the test sandbox instead of
     // the developer's real ~/.claude/projects/.
     const fakeHome = join(root, "fakehome");
@@ -302,6 +302,10 @@ describe("handoff — dirty tree preservation", () => {
       mkdirSync(td, { recursive: true });
       writeFileSync(join(td, "alpha.jsonl"), "{}\n");
       writeFileSync(join(td, "beta.jsonl"), "{}\n");
+      // Sidecar dir Claude Code drops next to the main jsonl for subagent
+      // transcripts. Must be copied but must NOT produce its own log line.
+      mkdirSync(join(td, "alpha", "subagents"), { recursive: true });
+      writeFileSync(join(td, "alpha", "subagents", "agent-x.jsonl"), "{}\n");
 
       const logs: string[] = [];
       const r = await handoff(sessionDir, "test", (m) => logs.push(m));
@@ -311,9 +315,11 @@ describe("handoff — dirty tree preservation", () => {
         join(encoded, "alpha.jsonl"),
         join(encoded, "beta.jsonl"),
       ]);
-      const joined = logs.join("\n");
-      expect(joined).toContain(`transcript copied: ${join(fakeHome, ".claude", "projects", encoded, "alpha.jsonl")}`);
-      expect(joined).toContain(`transcript copied: ${join(fakeHome, ".claude", "projects", encoded, "beta.jsonl")}`);
+      const sessionLines = logs.filter((l) => l.includes("session copied:"));
+      expect(sessionLines.sort()).toEqual([
+        "[handoff] session copied: alpha",
+        "[handoff] session copied: beta",
+      ]);
     } finally {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;

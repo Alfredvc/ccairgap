@@ -335,11 +335,10 @@ export async function handoff(
     }
   }
 
-  // Transcripts copy-out. After each successful per-encoded-dir cp, enumerate
-  // the top-level entries (jsonl files plus any sidecar dirs Claude Code may
-  // ship later) and stream them through `logger` so users see exactly which
-  // transcript files were rescued — addresses opaque "N transcript dirs
-  // copied" summaries when a session covered multiple workspaces.
+  // Transcripts copy-out. After each successful per-encoded-dir cp, list the
+  // main-session UUIDs (top-level `<uuid>.jsonl` files) on a single line.
+  // Sidecar dirs (`<uuid>/subagents/...`) are copied but not enumerated —
+  // they're noise for the user, who navigates by main session id.
   const transcriptsDir = join(sessionDirPath, "transcripts");
   if (existsSync(transcriptsDir)) {
     const hostProjects = join(homedir(), ".claude", "projects");
@@ -353,9 +352,10 @@ export async function handoff(
         transcriptsCopied++;
         try {
           for (const f of readdirSync(src)) {
-            const rel = join(entry, f);
-            transcriptFiles.push(rel);
-            logger(`[handoff] transcript copied: ${join(dst, f)}`);
+            if (!f.endsWith(".jsonl")) continue;
+            if (!statSync(join(src, f)).isFile()) continue;
+            transcriptFiles.push(join(entry, f));
+            logger(`[handoff] session copied: ${f.slice(0, -".jsonl".length)}`);
           }
         } catch {
           // best-effort enumeration — copy already succeeded
