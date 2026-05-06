@@ -45,9 +45,14 @@ fi
 #  - .credentials.json (handled via /host-claude-creds-dir)
 #  - macOS .DS_Store files at any depth
 #  - Python venvs (see VENVS_FOUND block above)
-# Exit code 23 ("some files/attrs not transferred") is tolerated with a
-# warning so a stray broken symlink (outside the venv pattern) does not
-# block session startup. Other exit codes still abort.
+# Note: absolute symlinks under host ~/.claude/ would normally fail rsync -L
+# in the container namespace (their /Users/... targets don't exist). The CLI
+# pre-materializes each one host-side and overlay-mounts the result at
+# /host-claude/<rel>, so by the time we get here those symlinks have been
+# replaced with real files/dirs. See src/claudeSymlinkOverlay.ts.
+# Exit code 23 ("some files/attrs not transferred") is still tolerated with
+# a warning to cover any stragglers (e.g. a relative symlink pointing into
+# an excluded subtree). Other exit codes still abort.
 if [ -d "$HOST_CLAUDE" ]; then
     rsync -rL --chmod=u+w \
         --exclude='projects' \

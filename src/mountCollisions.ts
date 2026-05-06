@@ -76,6 +76,7 @@ function label(src: MountSource): string {
     case "ccairgap-user-dir": return `~/.config/ccairgap/ RO mount`;
     case "userdb-passwd": return `/etc/passwd RO mount`;
     case "userdb-group": return `/etc/group RO mount`;
+    case "claude-symlink-overlay": return `~/.claude/${src.relPath} symlink overlay`;
   }
 }
 

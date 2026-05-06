@@ -47,6 +47,7 @@ import { validateClaudeArgs } from "./claudeArgs.js";
 import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
 import { resolveManagedPolicyDir } from "./managedPolicy.js";
 import { resolveCcairgapDir } from "./config.js";
+import { buildClaudeSymlinkOverlay } from "./claudeSymlinkOverlay.js";
 
 export interface LaunchOptions {
   repos: string[];
@@ -672,6 +673,24 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     enabled: opts.clipboard && opts.print === undefined,
   });
 
+  // Absolute-symlink overlay: walk host ~/.claude/, materialize each absolute
+  // symlink's target into $SESSION/claude-symlink-overlay/<rel>, and emit one
+  // RO bind mount per entry at /host-claude/<rel>. Required because the
+  // entrypoint's `rsync -L` runs inside the container — absolute symlink
+  // targets resolve against the container's namespace, where host paths like
+  // `/Users/alfredvc/...` don't exist, and the rsync would skip them with
+  // "symlink has no referent" warnings. Doing the resolution host-side gives
+  // the container real files in place of the broken symlinks.
+  let claudeSymlinkOverlay: Mount[];
+  try {
+    claudeSymlinkOverlay = await buildClaudeSymlinkOverlay(
+      hostClaude,
+      join(sessionPath, "claude-symlink-overlay"),
+    );
+  } catch (e) {
+    die(`failed to materialize ~/.claude/ symlink overlay: ${(e as Error).message}`);
+  }
+
   let mounts: Mount[];
   // Anchor on primary repo host path so --bare --repo <other> resolves correctly.
   const ccairgapDir = resolveCcairgapDir(repoEntries[0]?.hostPath ?? process.cwd());
@@ -704,6 +723,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         ...hookPolicyResult.overrideMounts,
         ...mcpPolicyResult.overrideMounts,
         ...clipboard.mounts,
+        ...claudeSymlinkOverlay,
         { src: userdb.passwdPath, dst: "/etc/passwd", mode: "ro", source: { kind: "userdb-passwd" } },
         { src: userdb.groupPath, dst: "/etc/group", mode: "ro", source: { kind: "userdb-group" } },
       ],

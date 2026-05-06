@@ -29,6 +29,7 @@ export type MountSource =
         | "userdb-passwd"
         | "userdb-group";
     }
+  | { kind: "claude-symlink-overlay"; relPath: string }
   | { kind: "repo"; hostPath: string }
   | { kind: "alternates"; repoHostPath: string; category: "objects" | "lfs" }
   | { kind: "ro"; path: string }
