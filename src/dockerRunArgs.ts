@@ -126,6 +126,7 @@ export function validateIntegrationDockerRunArgs(
     "--dns=", "--dns-search=",
   ];
   const KV_FLAGS = new Set(["-e", "--env"]);
+  const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
   let i = 0;
   while (i < tokens.length) {
@@ -165,10 +166,22 @@ export function validateIntegrationDockerRunArgs(
       );
     }
 
-    if (KV_FLAGS.has(flagShown) && (valueForKv === undefined || !valueForKv.includes("="))) {
-      throw new Error(
-        `--docker-run-arg in ${sourceFile}: -e/--env: expected KEY=VAL, got '${valueForKv}'`,
-      );
+    if (KV_FLAGS.has(flagShown)) {
+      if (valueForKv === undefined) {
+        throw new Error(
+          `--docker-run-arg in ${sourceFile}: -e/--env: expected KEY=VAL or KEY, got nothing`,
+        );
+      }
+      if (!valueForKv.includes("=") && !ENV_NAME_RE.test(valueForKv)) {
+        // Bare `-e KEY` is host env passthrough. Allowed (does not weaken
+        // isolation) but the name must be a POSIX env var name so a typo
+        // doesn't silently become a literal value.
+        throw new Error(
+          `--docker-run-arg in ${sourceFile}: -e/--env '${valueForKv}': ` +
+            `bare form (host env passthrough) requires a POSIX env var name ` +
+            `([A-Za-z_][A-Za-z0-9_]*); use KEY=VAL for literal values.`,
+        );
+      }
     }
   }
 }

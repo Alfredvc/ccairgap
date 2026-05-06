@@ -132,10 +132,21 @@ describe("validateIntegrationDockerRunArgs", () => {
     }
   });
 
-  it("rejects bare value with no preceding flag (-e KEY without =VAL)", () => {
+  it("accepts -e KEY (bare form, host env passthrough)", () => {
     expect(() =>
-      validateIntegrationDockerRunArgs(["-e", "KEY"], "f.yaml"),
-    ).toThrow(/-e\/--env: expected KEY=VAL/);
+      validateIntegrationDockerRunArgs(
+        ["-e", "TMUX_PANE", "--env", "DISPLAY", "--env=USER"],
+        "f.yaml",
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects -e KEY when KEY is not a valid env var name", () => {
+    for (const bad of ["1FOO", "FOO-BAR", "FOO BAR", "", "FOO.BAR"]) {
+      expect(() =>
+        validateIntegrationDockerRunArgs(["-e", bad], "f.yaml"),
+      ).toThrow(/bare form \(host env passthrough\) requires a POSIX env var name/);
+    }
   });
 
   it("error message names the source file", () => {
