@@ -104,6 +104,19 @@ function readFileSyncSafe(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+/** True iff the JSON has a non-empty `claudeAiOauth.refreshToken`. Used to
+ *  distinguish in-container `/login` writes (full creds with refresh token)
+ *  from host-side writes (always stripped). Malformed JSON → false. */
+function externalHasRefreshToken(json: string): boolean {
+  try {
+    const obj = JSON.parse(json) as { claudeAiOauth?: { refreshToken?: unknown } };
+    const rt = obj.claudeAiOauth?.refreshToken;
+    return typeof rt === "string" && rt.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function startRuntimeAuthRefresh(
   input: StartRuntimeAuthRefreshInput,
 ): RuntimeAuthRefreshHandle {
@@ -136,7 +149,16 @@ export function startRuntimeAuthRefresh(
   try {
     lastWriteMtimeMs = statSync(credsPath).mtimeMs;
   } catch {
-    // creds file not yet present — first tick will skip via existsSync guard
+    // Creds file not yet present at watcher start. Production invariant
+    // (see `launch.ts` step 3 — `resolveCredentials` materializes
+    // `$SESSION/creds/.credentials.json` *before* `startRuntimeAuthRefresh`)
+    // means this branch never fires under the CLI; tests can hit it.
+    // Consequence when it does fire: `lastWriteMtimeMs` stays NaN, the
+    // `Number.isFinite` guard in the tick mtime-mismatch check fails, and
+    // external writes are NOT detected until the first successful host-driven
+    // refresh writes the file (which sets `lastWriteMtimeMs` to a finite
+    // value). The `existsSync` guard in tick still skips when the file is
+    // absent; it does not skip the rest of the tick once the file appears.
   }
   // The session creds JSON already has `refreshToken` stripped (pre-launch
   // flow uses `stripRefreshToken(finalJson)`), so its bytes are directly
@@ -184,22 +206,74 @@ export function startRuntimeAuthRefresh(
   const tick = async (): Promise<void> => {
     if (stopped) return;
 
-    // Mtime ownership check: if anything else (in-container /login, third-party
-    // tool) wrote the creds file since our last write, cede control entirely.
+    // Mtime mismatch check. Two writers other than us touch this file:
+    //   1. In-container `/login` recovery — writes a FULL creds JSON with
+    //      `refreshToken` set (Claude Code just completed OAuth in-container).
+    //      Treated as an intentional account takeover for this session: we
+    //      back off permanently so the watcher does not clobber the
+    //      container-scoped refresh token with stripped host creds.
+    //   2. Host-side writes — manual `cp` of fresh creds into the session
+    //      file, third-party tools, etc. These never carry a `refreshToken`
+    //      (the host-driven write path always strips). The watcher must
+    //      continue watching: future host refreshes still need to propagate
+    //      so `session creds == host creds (modulo refreshToken)` holds.
+    // The two are distinguished by the presence of `claudeAiOauth.refreshToken`
+    // in the externally-written file. mtime alone cannot tell them apart.
     if (!existsSync(credsPath)) return;
     const currentMtime = statSync(credsPath).mtimeMs;
     if (Number.isFinite(lastWriteMtimeMs) && currentMtime !== lastWriteMtimeMs) {
-      console.error(
-        "ccairgap: creds file changed by another writer (likely in-container /login); pausing runtime refresh for this session",
-      );
-      stopped = true;
-      return;
+      let externalContent: string;
+      try {
+        externalContent = readFileSyncSafe(credsPath);
+      } catch {
+        // Race: file vanished between stat and read. Skip this tick; the
+        // next existsSync check will retry.
+        return;
+      }
+      if (externalHasRefreshToken(externalContent)) {
+        console.error(
+          "ccairgap: creds file rewritten with refreshToken (in-container /login); pausing runtime refresh for this session",
+        );
+        stopped = true;
+        return;
+      }
+      // Host-side write detected — adopt as the new baseline and keep
+      // watching. The next refreshFn pass will diff stripped-host against
+      // this content and re-sync if they differ.
+      lastWriteMtimeMs = currentMtime;
+      lastWrittenStrippedJson = externalContent;
+      expiresAtMs = parseExpiresAt(externalContent);
     }
 
     if (inflight) return; // re-entry while previous tick still running
 
     inflight = (async () => {
-      const r = await refreshFn();
+      let r: RefreshResult;
+      try {
+        r = await refreshFn();
+      } catch (e) {
+        // refreshFn throwing is the silent-failure path: `setInterval(() =>
+        // void tick(), …)` discards rejections, so an unguarded readCreds
+        // throw inside refreshIfLowTtl (e.g. locked macOS keychain after
+        // sleep, missing claude binary on the watcher's PATH) used to vanish
+        // without any state write — no warning, no doctor surface, no retry
+        // counter. Classify as a generic failure and feed the existing
+        // fail-banner / state-file path.
+        consecutiveFailures += 1;
+        const reason = ((e as Error | undefined)?.message ?? "unknown error").slice(0, 120);
+        console.error(`ccairgap: token refresh threw (${reason}); retrying in 60s`);
+        if (consecutiveFailures >= FAIL_BANNER_THRESHOLD) {
+          writeWarning();
+        }
+        writeState("fail", {
+          ok: false,
+          reason,
+          classification: "unknown",
+          finalJson: "",
+          finalTtlMs: Number.NaN,
+        });
+        return;
+      }
       if (r.ok) {
         // Diff-write: skip fsync + mtime bump when host content unchanged
         // (steady-state refresh-not-needed path). This is the common case;
@@ -239,7 +313,20 @@ export function startRuntimeAuthRefresh(
   };
 
   const interval = setInterval(() => {
-    void tick();
+    // Belt-and-suspenders against silent rejections. The IIFE-internal
+    // try/catch around `refreshFn()` handles the canonical case (locked
+    // keychain, missing claude binary), but `writeWarning()` / `writeState()`
+    // inside the failure-handling path themselves call `atomicWrite`, which
+    // can throw on a transient fs error (disk full, NFS hiccup, $SESSION
+    // raced by handoff). Without this `.catch`, `void tick()` would swallow
+    // that throw — the same class of silent-failure bug we are fixing.
+    // The 60-s `setInterval` is unaffected by handler throws either way;
+    // logging here just preserves observability.
+    tick().catch((e) => {
+      console.error(
+        `ccairgap: auth-refresh tick crashed unexpectedly: ${(e as Error)?.message ?? e}`,
+      );
+    });
   }, TICK_MS);
   // Don't keep the event loop alive on the watcher alone.
   // (The docker-run child does that via stdio: "inherit".)
