@@ -6,6 +6,7 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,11 +33,24 @@ describe("startRuntimeAuthRefresh", () => {
     vi.useRealTimers();
   });
 
-  it("does NOT call refresh when ttl is above the 30-min window", async () => {
-    const longTtl = Date.now() + 60 * 60_000; // 60 min
-    writeFileSync(join(session, "creds", ".credentials.json"), FRESH(longTtl), { mode: 0o600 });
+  it("calls refresh every tick but does NOT rewrite the session creds when host content is unchanged", async () => {
+    // Steady-state path: ttl high, host token == session token (modulo
+    // refreshToken). refreshIfLowTtl returns `action: "fresh"` cheaply (one
+    // keychain read, no lock). The watcher must NOT mutate the session file —
+    // any write here would be a wasted fsync + mtime bump (the latter is
+    // visible to upstream Claude Code via invalidateOAuthCacheIfDiskChanged).
+    const longTtl = Date.now() + 60 * 60_000;
+    const sessionJson = FRESH(longTtl);
+    writeFileSync(join(session, "creds", ".credentials.json"), sessionJson, { mode: 0o600 });
+    const mtimeBefore = statSync(join(session, "creds", ".credentials.json")).mtimeMs;
 
-    const refreshFn = vi.fn();
+    const refreshFn = vi.fn(async (): Promise<RefreshResult> => ({
+      ok: true,
+      action: "fresh",
+      finalJson: sessionJson, // host == session content
+      finalTtlMs: 60 * 60_000,
+    }));
+
     const handle = startRuntimeAuthRefresh({
       sessionDir: session,
       lockPath: session,
@@ -47,7 +61,64 @@ describe("startRuntimeAuthRefresh", () => {
 
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(refreshFn).not.toHaveBeenCalled();
+    expect(refreshFn).toHaveBeenCalledTimes(2);
+
+    const mtimeAfter = statSync(join(session, "creds", ".credentials.json")).mtimeMs;
+    expect(mtimeAfter).toBe(mtimeBefore);
+
+    await handle.stop();
+  });
+
+  it("propagates a host-driven account swap by writing new stripped creds to the session file", async () => {
+    // User runs `/login` on the host, swaps to a different account. Host
+    // creds rotate; the session file still has the old account's token.
+    // Within ≤60 s the watcher must read host, see content has changed, and
+    // write the new stripped creds. Container's mtime-check picks them up
+    // on the next API request (auth.ts:1320).
+    const longTtl = Date.now() + 60 * 60_000;
+    const oldSession = JSON.stringify({
+      claudeAiOauth: { accessToken: "old-at", expiresAt: longTtl, scopes: ["user:inference"] },
+    });
+    writeFileSync(join(session, "creds", ".credentials.json"), oldSession, { mode: 0o600 });
+
+    const newAccountJson = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: "new-account-at",
+        // refreshToken stays in `r.finalJson` (host source); the watcher
+        // strips it before writing.
+        refreshToken: "new-account-rt",
+        expiresAt: longTtl,
+        scopes: ["user:inference"],
+      },
+    });
+
+    const refreshFn = vi.fn(async (): Promise<RefreshResult> => ({
+      ok: true,
+      action: "fresh", // host ttl high; no actual refresh, just a keychain read
+      finalJson: newAccountJson,
+      finalTtlMs: 60 * 60_000,
+    }));
+
+    const handle = startRuntimeAuthRefresh({
+      sessionDir: session,
+      lockPath: session,
+      readHostCreds: async () => "",
+      refreshFn,
+      now: () => Date.now(),
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const written = JSON.parse(
+      readFileSync(join(session, "creds", ".credentials.json"), "utf8"),
+    );
+    expect(written.claudeAiOauth.accessToken).toBe("new-account-at");
+    expect(written.claudeAiOauth.refreshToken).toBeUndefined();
+
+    // Subsequent tick with same host content does NOT write again.
+    const mtimeAfterSwap = statSync(join(session, "creds", ".credentials.json")).mtimeMs;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statSync(join(session, "creds", ".credentials.json")).mtimeMs).toBe(mtimeAfterSwap);
 
     await handle.stop();
   });
@@ -209,10 +280,12 @@ describe("startRuntimeAuthRefresh", () => {
     await handle.stop();
   });
 
-  it("after a successful refresh, the next ttl-above-window tick does NOT cede control", async () => {
+  it("after a successful refresh, the next tick does NOT cede control", async () => {
     // Regression guard: after writeSessionCreds, our recorded mtime must
     // match what the next `statSync` returns. Otherwise the watcher would
-    // self-cede on every tick.
+    // self-cede on every tick. With the diff-write change, refreshFn fires
+    // on every tick — cede would manifest as refreshFn never being called
+    // on tick 2.
     const shortTtl = Date.now() + 20 * 60_000;
     writeFileSync(join(session, "creds", ".credentials.json"), FRESH(shortTtl), { mode: 0o600 });
 
@@ -235,10 +308,10 @@ describe("startRuntimeAuthRefresh", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refreshFn).toHaveBeenCalledTimes(1);
 
-    // Next tick: ttl is now ~8h, well above the 30-min window. Should NOT
-    // refresh, NOT cede.
+    // Next tick: same host content. refreshFn still called (no wallclock
+    // gate), but no write happens (diff guard). Cede must NOT fire.
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(refreshFn).toHaveBeenCalledTimes(1);
+    expect(refreshFn).toHaveBeenCalledTimes(2);
 
     await handle.stop();
   });

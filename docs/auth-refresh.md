@@ -23,9 +23,11 @@ See [SPEC.md](SPEC.md) §"Authentication flow" for the full mechanism, failure c
 
 ## Runtime refresh
 
-While the container runs, the CLI runs a 1-minute wallclock-anchored polling tick on the host. When the access token has under 30 minutes of life remaining, it acquires the same `proper-lockfile` on host `~/.claude/`, calls `claude auth login` with the refresh-token env-var fast-path, and atomically rewrites `$SESSION/creds/.credentials.json` (write tmp + `fsync` + `rename(2)`). The container's Claude Code picks up the new token through its mtime-cache invalidation — no restart, no in-container coordination.
+While the container runs, the CLI polls every minute on the host. Each tick reads host creds (keychain on macOS, file on Linux); when the access token has under 30 minutes of life remaining it acquires the same `proper-lockfile` on host `~/.claude/` and calls `claude auth login` with the refresh-token env-var fast-path. The session creds file `$SESSION/creds/.credentials.json` is atomically rewritten (tmp + `fsync` + `rename(2)`) only when the stripped host content differs from the last write — no fsync churn on the steady-state path. The container's Claude Code picks up changed content through its mtime-cache invalidation — no restart, no in-container coordination.
 
-Sleep / suspend on macOS: the polling tick re-bases on `Date.now()` (wallclock) rather than relying on `setTimeout`'s monotonic countdown surviving a sleep cycle. After a multi-hour sleep the first post-resume tick refreshes immediately.
+Sleep / suspend on macOS: every tick reads host creds via `Date.now()` rather than relying on `setTimeout`'s monotonic countdown surviving a sleep cycle. After a multi-hour sleep the first post-resume tick refreshes if needed.
+
+Host-driven account swap: if you run `/login` on the host and switch account mid-session, the next tick (≤60 s) reads the new account's creds, sees the content changed, and writes them to the session file. The container then talks to the new account on its next API request. The swap is silent — no banner — because you explicitly chose it on the host.
 
 In-container `/login`: typing `/login` in Claude inside the container writes a fresh refresh-token-bearing JSON to the same file. The runtime watcher detects the mtime change, ceases polling for the rest of the session, and lets that container-scoped chain run until exit. After preserve (dirty repo, scan failure, orphan branch), the resulting refresh token sits under `$XDG_STATE_HOME/ccairgap/<id>/creds/` — `ccairgap discard <id>` removes it.
 

@@ -20,6 +20,26 @@ const REFRESH_BELOW_MS = WINDOW_MS + TICK_MS;
 const FAIL_BANNER_THRESHOLD = 3;
 const TTL_BANNER_FLOOR_MS = 15 * 60_000;
 
+/**
+ * Tick every 60 s and call `refreshIfLowTtl` unconditionally. Two-fold purpose:
+ *
+ * 1. Pre-emptive token refresh when host ttl drops under `REFRESH_BELOW_MS`.
+ *    `refreshIfLowTtl` short-circuits at `action: "fresh"` otherwise — one
+ *    keychain read, no lock acquisition.
+ * 2. Host-driven account swap propagation. When the host user runs `/login`
+ *    and changes account, host creds rotate but the session creds file stays
+ *    on the old token until natural expiry. Reading host creds every tick and
+ *    writing on stripped-content diff propagates the new token to the
+ *    bind-mounted session file within ≤60 s; upstream Claude Code's
+ *    `invalidateOAuthCacheIfDiskChanged` (`auth.ts:1320`) picks it up on the
+ *    next API request via the proactive `checkAndRefreshOAuthTokenIfNeeded`
+ *    call in `services/api/client.ts:132`.
+ *
+ * Diff-write (vs. write-on-every-tick) avoids fsync churn on the steady-state
+ * "host ttl high, no swap" case. The mtime ownership check still works because
+ * we only update `lastWriteMtimeMs` when we actually write.
+ */
+
 export interface StartRuntimeAuthRefreshInput {
   /** $XDG_STATE_HOME/ccairgap/sessions/<id> — root for creds/, auth-warnings/, auth-refresh-state.json. */
   sessionDir: string;
@@ -107,22 +127,27 @@ export function startRuntimeAuthRefresh(
   // re-checks existence and skips if the file is gone.
   let lastWriteMtimeMs: number = Number.NaN;
   let expiresAtMs: number = Number.NaN;
+  /** In-memory diff guard. Initialized from the session creds at startup
+   *  (the pre-launch flow always materializes a stripped copy there). The
+   *  watcher writes the session file only when `stripRefreshToken(host)` !==
+   *  this value — keeps fsync churn off the steady-state path while still
+   *  catching host-driven account swaps. */
+  let lastWrittenStrippedJson: string | undefined;
   try {
     lastWriteMtimeMs = statSync(credsPath).mtimeMs;
   } catch {
     // creds file not yet present — first tick will skip via existsSync guard
   }
-  // The session creds JSON has the same `expiresAt` as the host copy
-  // (writeSessionCreds writes `stripRefreshToken(finalJson)`; only
-  // `claudeAiOauth.refreshToken` is removed). Reading it here for the initial
-  // wallclock gate is correct and avoids an extra keychain hit at startup.
+  // The session creds JSON already has `refreshToken` stripped (pre-launch
+  // flow uses `stripRefreshToken(finalJson)`), so its bytes are directly
+  // comparable to `stripRefreshToken(host)` later.
   if (existsSync(credsPath)) {
     try {
       const json = readFileSyncSafe(credsPath);
       expiresAtMs = parseExpiresAt(json);
+      lastWrittenStrippedJson = json;
     } catch {
-      // leave NaN — wallclock gate becomes "always run", and the first tick's
-      // refreshFn call will pull authoritative state from the host
+      // leave undefined — first ok refresh will populate it
     }
   }
 
@@ -159,25 +184,6 @@ export function startRuntimeAuthRefresh(
   const tick = async (): Promise<void> => {
     if (stopped) return;
 
-    // NaN guard: if we never learned an expiresAt (init read failed or the
-    // file's expiresAt was malformed), do NOT enter the refresh path on every
-    // tick — that would hammer the keychain. Skip; the first ok refresh
-    // populates `expiresAtMs` for subsequent ticks.
-    if (!Number.isFinite(expiresAtMs)) {
-      // Try to read the session creds once more; if still NaN, skip.
-      if (existsSync(credsPath)) {
-        try {
-          expiresAtMs = parseExpiresAt(readFileSyncSafe(credsPath));
-        } catch {
-          /* noop */
-        }
-      }
-      if (!Number.isFinite(expiresAtMs)) return;
-    }
-
-    // Wallclock-based gate (catches sleep/suspend skew within one tick).
-    if (now() < expiresAtMs - WINDOW_MS) return;
-
     // Mtime ownership check: if anything else (in-container /login, third-party
     // tool) wrote the creds file since our last write, cede control entirely.
     if (!existsSync(credsPath)) return;
@@ -195,8 +201,18 @@ export function startRuntimeAuthRefresh(
     inflight = (async () => {
       const r = await refreshFn();
       if (r.ok) {
-        writeSessionCreds(input.sessionDir, stripRefreshToken(r.finalJson));
-        lastWriteMtimeMs = statSync(credsPath).mtimeMs;
+        // Diff-write: skip fsync + mtime bump when host content unchanged
+        // (steady-state refresh-not-needed path). This is the common case;
+        // we only mutate the session file on a real refresh or a host-driven
+        // account swap. Comparison is byte-exact stripped JSON — adequate
+        // because both sides go through the same `stripRefreshToken` (which
+        // is JSON.parse → JSON.stringify, deterministic for a given input).
+        const stripped = stripRefreshToken(r.finalJson);
+        if (stripped !== lastWrittenStrippedJson) {
+          writeSessionCreds(input.sessionDir, stripped);
+          lastWriteMtimeMs = statSync(credsPath).mtimeMs;
+          lastWrittenStrippedJson = stripped;
+        }
         expiresAtMs = parseExpiresAt(r.finalJson);
         consecutiveFailures = 0;
         writeState("ok", r);
