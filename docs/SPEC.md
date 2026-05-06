@@ -128,6 +128,7 @@ No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<id>`. |
 | `recover [<id>]` | Run the handoff routine against `$SESSION/<id>/`. Idempotent. With no `<id>` argument, equivalent to `list`. |
 | `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
+| `attach <id>` | Spawn a second `claude` inside the running container `ccairgap-<id>` via `docker exec`. Advanced. No flags, no claude-arg passthrough. See §"Attach". |
 | `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
 | `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
 | `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
@@ -1146,6 +1147,38 @@ If the session contains a dirty working tree or orphan-branch commits, `recover`
 `ccairgap discard <id>` — `rm -rf $SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo.
 
 On every normal `ccairgap` startup, orphaned sessions are detected and a warning banner is printed with the suggested `recover` / `discard` commands. They are not auto-recovered.
+
+## Attach
+
+Advanced subcommand. Runs a second interactive `claude` inside an already-running session container. Intended for power users who understand the implications below; not meant to be ergonomic for casual use.
+
+```
+ccairgap attach <id>
+```
+
+No flags, no `--` passthrough, no claude-arg surface. The denylist machinery from §"Claude arg passthrough" applies only to the launch flow; attach offers nothing to filter.
+
+**Mechanism.**
+
+1. Probe `docker inspect ccairgap-<id>`. Abort with a clear error if the container is missing or not in `State.Running == true`. (Authoritative single-shot check; `runningContainerNames()` set-membership is too coarse for the attach error message.)
+2. Read `CCAIRGAP_CWD` from `Config.Env` off the inspect output (the launch flow sets this env var so the entrypoint can `cd` to the workspace at startup; `Config.WorkingDir` is unset because the CLI does not pass `docker run -w`). `<id>` itself comes from argv.
+3. Generate a 4-hex random suffix via `crypto.randomBytes(2).toString("hex")`. Final attached label is `<id>#<rand4>` for TUI disambiguation. Stateless; no slot tracking, no IPC.
+4. Exec `docker exec -it --user $(id -u):$(id -g) -w <workdir-from-CCAIRGAP_CWD> -e CCAIRGAP_NAME="<id>#<rand4>" ccairgap-<id> claude --dangerously-skip-permissions`. Stdio inherited. CLI exit code mirrors the `docker exec` exit code so shell composition (`ccairgap attach foo && …`) works.
+
+**Workdir is inherited from PID 1.** In a multi-repo session, that means the attached claude lands in the primary `--repo` workspace just like the original. No `--repo` selector flag — the user `cd`s manually if they need a different repo. Single-repo policy: attach exposes the same one repo PID 1 sees, no more.
+
+**Lifecycle.**
+
+- Container lifecycle is bound to PID 1 only. Exiting the attached claude (normal exit, Ctrl-C, SIGKILL of the `docker exec` subprocess) does **not** terminate the container; PID 1's claude keeps running.
+- Conversely, exiting PID 1 terminates the container, which kills every attached claude immediately. Same for SIGKILL of PID 1.
+- **Handoff fires only on PID-1 exit.** Attached claudes' transcripts are written under the same in-container `~/.claude/projects/<encoded>/<uuid>.jsonl` tree as PID 1's, so when PID 1 finally exits the existing transcript-copy step in §"Handoff routine" picks them all up — no per-attach tracking required.
+- An attached claude crashing or being killed leaves no host-side residue. There is no per-attach session dir, no per-attach branch, no per-attach manifest entry.
+
+**Authentication.** Both claudes share the same in-container `~/.claude/` (rsync-materialized from the RO `/host-claude` mount at PID-1 entry). The bind-mounted `/host-claude-creds-dir/.credentials.json` is shared too. Lock-coordinated refresh via `proper-lockfile` (see §"Authentication flow") already serializes concurrent refreshers, so nothing extra is needed for attach.
+
+**Security posture is unchanged.** `docker exec` inherits the run-time security flags applied at `docker run` (`--cap-drop=ALL`, `--security-opt=no-new-privileges`, the user's `--docker-run-arg` set). Attach does not add capabilities, mounts, or env vars beyond `CCAIRGAP_NAME`. No new host write paths.
+
+**No resume on attach.** `--resume` would require shuttling a transcript into a running container (out of band of the launch-time `$SESSION/transcripts/` copy path) and is deliberately unsupported. Use `ccairgap -r <id>` to start a fresh session that resumes a transcript instead.
 
 ### Manifest fields
 

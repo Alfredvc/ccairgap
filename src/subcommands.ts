@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -131,6 +131,75 @@ export async function recover(
       `session dir ${result.removed ? "removed" : result.preserved ? "preserved" : "kept"}`,
   );
   if (result.warnings.length > 0) process.exitCode = 1;
+}
+
+/**
+ * `ccairgap attach <id>`. Spawn a second interactive `claude` inside the
+ * already-running container `ccairgap-<id>` via `docker exec`. Lifecycle is
+ * bound to PID 1: exiting the attached claude does not stop the container,
+ * but the container terminating kills every attached claude. Handoff fires
+ * only on PID-1 exit. See docs/SPEC.md §"Attach".
+ *
+ * No claude-arg passthrough — attach is a deliberately bare interactive shim.
+ */
+export async function attach(id: string): Promise<void> {
+  const containerName = `ccairgap-${id}`;
+  // One inspect call surfaces both running-state and CCAIRGAP_CWD. Format
+  // template: `<running>\n<env-line-1>\n<env-line-2>\n…`. Newline is safe
+  // inside docker's Go template output; CCAIRGAP_CWD never contains one.
+  let inspected: string;
+  try {
+    const { stdout } = await execa("docker", [
+      "inspect",
+      "--format",
+      "{{.State.Running}}\n{{range .Config.Env}}{{println .}}{{end}}",
+      containerName,
+    ]);
+    inspected = stdout;
+  } catch {
+    console.error(`ccairgap: no container named ${containerName}.`);
+    console.error(`  Start a session first, or run \`ccairgap list\` to see orphans.`);
+    process.exit(1);
+  }
+  const lines = inspected.split("\n");
+  const running = (lines[0] ?? "").trim() === "true";
+  if (!running) {
+    console.error(`ccairgap: container ${containerName} exists but is not running.`);
+    console.error(`  Attach is only valid against a live session.`);
+    process.exit(1);
+  }
+  const cwdLine = lines.find((l) => l.startsWith("CCAIRGAP_CWD="));
+  if (cwdLine === undefined) {
+    console.error(`ccairgap: container ${containerName} has no CCAIRGAP_CWD env var.`);
+    console.error(`  Was it started by ccairgap?`);
+    process.exit(1);
+  }
+  const cwd = cwdLine.slice("CCAIRGAP_CWD=".length);
+
+  const suffix = randomBytes(2).toString("hex");
+  const attachedName = `${id}#${suffix}`;
+
+  const hostUid = process.getuid?.() ?? 1000;
+  const hostGid = process.getgid?.() ?? 1000;
+
+  const result = await execa(
+    "docker",
+    [
+      "exec",
+      "-it",
+      "--user",
+      `${hostUid}:${hostGid}`,
+      "-w",
+      cwd,
+      "-e",
+      `CCAIRGAP_NAME=${attachedName}`,
+      containerName,
+      "claude",
+      "--dangerously-skip-permissions",
+    ],
+    { stdio: "inherit", reject: false },
+  );
+  process.exit(typeof result.exitCode === "number" ? result.exitCode : 1);
 }
 
 export function discard(id: string): void {

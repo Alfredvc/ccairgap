@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
-import { doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
+import { attach, doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
 import { type ConfigFile } from "./config.js";
 import { loadAllLayers } from "./configLayered.js";
 import { splitClaudeArgs } from "./cliSplit.js";
@@ -423,6 +423,17 @@ async function main() {
     .description("delete a session dir without running handoff")
     .action((id: string) => {
       discard(id);
+    });
+
+  program
+    .command("attach <id>")
+    .description(
+      "spawn a second interactive `claude` inside the running container ccairgap-<id> " +
+        "(advanced; no flags, no claude-arg passthrough). Exiting the attached claude " +
+        "does not stop the container; only the original PID-1 claude controls lifecycle.",
+    )
+    .action(async (id: string) => {
+      await attach(id);
     });
 
   program

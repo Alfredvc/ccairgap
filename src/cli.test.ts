@@ -65,6 +65,13 @@ describe("splitClaudeArgs", () => {
     }
   });
 
+  it("blocks -- passthrough on attach (no claude-arg surface)", () => {
+    expect(() =>
+      splitClaudeArgs(["node", "ccairgap", "attach", "live-abcd", "--", "--model", "opus"]),
+    ).toThrow(/process\.exit\(1\)/);
+    expect(errSpy.mock.calls[0]?.[0]).toMatch(/subcommand 'attach'/);
+  });
+
   it("silently drops the `--` tail on `completion-server` (tabtab callback)", () => {
     // tabtab's generated completer shells out `ccairgap completion-server -- <words>`.
     // Erroring on the `--` would kill tab-completion. The callback reads COMP_* env,

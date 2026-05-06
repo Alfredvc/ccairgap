@@ -16,6 +16,7 @@ const SUBCOMMANDS = new Set([
   "doctor",
   "inspect",
   "init",
+  "attach",
   "install-completion",
   "uninstall-completion",
   "completion-server",

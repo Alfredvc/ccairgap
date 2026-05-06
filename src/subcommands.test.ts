@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
   realpathSync,
@@ -205,6 +206,76 @@ describe("doctor: auth-refresh rows", () => {
     } finally {
       logSpy.mockRestore();
     }
+  });
+});
+
+describe("attach", () => {
+  it("aborts with a clear message when the container does not exist", async () => {
+    // docker inspect exits non-zero when the container is missing.
+    stubDocker('echo "Error: No such container: ccairgap-nope" >&2; exit 1');
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("nope")).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("no container named ccairgap-nope");
+  });
+
+  it("aborts when the container exists but is not running", async () => {
+    // First line is `false` → not running. No env follows because the inspect
+    // template emits both regardless, but `false\n` alone is enough.
+    stubDocker('printf "%s\\n" "false"');
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("stopped-1234")).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("not running");
+  });
+
+  it("aborts when CCAIRGAP_CWD is missing from Config.Env", async () => {
+    // running=true but no CCAIRGAP_CWD in env → not a ccairgap-launched container.
+    stubDocker('printf "%s\\n" "true" "PATH=/usr/bin" "FOO=bar"');
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("foreign-1234")).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("no CCAIRGAP_CWD");
+  });
+
+  it("invokes docker exec with the expected argv shape on a live ccairgap container", async () => {
+    // Branch on $1: `inspect` → emit running+env; `exec` → record argv to a
+    // file, exit 7 (arbitrary non-zero) so the assertion can also verify exit
+    // code propagation without colliding with vitest's own exit handling.
+    const argvSink = join(root, "docker-exec-argv.log");
+    stubDocker(
+      [
+        'case "$1" in',
+        // inspect: emit `true\nCCAIRGAP_CWD=/workspace/foo\nPATH=/usr/bin`
+        '  inspect) printf "%s\\n" "true" "CCAIRGAP_CWD=/workspace/foo" "PATH=/usr/bin" ;;',
+        '  exec) printf "%s\\n" "$@" > "' + argvSink + '"; exit 7 ;;',
+        "esac",
+      ].join("\n"),
+    );
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("live-abcd")).rejects.toThrow(/process\.exit\(7\)/);
+
+    const argv = readFileSync(argvSink, "utf8").trimEnd().split("\n");
+    expect(argv[0]).toBe("exec");
+    expect(argv).toContain("-it");
+    expect(argv).toContain("--user");
+    expect(argv).toContain("-w");
+    expect(argv[argv.indexOf("-w") + 1]).toBe("/workspace/foo");
+    // CCAIRGAP_NAME=<id>#<4hex>
+    const nameIdx = argv.findIndex((a) => a.startsWith("CCAIRGAP_NAME="));
+    expect(nameIdx).toBeGreaterThan(-1);
+    expect(argv[nameIdx]).toMatch(/^CCAIRGAP_NAME=live-abcd#[0-9a-f]{4}$/);
+    // Container name + claude entrypoint args trail the docker-exec flags.
+    expect(argv).toContain("ccairgap-live-abcd");
+    expect(argv).toContain("claude");
+    expect(argv).toContain("--dangerously-skip-permissions");
   });
 });
 
