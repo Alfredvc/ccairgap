@@ -1,6 +1,6 @@
 ---
 name: ccairgap-configure
-description: Configure `ccairgap` (ccairgap) for a specific project or workflow — produces `.ccairgap/config.yaml` and/or a custom `Dockerfile`. Use this whenever the user wants to set up ccairgap, add a binary/MCP/toolchain their workflow shells out to, enable a hook inside the sandbox, expose a sibling repo or reference dir to Claude, or otherwise asks "how do I make ccairgap do X". Also trigger when the user mentions ccairgap, `ccairgap`, or "the airgap container" and is trying to shape its behavior. Don't skip this skill just because the user hasn't used the word "configure" — most setup questions land here.
+description: Configure `ccairgap` — produces `.ccairgap/config.yaml` and/or a custom `Dockerfile`. Use when user wants to set up ccairgap, add a binary/MCP/toolchain, enable a sandbox hook, expose a sibling repo, or asks "how do I make ccairgap do X". Trigger on any ccairgap shaping question, even without the word "configure".
 ---
 
 # ccairgap-configure
