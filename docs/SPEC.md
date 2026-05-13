@@ -18,7 +18,7 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 ## Implementation
 
 - **Language:** TypeScript, compiled to a single bundled JS file with [tsup](https://tsup.egoist.dev/).
-- **Runtime:** Node.js ≥ 20 on the host. The container uses its own Node 20 base image independently.
+- **Runtime:** Node.js ≥ 20 on the host. The container uses its own Node 24 base image independently.
 - **Distribution:** npm package `ccairgap`. Primary install path is `npm i -g ccairgap`; `npx ccairgap …` works for one-shot use.
 - **Package layout:**
   - `dist/cli.js` — bundled entry, declared in `package.json` `bin`.

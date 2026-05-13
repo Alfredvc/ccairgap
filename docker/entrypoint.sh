@@ -243,7 +243,7 @@ apply_ccairgap_overlay() {
     # settings.json: deep-merge into ~/.claude/settings.json.
     # Arrays concatenated (existing first, overlay appended).
     # Scalars/objects: overlay wins. null in overlay is a no-op (existing wins).
-    # Requires jq >= 1.6 (node:20-slim ships 1.6).
+    # Requires jq >= 1.6 (node:24-slim ships 1.6).
     if [ -f "$SRC/settings.json" ]; then
         local TMP_S
         TMP_S="$(mktemp)"
