@@ -39,36 +39,48 @@ function isUtf8(buf: Buffer): boolean {
   }
 }
 
-function ensureSafeRegularFile(path: string): { ok: true; bytes: number } | { ok: false; reason: string } {
+function ensureSafeRegularFile(
+  path: string,
+  options: { followSymlinks?: boolean } = {},
+): { ok: true; bytes: number; readPath: string } | { ok: false; reason: string } {
   let lst;
   try {
     lst = lstatSync(path);
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }
-  if (lst.isSymbolicLink()) return { ok: false, reason: "symlinks are not copied" };
-  const st = statSync(path);
+  let readPath = path;
+  if (lst.isSymbolicLink()) {
+    if (!options.followSymlinks) return { ok: false, reason: "symlinks are not copied" };
+    try {
+      readPath = realpathSync(path);
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message };
+    }
+  }
+  const st = statSync(readPath);
   if (!st.isFile()) return { ok: false, reason: "only regular files are copied" };
   if (st.nlink > 1) return { ok: false, reason: "hardlinked files are not copied" };
   if (st.size > MAX_FILE_BYTES) return { ok: false, reason: "file exceeds Codex overlay size limit" };
   if ((st.mode & 0o111) !== 0) return { ok: false, reason: "executable files are not copied" };
-  const buf = readFileSync(path);
+  const buf = readFileSync(readPath);
   if (!isUtf8(buf)) return { ok: false, reason: "non-UTF-8 files are not copied" };
-  return { ok: true, bytes: st.size };
+  return { ok: true, bytes: st.size, readPath };
 }
 
 export function copySafeCodexFile(
   src: string,
   dest: string,
   warnings: CodexOverlayWarning[],
+  options: { followSymlinks?: boolean } = {},
 ): number {
-  const safe = ensureSafeRegularFile(src);
+  const safe = ensureSafeRegularFile(src, options);
   if (!safe.ok) {
     warnings.push({ code: "unsafe-codex-overlay-file", message: safe.reason, source: src });
     return 0;
   }
   mkdirSync(dirname(dest), { recursive: true });
-  copyFileSync(src, dest);
+  copyFileSync(safe.readPath, dest);
   return safe.bytes;
 }
 
@@ -163,7 +175,9 @@ export function overlayProjectCodexConfig(options: {
   const warnings: CodexOverlayWarning[] = [];
   for (const file of ["AGENTS.md", "AGENTS.override.md"]) {
     const src = join(options.hostPath, file);
-    if (existsSync(src)) copySafeCodexFile(src, join(options.clonePath, file), warnings);
+    if (existsSync(src)) {
+      copySafeCodexFile(src, join(options.clonePath, file), warnings, { followSymlinks: true });
+    }
   }
 
   const config = join(options.hostPath, ".codex", "config.toml");

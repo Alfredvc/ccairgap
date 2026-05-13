@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir, platform } from "node:os";
@@ -55,6 +56,18 @@ describe("materializeCodexState", () => {
 
     expect(plan.authFile).toBeUndefined();
     expect(plan.warnings.some((w) => w.code === "missing-auth-json")).toBe(true);
+  });
+
+  it("materializes symlinked user guidance as regular files", () => {
+    writeFileSync(join(hostHome, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-test" }));
+    const target = join(hostHome, "SHARED_AGENTS.md");
+    writeFileSync(target, "shared user guidance\n");
+    symlinkSync("SHARED_AGENTS.md", join(hostHome, "AGENTS.md"));
+
+    const plan = materializeCodexState({ sessionDir, hostHome, selected: true });
+
+    expect(readFileSync(join(plan.homeDir, "AGENTS.md"), "utf8")).toBe("shared user guidance\n");
+    expect(plan.warnings).toEqual([]);
   });
 
   it("does not copy volatile Codex state", () => {

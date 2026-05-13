@@ -813,6 +813,22 @@ exit 0
     expect(sessionEntries()).toEqual([]);
   });
 
+  it("prints the skipped Codex overlay source path in unsafe file warnings", async () => {
+    mkdirSync(join(repoDir, ".codex"), { recursive: true });
+    const target = join(repoDir, "config.toml");
+    const source = join(repoDir, ".codex", "config.toml");
+    writeFileSync(target, 'safe = "yes"\n');
+    symlinkSync(target, source);
+    const { launch: isolatedLaunch } = await importLaunchWithMocks();
+
+    await expect(isolatedLaunch(baseOptions())).resolves.toMatchObject({ exitCode: 0 });
+
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines).toContain(
+      `ccairgap: Codex warning: ${source}: symlinks are not copied`,
+    );
+  });
+
   it("preserves default Claude ro-only/no-repo compatibility", async () => {
     const { launch: isolatedLaunch } = await importLaunchWithMocks({
       resolveCredentials: vi.fn(async () => ({

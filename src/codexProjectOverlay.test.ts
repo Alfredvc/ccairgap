@@ -60,6 +60,34 @@ describe("overlayProjectCodexConfig", () => {
     });
   });
 
+  it("materializes symlinked project guidance as regular files", () => {
+    const target = join(host, "SHARED_AGENTS.md");
+    writeFileSync(target, "shared agents\n");
+    symlinkSync("SHARED_AGENTS.md", join(host, "AGENTS.md"));
+
+    const result = overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+
+    expect(readFileSync(join(clone, "AGENTS.md"), "utf8")).toBe("shared agents\n");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("still rejects symlinked project config files", () => {
+    mkdirSync(join(host, ".codex"), { recursive: true });
+    const target = join(host, "config.toml");
+    const config = join(host, ".codex", "config.toml");
+    writeFileSync(target, 'safe = "yes"\n');
+    symlinkSync(target, config);
+
+    const result = overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+
+    expect(existsSync(join(clone, ".codex", "config.toml"))).toBe(false);
+    expect(result.warnings).toContainEqual({
+      code: "unsafe-codex-overlay-file",
+      message: "symlinks are not copied",
+      source: config,
+    });
+  });
+
   it("copies .codex/skills and .agents/skills but ignores sibling .codex/rules and .codex/hooks dirs", () => {
     mkdirSync(join(host, ".codex", "skills", "demo"), { recursive: true });
     writeFileSync(join(host, ".codex", "skills", "demo", "SKILL.md"), "skill\n");

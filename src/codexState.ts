@@ -25,7 +25,7 @@ export interface CodexStatePlan {
 
 function copyOptionalFile(src: string, dest: string, warnings: CodexOverlayWarning[]): void {
   if (!existsSync(src)) return;
-  copySafeCodexFile(src, dest, warnings);
+  copySafeCodexFile(src, dest, warnings, { followSymlinks: true });
 }
 
 function asStateWarnings(

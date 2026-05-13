@@ -179,6 +179,10 @@ function die(msg: string): never {
   process.exit(1);
 }
 
+function printCodexWarning(warning: { message: string; source?: string }): void {
+  const source = warning.source ? `${warning.source}: ` : "";
+  console.error(`ccairgap: Codex warning: ${source}${warning.message}`);
+}
 
 function dedupeResolved(paths: string[]): string[] {
   const seen = new Set<string>();
@@ -590,7 +594,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         mcpEnable: opts.mcpEnable,
       });
       for (const warning of codexStatePlan.warnings) {
-        console.error(`ccairgap: Codex warning: ${warning.message}`);
+        printCodexWarning(warning);
       }
     } catch (e) {
       die((e as Error).message);
@@ -657,7 +661,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
           mcpEnable: opts.mcpEnable,
         });
         for (const warning of codexOverlay.warnings) {
-          console.error(`ccairgap: Codex warning: ${warning.message}`);
+          printCodexWarning(warning);
         }
       }
 
