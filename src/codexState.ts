@@ -60,13 +60,11 @@ export function materializeCodexState(options: {
   copySafeCodexSkillTree({
     srcDir: join(options.hostHome, "skills"),
     destDir: join(homeDir, "skills"),
-    warnings: overlayWarnings,
   });
   if (options.homeAgentSkillsDir) {
     copySafeCodexSkillTree({
       srcDir: options.homeAgentSkillsDir,
       destDir: join(homeDir, "skills", "agents"),
-      warnings: overlayWarnings,
     });
   }
   warnings.push(...asStateWarnings(overlayWarnings));

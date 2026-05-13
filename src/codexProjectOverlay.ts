@@ -5,11 +5,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { dirname, join } from "node:path";
 import {
   filterProjectCodexConfigToml,
   filterProjectCodexHooksJson,
@@ -27,8 +27,8 @@ export interface CodexProjectOverlayResult {
 }
 
 const MAX_FILE_BYTES = 256 * 1024;
-const MAX_TREE_BYTES = 1024 * 1024;
-const MAX_DEPTH = 4;
+
+const SKILL_TREE_EXCLUDED_SEGMENTS = new Set([".git", ".venv", "venv", "node_modules"]);
 
 function isUtf8(buf: Buffer): boolean {
   try {
@@ -37,17 +37,6 @@ function isUtf8(buf: Buffer): boolean {
   } catch {
     return false;
   }
-}
-
-function isAllowedSkillFile(path: string): boolean {
-  const name = basename(path);
-  return (
-    extname(name) === ".md" ||
-    name === "README" ||
-    name === "README.md" ||
-    name === "SKILL.md" ||
-    name === "skill.md"
-  );
 }
 
 function ensureSafeRegularFile(path: string): { ok: true; bytes: number } | { ok: false; reason: string } {
@@ -86,71 +75,76 @@ export function copySafeCodexFile(
 export function copySafeCodexSkillTree(options: {
   srcDir: string;
   destDir: string;
-  warnings: CodexOverlayWarning[];
 }): void {
-  const { srcDir, destDir, warnings } = options;
+  const { srcDir, destDir } = options;
   if (!existsSync(srcDir)) return;
-  const rootStat = lstatSync(srcDir);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    warnings.push({
-      code: "unsafe-codex-overlay-tree",
-      message: "Codex skill source must be a real directory",
-      source: srcDir,
-    });
+
+  const visited = new Set<string>();
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(srcDir);
+  } catch {
     return;
   }
+  visited.add(rootReal);
 
-  let total = 0;
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir)) {
-      if (entry.includes("..") || entry.startsWith(".") || /credential|token|secret/i.test(entry)) {
-        warnings.push({
-          code: "unsafe-codex-overlay-file",
-          message: "hidden, credential, and traversal-like paths are not copied",
-          source: join(dir, entry),
-        });
+  const walk = (logicalDir: string, relDir: string) => {
+    let entries: string[];
+    try {
+      entries = readdirSync(logicalDir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry === "." || entry === ".." || entry.includes("/") || entry.includes("\\")) continue;
+      if (SKILL_TREE_EXCLUDED_SEGMENTS.has(entry)) continue;
+      // `.system/` is Anthropic's system-skills bucket; whitelist at any
+      // depth (rare to nest, but harmless if it appears under a sub-skill).
+      if (entry.startsWith(".") && entry !== ".system") continue;
+
+      const src = join(logicalDir, entry);
+      const rel = relDir === "" ? entry : join(relDir, entry);
+
+      let lst;
+      try {
+        lst = lstatSync(src);
+      } catch {
         continue;
       }
-      const src = join(dir, entry);
-      const rel = relative(srcDir, src);
-      if (rel.split(sep).length > MAX_DEPTH) {
-        warnings.push({
-          code: "unsafe-codex-overlay-file",
-          message: "Codex skill file exceeds depth limit",
-          source: src,
-        });
-        continue;
-      }
-      const lst = lstatSync(src);
+
+      let readPath = src;
+      let isDir = lst.isDirectory();
+      let isFile = lst.isFile();
+
       if (lst.isSymbolicLink()) {
-        warnings.push({ code: "unsafe-codex-overlay-file", message: "symlinks are not copied", source: src });
+        let canonical: string;
+        let st;
+        try {
+          canonical = realpathSync(src);
+          st = statSync(canonical);
+        } catch {
+          continue;
+        }
+        readPath = canonical;
+        isDir = st.isDirectory();
+        isFile = st.isFile();
+      }
+
+      if (isDir) {
+        const realDir = readPath;
+        if (visited.has(realDir)) continue;
+        visited.add(realDir);
+        walk(realDir, rel);
         continue;
       }
-      if (lst.isDirectory()) {
-        walk(src);
-        continue;
-      }
-      if (!isAllowedSkillFile(src)) {
-        warnings.push({
-          code: "unsafe-codex-overlay-file",
-          message: "only markdown guidance files are copied from Codex skill trees",
-          source: src,
-        });
-        continue;
-      }
-      total += copySafeCodexFile(src, join(destDir, rel), warnings);
-      if (total > MAX_TREE_BYTES) {
-        warnings.push({
-          code: "unsafe-codex-overlay-tree",
-          message: "Codex skill tree exceeds total size limit",
-          source: srcDir,
-        });
-        rmSync(destDir, { recursive: true, force: true });
-        return;
+      if (isFile) {
+        const dest = join(destDir, rel);
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(readPath, dest);
       }
     }
   };
-  walk(srcDir);
+  walk(rootReal, "");
 }
 
 function appendPolicyWarnings(
@@ -214,12 +208,10 @@ export function overlayProjectCodexConfig(options: {
   copySafeCodexSkillTree({
     srcDir: join(options.hostPath, ".codex", "skills"),
     destDir: join(options.clonePath, ".codex", "skills"),
-    warnings,
   });
   copySafeCodexSkillTree({
     srcDir: join(options.hostPath, ".agents", "skills"),
     destDir: join(options.clonePath, ".agents", "skills"),
-    warnings,
   });
 
   return { warnings };

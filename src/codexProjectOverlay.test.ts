@@ -60,7 +60,7 @@ describe("overlayProjectCodexConfig", () => {
     });
   });
 
-  it("copies bounded markdown skill trees and omits rules/hooks support dirs", () => {
+  it("copies .codex/skills and .agents/skills but ignores sibling .codex/rules and .codex/hooks dirs", () => {
     mkdirSync(join(host, ".codex", "skills", "demo"), { recursive: true });
     writeFileSync(join(host, ".codex", "skills", "demo", "SKILL.md"), "skill\n");
     mkdirSync(join(host, ".codex", "rules"), { recursive: true });
@@ -82,20 +82,83 @@ describe("overlayProjectCodexConfig", () => {
     expect(existsSync(join(clone, ".codex", "hooks"))).toBe(false);
   });
 
-  it("rejects symlinks, executable active files, hidden credentials, and non-markdown files", () => {
+  it("drops dot-files but copies symlinks, executables, and arbitrary files", () => {
     mkdirSync(join(host, ".codex", "skills"), { recursive: true });
     writeFileSync(join(host, ".codex", "skills", "safe.md"), "safe\n");
     symlinkSync("safe.md", join(host, ".codex", "skills", "link.md"));
-    writeFileSync(join(host, ".codex", "skills", "run.sh"), "echo nope\n");
+    writeFileSync(join(host, ".codex", "skills", "run.sh"), "echo go\n");
     chmodSync(join(host, ".codex", "skills", "run.sh"), 0o755);
     writeFileSync(join(host, ".codex", "skills", ".credentials.json"), "{}\n");
+    writeFileSync(join(host, ".codex", "skills", ".env"), "SECRET=1\n");
 
-    const result = overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+    overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
 
     expect(readFileSync(join(clone, ".codex", "skills", "safe.md"), "utf8")).toBe("safe\n");
-    expect(existsSync(join(clone, ".codex", "skills", "link.md"))).toBe(false);
-    expect(existsSync(join(clone, ".codex", "skills", "run.sh"))).toBe(false);
+    expect(readFileSync(join(clone, ".codex", "skills", "link.md"), "utf8")).toBe("safe\n");
+    expect(readFileSync(join(clone, ".codex", "skills", "run.sh"), "utf8")).toBe("echo go\n");
     expect(existsSync(join(clone, ".codex", "skills", ".credentials.json"))).toBe(false);
-    expect(result.warnings.length).toBeGreaterThanOrEqual(3);
+    expect(existsSync(join(clone, ".codex", "skills", ".env"))).toBe(false);
+  });
+
+  it("whitelists `.system/` (Anthropic system-skill bucket) but drops other dot-dirs", () => {
+    mkdirSync(join(host, ".codex", "skills", ".system", "skill-creator"), { recursive: true });
+    writeFileSync(
+      join(host, ".codex", "skills", ".system", "skill-creator", "SKILL.md"),
+      "sys\n",
+    );
+    mkdirSync(join(host, ".codex", "skills", ".cache"), { recursive: true });
+    writeFileSync(join(host, ".codex", "skills", ".cache", "junk"), "no\n");
+
+    overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+
+    expect(
+      readFileSync(join(clone, ".codex", "skills", ".system", "skill-creator", "SKILL.md"), "utf8"),
+    ).toBe("sys\n");
+    expect(existsSync(join(clone, ".codex", "skills", ".cache"))).toBe(false);
+  });
+
+  it("follows top-level skill-dir symlinks (the ~/.codex/skills/<name> -> ~/.agents/skills/<name> install pattern)", () => {
+    const externalSkill = join(root, "external-skill");
+    mkdirSync(join(externalSkill, "scripts"), { recursive: true });
+    writeFileSync(join(externalSkill, "SKILL.md"), "external\n");
+    writeFileSync(join(externalSkill, "scripts", "tool.py"), "print('hi')\n");
+
+    mkdirSync(join(host, ".codex", "skills"), { recursive: true });
+    symlinkSync(externalSkill, join(host, ".codex", "skills", "linked"));
+
+    overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+
+    expect(readFileSync(join(clone, ".codex", "skills", "linked", "SKILL.md"), "utf8")).toBe(
+      "external\n",
+    );
+    expect(
+      readFileSync(join(clone, ".codex", "skills", "linked", "scripts", "tool.py"), "utf8"),
+    ).toBe("print('hi')\n");
+  });
+
+  it("skips .git, node_modules, .venv, venv when descending (skill symlinked into a source repo must not drag the repo)", () => {
+    const externalRepo = join(root, "external-repo-skill");
+    mkdirSync(join(externalRepo, ".git", "objects"), { recursive: true });
+    writeFileSync(join(externalRepo, ".git", "HEAD"), "ref: refs/heads/main\n");
+    mkdirSync(join(externalRepo, "node_modules", "left-pad"), { recursive: true });
+    writeFileSync(join(externalRepo, "node_modules", "left-pad", "index.js"), "module.exports = 1;\n");
+    mkdirSync(join(externalRepo, ".venv", "lib"), { recursive: true });
+    writeFileSync(join(externalRepo, ".venv", "lib", "site.py"), "import sys\n");
+    mkdirSync(join(externalRepo, "venv"), { recursive: true });
+    writeFileSync(join(externalRepo, "venv", "activate"), "echo on\n");
+    writeFileSync(join(externalRepo, "SKILL.md"), "kept\n");
+
+    mkdirSync(join(host, ".codex", "skills"), { recursive: true });
+    symlinkSync(externalRepo, join(host, ".codex", "skills", "repo-skill"));
+
+    overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+
+    expect(readFileSync(join(clone, ".codex", "skills", "repo-skill", "SKILL.md"), "utf8")).toBe(
+      "kept\n",
+    );
+    expect(existsSync(join(clone, ".codex", "skills", "repo-skill", ".git"))).toBe(false);
+    expect(existsSync(join(clone, ".codex", "skills", "repo-skill", "node_modules"))).toBe(false);
+    expect(existsSync(join(clone, ".codex", "skills", "repo-skill", ".venv"))).toBe(false);
+    expect(existsSync(join(clone, ".codex", "skills", "repo-skill", "venv"))).toBe(false);
   });
 });
