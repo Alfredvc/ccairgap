@@ -399,7 +399,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/codex-home/` | `/host-codex` and `/home/claude/.codex` | rw | Session-local Codex home. The neutral helper path is available for entrypoint/debug plumbing; the `$CODEX_HOME` mount is what Codex reads at runtime. Host `$CODEX_HOME` is never mounted directly. |
 | `$SESSION/codex-auth/` | `/host-codex-auth` | rw | Session-local sanitized Codex auth directory. Omitted until Codex auth materialization produced state. |
 | `$SESSION/codex-auth/auth.json` | `/home/claude/.codex/auth.json` | rw | Sanitized Codex file auth. Mounted as a file over `$CODEX_HOME/auth.json` when present so Codex reads the ccairgap-filtered copy. |
-| `$SESSION/codex-sessions/` | `/host-codex-sessions` and `/home/claude/.codex/sessions` | rw | Session-local Codex rollout records. Later handoff copies only validated rollout JSONL records back to the manifest-recorded host Codex home. |
+| `$SESSION/codex-sessions/` | `/host-codex-sessions` and `/home/claude/.codex/sessions` | rw | Session-local Codex rollout records. Handoff copies only validated rollout JSONL records back to `<manifest.codex.host_home>/sessions/`. |
 | `$SESSION/codex-mcp-credentials/` | `/host-codex-mcp-credentials` | rw | Reserved helper path for a future MCP OAuth credentials design. The first Codex implementation omits MCP OAuth credentials. |
 | `$SESSION/codex-home/skills/agents/` or equivalent safe helper root | `/home/claude/.agents/skills` | ro | Optional safe `.agents/skills` guidance root when launch wiring provides one. Plugin/app/MCP integration state is not exposed through this helper. |
 | `<effective-host-memory-dir>` (resolved per Claude Code's `autoMemoryDirectory` cascade — see §"Auto-memory") | `/host-claude-memory` | ro | Host auto-memory dir surfaced to Claude Code via `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/host-claude-memory` env var. Skipped when the host dir is absent, when no workspace repo is present, or when `--no-auto-memory` is set. Writes fail EROFS; reads (`MEMORY.md`, topic files) succeed. |
@@ -1159,7 +1159,10 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
    - Recursively copy its contents into `~/.claude/projects/<same-dir-name>/` on host (`cp -r` or `rsync -a`, merging with any existing content — session UUIDs make nested dirs unique).
    - This preserves the `<session-uuid>/*.jsonl` and `<session-uuid>/subagents/*.jsonl` structure.
    - Create target dir if missing.
-5. **Preserve session dir** (skip step 6) if **any** of the following holds for **any** repo in the manifest:
+5. If `$SESSION/<id>/codex-sessions/` exists, preflight the full Codex rollout tree, then copy only validated `YYYY/MM/DD/rollout-*.jsonl` regular files to `<manifest.codex.host_home>/sessions/YYYY/MM/DD/`. `manifest.codex.host_home` is authoritative; handoff and `recover` must not rediscover `$CODEX_HOME`. Existing hash-identical rollout files are success. Changed collisions, invalid trees, unsafe destination parents, protected-path overlap, or copy scan failures preserve the session.
+
+   The only Codex host-write path during handoff is `<manifest.codex.host_home>/sessions/`. Handoff must never copy back `$CODEX_HOME/auth.json`, SQLite state, logs, history, memories, themes, plugin data, marketplace data, or any other Codex home contents.
+6. **Preserve session dir** (skip step 7) if **any** of the following holds for **any** repo in the manifest, or if Codex rollout copy-out reported a preservation condition:
    - The session clone's working tree is dirty (`git status --porcelain` non-empty, `.gitignore` respected, plus pathspec excludes `:(exclude).claude :(exclude).mcp.json :(exclude)CLAUDE.md` — see §"Project-scope working-tree overlay"). The scan runs after step 2's alternates rewrite — ordering must be preserved. When the caller passes `--no-preserve-dirty` / config `no-preserve-dirty: true`, the scan still runs but a dirty result no longer triggers preservation (the scan stays on so scan-failure can still fire, see next bullet).
    - The dirty-tree scan failed (uncertainty → err on preserve). Fires regardless of `--no-preserve-dirty`.
    - The sandbox branch is empty **and** another local branch carries commits not reachable from `origin/*`. Fires regardless of `--no-preserve-dirty`.
@@ -1167,7 +1170,7 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
    The warning emitted names every preservation trigger (dirty repos with their modified/untracked counts, scan-failed repos with their git error, orphan branches with their commit counts) and tells the user the exact `cd` path and `ccairgap recover <id>` next step. `ccairgap discard <id>` is offered as an exit only when safe — suppressed when orphan-branch commits would be lost.
 
    Known limitation: edits to files matched by `.gitignore` (e.g. `.env.local`) are not detected and are lost on exit. Workaround: launch with `--sync <path>`.
-6. `rm -rf $SESSION/<id>` unless step 5 preserved it.
+7. `rm -rf $SESSION/<id>` unless step 6 preserved it.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
 
@@ -1234,7 +1237,7 @@ No flags, no `--` passthrough, no selected-agent arg surface. The denylist machi
 - `repos[].basename` (string, required): the raw basename of the host repo path.
 - `repos[].host_path` (string, required): the absolute host path of the real repo.
 - `repos[].alternates_name` (string, optional, additive v1): unique per-repo scratch segment `<basename>-<sha256(host_path)[:8]>`. Handoff/recover/orphan-scan use this to locate `$SESSION/repos/<alternates_name>` on disk. Omitted in sessions written by older CLI builds; consumers MUST fall back to `basename` when absent.
-- `codex.host_home` (string, optional until Codex state materialization lands): authoritative launch-time host Codex home when Codex state has been prepared for the session.
+- `codex.host_home` (string, required when Codex state has been prepared for the session): authoritative launch-time host Codex home. Handoff and `recover` use this value for Codex rollout copy-out and do not rediscover `$CODEX_HOME`.
 
 ## Shell completion
 

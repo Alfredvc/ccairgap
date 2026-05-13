@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
   realpathSync,
   existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execaSync } from "execa";
 import { handoff } from "./handoff.js";
 import { writeManifest, type Manifest } from "./manifest.js";
@@ -368,5 +369,101 @@ describe("handoff — dirty tree preservation", () => {
     // Use .not.toContain (string match) rather than a RegExp built from a
     // tmpdir path, which can contain regex-special chars on some systems.
     expect(joined).not.toContain(`${hostA}: uncommitted`);
+  });
+});
+
+describe("handoff — Codex rollout copy-out", () => {
+  function codexManifest(sessionDir: string, hostHome: string): Manifest {
+    return {
+      version: 1,
+      agent: "codex",
+      cli_version: "test",
+      image_tag: "test:1",
+      created_at: new Date().toISOString(),
+      repos: [],
+      branch: "ccairgap/codex-0001",
+      codex: { host_home: hostHome },
+      claude_code: {},
+    };
+  }
+
+  function writeCodexRollout(sessionDir: string, content = "{\"type\":\"session\"}\n"): string {
+    const file = join(
+      sessionDir,
+      "codex-sessions",
+      "2026",
+      "05",
+      "13",
+      "rollout-2026-05-13T00-00-00-000Z-abc123.jsonl",
+    );
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content);
+    return file;
+  }
+
+  function hostRollout(hostHome: string): string {
+    return join(
+      hostHome,
+      "sessions",
+      "2026",
+      "05",
+      "13",
+      "rollout-2026-05-13T00-00-00-000Z-abc123.jsonl",
+    );
+  }
+
+  it("copies Codex rollouts and removes a clean session", async () => {
+    const sessionDir = join(root, "sessions", "codex-0001");
+    const hostHome = join(root, "host-codex");
+    mkdirSync(sessionDir, { recursive: true });
+    mkdirSync(hostHome, { recursive: true });
+    writeManifest(sessionDir, codexManifest(sessionDir, hostHome));
+    writeCodexRollout(sessionDir);
+
+    const result = await handoff(sessionDir, "test", () => {});
+
+    expect(result.codexSessionsCopied).toBe(1);
+    expect(readFileSync(hostRollout(hostHome), "utf8")).toBe("{\"type\":\"session\"}\n");
+    expect(result.preserved).toBe(false);
+    expect(result.removed).toBe(true);
+    expect(existsSync(sessionDir)).toBe(false);
+  });
+
+  it("preserves the session when Codex rollout copy-out is unsafe", async () => {
+    const sessionDir = join(root, "sessions", "codex-0002");
+    const hostHome = join(root, "host-codex");
+    mkdirSync(sessionDir, { recursive: true });
+    mkdirSync(hostHome, { recursive: true });
+    writeManifest(sessionDir, codexManifest(sessionDir, hostHome));
+    writeCodexRollout(sessionDir);
+    writeFileSync(
+      join(sessionDir, "codex-sessions", "2026", "05", "13", "notes.txt"),
+      "unexpected",
+    );
+
+    const result = await handoff(sessionDir, "test", () => {});
+
+    expect(result.preserved).toBe(true);
+    expect(result.removed).toBe(false);
+    expect(existsSync(sessionDir)).toBe(true);
+    expect(result.warnings.join("\n")).toContain("Codex session copy-out");
+    expect(result.warnings.join("\n")).toContain("Codex rollout files can be inspected");
+    expect(result.warnings.join("\n")).not.toContain("git status");
+    expect(existsSync(join(hostHome, "sessions"))).toBe(false);
+  });
+
+  it("preserves the session on changed Codex rollout collisions", async () => {
+    const sessionDir = join(root, "sessions", "codex-0003");
+    const hostHome = join(root, "host-codex");
+    mkdirSync(sessionDir, { recursive: true });
+    mkdirSync(join(hostHome, "sessions", "2026", "05", "13"), { recursive: true });
+    writeManifest(sessionDir, codexManifest(sessionDir, hostHome));
+    writeCodexRollout(sessionDir);
+    writeFileSync(hostRollout(hostHome), "{\"type\":\"different\"}\n");
+
+    const result = await handoff(sessionDir, "test", () => {});
+
+    expect(result.preserved).toBe(true);
+    expect(readFileSync(hostRollout(hostHome), "utf8")).toBe("{\"type\":\"different\"}\n");
   });
 });

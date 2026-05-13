@@ -390,6 +390,50 @@ describe("recover dirty-tree precheck", () => {
   });
 });
 
+describe("recover Codex rollout handoff", () => {
+  it("uses manifest.codex.host_home instead of the current CODEX_HOME", async () => {
+    const id = "codex-home";
+    const sd = join(root, "sessions", id);
+    const manifestHome = join(root, "manifest-codex-home");
+    const envHome = join(root, "env-codex-home");
+    mkdirSync(join(sd, "codex-sessions", "2026", "05", "13"), { recursive: true });
+    mkdirSync(manifestHome, { recursive: true });
+    mkdirSync(envHome, { recursive: true });
+    writeFileSync(
+      join(sd, "codex-sessions", "2026", "05", "13", "rollout-2026-05-13T00-00-00-000Z-abc123.jsonl"),
+      "{\"type\":\"session\"}\n",
+    );
+    writeManifest(sd, {
+      version: 1,
+      agent: "codex",
+      cli_version: "test",
+      image_tag: "test:1",
+      created_at: new Date().toISOString(),
+      repos: [],
+      branch: `ccairgap/${id}`,
+      codex: { host_home: manifestHome },
+      claude_code: {},
+    });
+    const savedCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = envHome;
+    stubDocker("exit 0");
+
+    try {
+      const { recover } = await import("./subcommands.js");
+      await recover(id);
+    } finally {
+      if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = savedCodexHome;
+    }
+
+    expect(
+      existsSync(join(manifestHome, "sessions", "2026", "05", "13", "rollout-2026-05-13T00-00-00-000Z-abc123.jsonl")),
+    ).toBe(true);
+    expect(existsSync(join(envHome, "sessions"))).toBe(false);
+    expect(existsSync(sd)).toBe(false);
+  });
+});
+
 describe("checkUserWideConfig", () => {
   // The private `checkUserWideConfig` is exercised through the exported `doctor()`
   // aggregate function, following the same pattern as the auth-refresh tests above.

@@ -52,11 +52,13 @@ Codex state preparation is session-local:
 - Host `$CODEX_HOME` is resolved at launch time, or defaults to `~/.codex`, and the absolute host path is the value later recorded in manifests.
 - `$CODEX_HOME/auth.json` is parsed and sanitized into `$SESSION/codex-auth/auth.json` with mode `0600` when safe.
 - `$SESSION/codex-home/config.toml` is rewritten with a TOML parser and forces `cli_auth_credentials_store = "file"`.
-- `$SESSION/codex-home/sessions/` is created for container-local rollout records; host sessions are not copied back until the handoff chunk.
+- `$SESSION/codex-sessions/` is created for container-local rollout records. During handoff or `recover`, ccairgap copies only validated rollout JSONL files back to `<manifest.codex.host_home>/sessions/`.
 
 API-key file auth keeps only `OPENAI_API_KEY`. ChatGPT token file auth blanks `tokens.refresh_token` and requires a usable access token or fresh `last_refresh` inside ccairgap's safety buffer. `agent_identity`, keyring-only, ephemeral, missing, refresh-required, managed-eligible, unknown, and unparsable token auth fail for selected Codex and are warning-only for advisory Codex state.
 
 Codex auth is copied in, never copied out. Runtime writes to `auth.json`, logs, history, SQLite state, memories, themes, plugin data, and marketplace data remain session-local.
+
+Codex rollout copy-out is manifest-driven. Handoff and `recover` use the launch-time `manifest.codex.host_home` value and do not rediscover the current host `CODEX_HOME`. Unsafe rollout trees, protected-path overlaps, symlinked destination parents, and changed destination collisions preserve the session for manual recovery instead of replacing host Codex data.
 
 In print mode, `CODEX_API_KEY` from the host environment is forwarded into the container only for `--agent codex -p/--print`. That print-mode API key is enough selected auth for launch; any host `$CODEX_HOME/auth.json` is then treated as advisory state and is copied only if it passes the same sanitization checks.
 

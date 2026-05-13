@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { AgentKind } from "./agent.js";
 
 export const MANIFEST_VERSION = 1 as const;
@@ -77,4 +77,15 @@ export function readManifest(sessionDirPath: string, cliVersion: string): Manife
 
 export function readManifestAgent(manifest: Manifest): AgentKind {
   return manifest.agent ?? "claude";
+}
+
+export function requireManifestCodexHostHome(manifest: Manifest): string {
+  const hostHome = manifest.codex?.host_home;
+  if (typeof hostHome !== "string" || hostHome.length === 0) {
+    throw new Error("manifest codex.host_home is required for Codex session handoff");
+  }
+  if (!isAbsolute(hostHome)) {
+    throw new Error("manifest codex.host_home must be absolute for Codex session handoff");
+  }
+  return hostHome;
 }

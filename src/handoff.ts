@@ -6,6 +6,7 @@ import { readManifest, UnknownManifestVersionError } from "./manifest.js";
 import { gitFetchSandbox, resolveGitDir, dirtyTree } from "./git.js";
 import { writeAlternates } from "./alternates.js";
 import { outputDir } from "./paths.js";
+import { copyCodexSessions } from "./codexSessions.js";
 
 export type FetchStatus = "fetched" | "empty" | "failed";
 
@@ -14,6 +15,8 @@ export interface HandoffResult {
   id: string;
   fetched: Array<{ hostPath: string; branch: string; status: FetchStatus }>;
   transcriptsCopied: number;
+  codexSessionsCopied: number;
+  codexSessionsExisting: number;
   /**
    * Per-file paths (relative to `~/.claude/projects/`) of the transcript
    * jsonl files copied out. Logged via `logger` inline as they're copied
@@ -166,6 +169,8 @@ export async function handoff(
   const warnings: string[] = [];
   const fetched: HandoffResult["fetched"] = [];
   let transcriptsCopied = 0;
+  let codexSessionsCopied = 0;
+  let codexSessionsExisting = 0;
   const transcriptFiles: string[] = [];
   let removed = false;
 
@@ -176,6 +181,8 @@ export async function handoff(
       id,
       fetched,
       transcriptsCopied,
+      codexSessionsCopied,
+      codexSessionsExisting,
       transcriptFiles: [],
       removed,
       preserved: false,
@@ -194,6 +201,8 @@ export async function handoff(
         id,
         fetched,
         transcriptsCopied,
+        codexSessionsCopied,
+        codexSessionsExisting,
         transcriptFiles: [],
         removed,
         preserved: false,
@@ -206,6 +215,8 @@ export async function handoff(
       id,
       fetched,
       transcriptsCopied,
+      codexSessionsCopied,
+      codexSessionsExisting,
       transcriptFiles: [],
       removed,
       preserved: false,
@@ -368,12 +379,27 @@ export async function handoff(
     }
   }
 
+  const codexResult = await copyCodexSessions({
+    sessionDir: sessionDirPath,
+    manifest,
+    protectedHostPaths: [
+      ...manifest.repos.map((repo) => repo.host_path),
+      ...(manifest.sync ?? []).map((s) => s.src_host),
+    ],
+  });
+  codexSessionsCopied = codexResult.copied;
+  codexSessionsExisting = codexResult.existing;
+  for (const warning of codexResult.warnings) {
+    warnings.push(`Codex session copy-out: ${warning}`);
+  }
+
   const preserved =
     dirtyRepos.length > 0 ||
     orphanRepos.length > 0 ||
-    scanFailedRepos.length > 0;
+    scanFailedRepos.length > 0 ||
+    codexResult.status === "preserve";
 
-  if (preserved) {
+  if (dirtyRepos.length > 0 || orphanRepos.length > 0 || scanFailedRepos.length > 0) {
     emitPreservationWarnings({
       warnings,
       sessionDirPath,
@@ -382,6 +408,9 @@ export async function handoff(
       orphanRepos,
       scanFailedRepos,
     });
+  } else if (codexResult.status === "preserve") {
+    warnings.push(`Session preserved so Codex rollout files can be inspected manually.`);
+    warnings.push(`After resolving the Codex copy-out issue, rerun: ccairgap recover ${id}`);
   } else {
     try {
       rmSync(sessionDirPath, { recursive: true, force: true });
@@ -399,6 +428,8 @@ export async function handoff(
     fetched,
     transcriptsCopied,
     transcriptFiles,
+    codexSessionsCopied,
+    codexSessionsExisting,
     removed,
     preserved,
     warnings,

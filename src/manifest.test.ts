@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   manifestPath,
+  requireManifestCodexHostHome,
   readManifestAgent,
   readManifest,
   UnknownManifestVersionError,
@@ -110,6 +111,27 @@ describe("manifest v1", () => {
     };
 
     expect(readManifestAgent(manifest)).toBe("claude");
+  });
+
+  it("requires an absolute codex.host_home for Codex manifests", () => {
+    const valid: Manifest = {
+      version: 1,
+      agent: "codex",
+      cli_version: "1.2.3",
+      image_tag: "ccairgap:1.2.3",
+      created_at: "2026-05-13T00:00:00.000Z",
+      repos: [],
+      codex: { host_home: "/Users/example/.codex" },
+      claude_code: {},
+    };
+    expect(requireManifestCodexHostHome(valid)).toBe("/Users/example/.codex");
+
+    expect(() =>
+      requireManifestCodexHostHome({ ...valid, codex: undefined }),
+    ).toThrow(/codex\.host_home is required/);
+    expect(() =>
+      requireManifestCodexHostHome({ ...valid, codex: { host_home: "relative/.codex" } }),
+    ).toThrow(/must be absolute/);
   });
 
   it("throws UnknownManifestVersionError for unsupported manifest versions", () => {
