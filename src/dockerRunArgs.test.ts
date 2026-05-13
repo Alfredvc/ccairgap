@@ -24,6 +24,20 @@ describe("parseDockerRunArgs", () => {
     ).toEqual(["-p", "8080:8080", "-e", "FOO=bar", "--network", "my-net"]);
   });
 
+  it("preserves user-provided volume tokens in order for docker's later last-wins handling", () => {
+    expect(
+      parseDockerRunArgs([
+        "-v /override-codex:/home/claude/.codex:rw",
+        "--mount type=bind,src=/tmp/out,dst=/output",
+      ]),
+    ).toEqual([
+      "-v",
+      "/override-codex:/home/claude/.codex:rw",
+      "--mount",
+      "type=bind,src=/tmp/out,dst=/output",
+    ]);
+  });
+
   it("rejects shell operators", () => {
     expect(() => parseDockerRunArgs(["-p 8080 && rm -rf /"])).toThrow(
       /unsupported shell construct/,

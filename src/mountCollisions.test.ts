@@ -164,12 +164,29 @@ describe("resolveMountCollisions", () => {
         "/host-claude-patched-settings.json",
         "/host-claude-patched-json",
         "/host-claude-memory",
+        "/host-codex",
+        "/host-codex-auth",
+        "/host-codex-sessions",
+        "/host-codex-mcp-credentials",
         `${HOME_IN_CONTAINER}/.claude/projects`,
         `${HOME_IN_CONTAINER}/.claude/plugins/cache`,
+        `${HOME_IN_CONTAINER}/.codex`,
+        `${HOME_IN_CONTAINER}/.codex/auth.json`,
+        `${HOME_IN_CONTAINER}/.codex/sessions`,
+        `${HOME_IN_CONTAINER}/.agents/skills`,
       ]),
     );
     expect(reserved.prefixes).toEqual(
-      expect.arrayContaining(["/host-git-alternates", "/run/ccairgap-auth-warnings"]),
+      expect.arrayContaining([
+        "/host-git-alternates",
+        "/run/ccairgap-auth-warnings",
+        "/host-codex",
+        "/host-codex-auth",
+        "/host-codex-sessions",
+        "/host-codex-mcp-credentials",
+        `${HOME_IN_CONTAINER}/.codex`,
+        `${HOME_IN_CONTAINER}/.agents/skills`,
+      ]),
     );
   });
 
@@ -194,6 +211,45 @@ describe("resolveMountCollisions", () => {
       ),
     ).toThrow(/reserved prefix \/run\/ccairgap-clipboard.*--ro \/tmp\/a/);
   });
+});
+
+describe("Codex reserved mount paths", () => {
+  for (const path of [
+    "/home/claude/.codex",
+    "/home/claude/.codex/auth.json",
+    "/home/claude/.codex/sessions",
+    "/host-codex",
+    "/host-codex-auth",
+    "/host-codex-sessions",
+    "/host-codex-mcp-credentials",
+    "/home/claude/.agents/skills",
+  ]) {
+    it(`blocks user --ro at ${path}`, () => {
+      expect(() =>
+        resolveMountCollisions([roMount(path)], {
+          homeInContainer: HOME_IN_CONTAINER,
+        }),
+      ).toThrow(/reserved/);
+    });
+  }
+
+  for (const path of [
+    "/home/claude/.codex/config.toml",
+    "/home/claude/.codex/sessions/2026/05/13",
+    "/host-codex/config.toml",
+    "/host-codex-auth/auth.json",
+    "/host-codex-sessions/2026",
+    "/host-codex-mcp-credentials/oauth.json",
+    "/home/claude/.agents/skills/demo/SKILL.md",
+  ]) {
+    it(`blocks user --mount nested under ${path}`, () => {
+      expect(() =>
+        resolveMountCollisions([mountFlag("raw", path)], {
+          homeInContainer: HOME_IN_CONTAINER,
+        }),
+      ).toThrow(/reserved prefix/);
+    });
+  }
 });
 
 describe("ccairgap-user-dir reservation", () => {

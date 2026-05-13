@@ -56,6 +56,20 @@ describe("buildMounts + collision resolver", () => {
     expect(creds?.mode).toBe("rw");
   });
 
+  it("preserves existing Claude/common mount destinations when no Codex inputs are present", () => {
+    const input = baseInput(root);
+    const mounts = buildMounts(input);
+
+    expect(mounts.map((m) => m.dst)).toEqual([
+      "/host-claude",
+      "/host-claude-json",
+      "/host-claude-creds-dir",
+      "/run/ccairgap-auth-warnings",
+      join(input.homeInContainer, ".claude", "projects"),
+      "/output",
+    ]);
+  });
+
   it("RO-mounts the auth-warnings dir at /run/ccairgap-auth-warnings", () => {
     const input = baseInput(root);
     const mounts = buildMounts(input);
@@ -269,6 +283,126 @@ describe("buildMounts + collision resolver", () => {
     const input = baseInput(root);
     input.roPaths = ["/ccairgap-dir"];
     expect(() => buildMounts(input)).toThrow(/\/ccairgap-dir.*reserved/);
+  });
+
+  it("adds Codex home, auth, and sessions mounts as peer agent state", () => {
+    const input = baseInput(root);
+    const codexHome = join(root, "session", "codex-home");
+    const codexAuth = join(root, "session", "codex-auth");
+    const codexSessions = join(root, "session", "codex-sessions");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(codexAuth, { recursive: true });
+    mkdirSync(codexSessions, { recursive: true });
+    const authFile = join(codexAuth, "auth.json");
+    writeFileSync(authFile, "{}\n");
+
+    const mounts = buildMounts({
+      ...input,
+      agentMounts: {
+        codex: {
+          homeDir: codexHome,
+          authDir: codexAuth,
+          authFile,
+          sessionsDir: codexSessions,
+        },
+      },
+    });
+
+    expect(mounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          src: codexHome,
+          dst: "/host-codex",
+          mode: "rw",
+          source: { kind: "host-codex" },
+        }),
+        expect.objectContaining({
+          src: codexHome,
+          dst: "/home/claude/.codex",
+          mode: "rw",
+          source: { kind: "host-codex" },
+        }),
+        expect.objectContaining({
+          src: codexAuth,
+          dst: "/host-codex-auth",
+          mode: "rw",
+          source: { kind: "host-codex-auth" },
+        }),
+        expect.objectContaining({
+          src: authFile,
+          dst: "/home/claude/.codex/auth.json",
+          mode: "rw",
+          source: { kind: "host-codex-auth" },
+        }),
+        expect.objectContaining({
+          src: codexSessions,
+          dst: "/host-codex-sessions",
+          mode: "rw",
+          source: { kind: "host-codex-sessions" },
+        }),
+        expect.objectContaining({
+          src: codexSessions,
+          dst: "/home/claude/.codex/sessions",
+          mode: "rw",
+          source: { kind: "host-codex-sessions" },
+        }),
+      ]),
+    );
+    expect(mounts.find((m) => m.source.kind === "host-creds-dir")).toBeDefined();
+  });
+
+  it("does not take a selected agent input to decide whether peer state is mounted", () => {
+    const input = baseInput(root);
+    const codexHome = join(root, "codex-home");
+    const codexSessions = join(root, "codex-sessions");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(codexSessions, { recursive: true });
+
+    const mounts = buildMounts({
+      ...input,
+      agentMounts: { codex: { homeDir: codexHome, sessionsDir: codexSessions } },
+    });
+
+    expect(mounts.find((m) => m.dst === "/host-claude")).toBeDefined();
+    expect(mounts.find((m) => m.dst === "/home/claude/.codex")).toBeDefined();
+  });
+
+  it("adds optional Codex MCP credential and agents skills helper mounts when provided", () => {
+    const input = baseInput(root);
+    const codexHome = join(root, "codex-home");
+    const codexSessions = join(root, "codex-sessions");
+    const mcpCredentials = join(root, "codex-mcp-credentials");
+    const agentsSkills = join(root, "agents-skills");
+    for (const dir of [codexHome, codexSessions, mcpCredentials, agentsSkills]) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    const mounts = buildMounts({
+      ...input,
+      agentMounts: {
+        codex: {
+          homeDir: codexHome,
+          sessionsDir: codexSessions,
+          mcpCredentialsDir: mcpCredentials,
+          agentsSkillsDir: agentsSkills,
+        },
+      },
+    });
+
+    expect(mounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          src: mcpCredentials,
+          dst: "/host-codex-mcp-credentials",
+          source: { kind: "host-codex-mcp-credentials" },
+        }),
+        expect.objectContaining({
+          src: agentsSkills,
+          dst: "/home/claude/.agents/skills",
+          source: { kind: "agents-skills" },
+        }),
+      ]),
+    );
   });
 });
 

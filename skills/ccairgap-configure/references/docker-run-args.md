@@ -40,6 +40,9 @@ Because your tokens land last, you can override:
 - `--name <custom>` overrides `ccairgap-<id>` — almost always a bad idea; breaks `ccairgap list` and orphan detection.
 - `--cap-drop NET_RAW` narrows the initial `--cap-drop=ALL`.
 - Additional `-e FOO=bar` values stack with built-in envs, last-wins per key.
+- Additional `-v` / `--mount` values can also shadow built-in mounts, including reserved paths such as `/home/claude/.codex` or `/output`.
+
+Reserved-path checks apply to structured ccairgap inputs (`--repo`, `--ro`, `--mount`, `--cp`, `--sync`, discovered marketplaces). Raw docker args are appended after those checks and are treated as an explicit escape hatch outside the reserved-path guarantee.
 
 ## Recipes
 

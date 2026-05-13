@@ -25,6 +25,11 @@ export type MountSource =
         | "node-extra-ca"
         | "ccairgap-dir"
         | "ccairgap-user-dir"
+        | "host-codex"
+        | "host-codex-auth"
+        | "host-codex-sessions"
+        | "host-codex-mcp-credentials"
+        | "agents-skills"
         | "auth-warnings"
         | "userdb-passwd"
         | "userdb-group";
@@ -49,7 +54,7 @@ export function mountArg(m: Mount): string[] {
   return ["-v", `${m.src}:${m.dst}:${m.mode}`];
 }
 
-export interface BuildMountsInput {
+export interface ClaudeMountInputs {
   hostClaudeDir: string;
   hostClaudeJson: string;
   /** Host directory containing `.credentials.json`, RW-mounted at /host-claude-creds-dir/. */
@@ -123,6 +128,30 @@ export interface BuildMountsInput {
   userWideDir?: string;
   /** Extra mounts appended after repo mounts (so they can override paths inside a repo). */
   extraMounts?: Mount[];
+}
+
+export interface CodexMountInputs {
+  /** `$SESSION/codex-home`, mounted as container `$CODEX_HOME`. */
+  homeDir: string;
+  /** `$SESSION/codex-auth`, exposed for entrypoint/debug helpers. */
+  authDir?: string;
+  /** `$SESSION/codex-auth/auth.json`, mounted over `$CODEX_HOME/auth.json` when present. */
+  authFile?: string;
+  /** `$SESSION/codex-sessions`, mounted as `$CODEX_HOME/sessions`. */
+  sessionsDir: string;
+  /** Reserved for a future MCP OAuth credentials design; omitted in the first implementation. */
+  mcpCredentialsDir?: string;
+  /** Safe helper mount for `$HOME/.agents/skills` when later launch wiring provides one. */
+  agentsSkillsDir?: string;
+}
+
+export interface AgentMountInputs {
+  claude?: ClaudeMountInputs;
+  codex?: CodexMountInputs;
+}
+
+export interface BuildMountsInput extends ClaudeMountInputs {
+  agentMounts?: AgentMountInputs;
 }
 
 /**
@@ -254,6 +283,66 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
       mode: "ro",
       source: { kind: "ccairgap-dir" },
     });
+  }
+
+  const codex = i.agentMounts?.codex;
+  if (codex) {
+    mounts.push({
+      src: codex.homeDir,
+      dst: "/host-codex",
+      mode: "rw",
+      source: { kind: "host-codex" },
+    });
+    mounts.push({
+      src: codex.homeDir,
+      dst: join(i.homeInContainer, ".codex"),
+      mode: "rw",
+      source: { kind: "host-codex" },
+    });
+    if (codex.authDir) {
+      mounts.push({
+        src: codex.authDir,
+        dst: "/host-codex-auth",
+        mode: "rw",
+        source: { kind: "host-codex-auth" },
+      });
+    }
+    if (codex.authFile) {
+      mounts.push({
+        src: codex.authFile,
+        dst: join(i.homeInContainer, ".codex", "auth.json"),
+        mode: "rw",
+        source: { kind: "host-codex-auth" },
+      });
+    }
+    mounts.push({
+      src: codex.sessionsDir,
+      dst: "/host-codex-sessions",
+      mode: "rw",
+      source: { kind: "host-codex-sessions" },
+    });
+    mounts.push({
+      src: codex.sessionsDir,
+      dst: join(i.homeInContainer, ".codex", "sessions"),
+      mode: "rw",
+      source: { kind: "host-codex-sessions" },
+    });
+    if (codex.mcpCredentialsDir) {
+      mounts.push({
+        src: codex.mcpCredentialsDir,
+        dst: "/host-codex-mcp-credentials",
+        mode: "rw",
+        source: { kind: "host-codex-mcp-credentials" },
+      });
+    }
+    if (codex.agentsSkillsDir) {
+      mounts.push({
+        src: codex.agentsSkillsDir,
+        dst: join(i.homeInContainer, ".agents", "skills"),
+        mode: "ro",
+        source: { kind: "agents-skills" },
+      });
+    }
   }
 
   mounts.push({

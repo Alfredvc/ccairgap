@@ -30,14 +30,34 @@ export function reservedContainerPaths(
       "/host-claude-patched-settings.json",
       "/host-claude-patched-json",
       "/host-claude-memory",
+      "/host-codex",
+      "/host-codex-auth",
+      "/host-codex-sessions",
+      "/host-codex-mcp-credentials",
       "/ccairgap-dir",
       "/ccairgap-user-dir",
       "/etc/passwd",
       "/etc/group",
       join(i.homeInContainer, ".claude", "projects"),
       join(i.homeInContainer, ".claude", "plugins", "cache"),
+      join(i.homeInContainer, ".codex"),
+      join(i.homeInContainer, ".codex", "auth.json"),
+      join(i.homeInContainer, ".codex", "sessions"),
+      join(i.homeInContainer, ".agents", "skills"),
     ],
-    prefixes: ["/host-git-alternates", "/run/ccairgap-clipboard", "/run/ccairgap-auth-warnings", "/etc/claude-code", "/host-ca-certs"],
+    prefixes: [
+      "/host-git-alternates",
+      "/run/ccairgap-clipboard",
+      "/run/ccairgap-auth-warnings",
+      "/etc/claude-code",
+      "/host-ca-certs",
+      "/host-codex",
+      "/host-codex-auth",
+      "/host-codex-sessions",
+      "/host-codex-mcp-credentials",
+      join(i.homeInContainer, ".codex"),
+      join(i.homeInContainer, ".agents", "skills"),
+    ],
   };
 }
 
@@ -74,6 +94,11 @@ function label(src: MountSource): string {
     case "node-extra-ca": return `NODE_EXTRA_CA_CERTS RO mount`;
     case "ccairgap-dir": return `.ccairgap/ RO mount`;
     case "ccairgap-user-dir": return `~/.config/ccairgap/ RO mount`;
+    case "host-codex": return `Codex home RW mount`;
+    case "host-codex-auth": return `Codex auth RW mount`;
+    case "host-codex-sessions": return `Codex sessions RW mount`;
+    case "host-codex-mcp-credentials": return `Codex MCP credentials RW mount`;
+    case "agents-skills": return `$HOME/.agents/skills RO mount`;
     case "userdb-passwd": return `/etc/passwd RO mount`;
     case "userdb-group": return `/etc/group RO mount`;
     case "claude-symlink-overlay": return `~/.claude/${src.relPath} symlink overlay`;
