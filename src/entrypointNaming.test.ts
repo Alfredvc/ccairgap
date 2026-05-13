@@ -30,14 +30,16 @@ describe("entrypoint.sh NAME_ARGS branch", () => {
 describe("entrypoint.sh claude-args passthrough", () => {
   it('splices "$@" between RESUME_ARGS and -p in the print branch', () => {
     expect(entrypoint).toContain(
-      'exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT"',
+      'FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT")',
     );
+    expect(entrypoint).toContain('exec "${FINAL_CMD[@]}"');
   });
 
   it('splices "$@" after RESUME_ARGS in the interactive branch', () => {
     expect(entrypoint).toContain(
-      'exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@"',
+      'FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@")',
     );
+    expect(entrypoint).toContain('exec "${FINAL_CMD[@]}"');
   });
 });
 
