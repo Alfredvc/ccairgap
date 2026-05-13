@@ -27,6 +27,13 @@ export interface ResolveCredentialsOptions {
   refreshBelowMs: number;
 }
 
+export interface AdvisoryCredentialResult {
+  ok: boolean;
+  hostPath?: string;
+  origin?: CredentialSource["origin"];
+  warning?: string;
+}
+
 /**
  * Thrown when host auth is dead (refresh failed + final ttl below the 5-min
  * cold-start floor). Caller exits 1 with a refusal banner. No session state
@@ -157,6 +164,38 @@ export async function resolveCredentials(
 }
 
 /**
+ * Materialize readable non-selected Claude credentials without invoking host
+ * refresh. This is advisory state for Codex-selected sessions, so missing,
+ * stale, malformed, or unreadable credentials are warning-only.
+ */
+export async function materializeAdvisoryCredentials(
+  sessionDir: string,
+): Promise<AdvisoryCredentialResult> {
+  let json: string;
+  try {
+    json = await readHostCredsJson();
+  } catch (e) {
+    return { ok: false, warning: (e as Error).message };
+  }
+
+  try {
+    const parsed = JSON.parse(json) as { claudeAiOauth?: unknown };
+    if (!parsed.claudeAiOauth) {
+      return { ok: false, warning: "host credentials missing claudeAiOauth field" };
+    }
+  } catch (e) {
+    return { ok: false, warning: `host credentials are not valid JSON: ${(e as Error).message}` };
+  }
+
+  writeSessionCreds(sessionDir, stripRefreshToken(json));
+  return {
+    ok: true,
+    hostPath: join(sessionDir, "creds", ".credentials.json"),
+    origin: platform() === "darwin" ? "keychain" : "file",
+  };
+}
+
+/**
  * Non-throwing variant for doctor. Returns ok + detail plus (when available)
  * the token's remaining ttl in ms and the space-separated scopes string. No
  * UUIDs, timestamps, or token material are exposed.
@@ -207,4 +246,3 @@ export async function probeCredentials(): Promise<{
     return { ok: false, detail: `host credentials parse error: ${(e as Error).message}` };
   }
 }
-

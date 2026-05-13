@@ -51,3 +51,7 @@ Files inside `.ccairgap/` are injected into every session, regardless of profile
 }
 ```
 The command path must be valid inside the container (`node:24-slim` Linux), not on the host.
+
+## Codex boundary
+
+`.ccairgap/` remains a ccairgap-scoped Claude overlay. It does not define Codex guidance. Codex guidance is copied only from native Codex surfaces: project `AGENTS.md`, `AGENTS.override.md`, `.codex/config.toml`, `.codex/hooks.json`, `.codex/skills/`, `.agents/skills/`, and safe user-level `$CODEX_HOME` guidance.

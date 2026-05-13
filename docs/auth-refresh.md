@@ -2,6 +2,8 @@
 
 Containers never hold a refresh token. The CLI strips `claudeAiOauth.refreshToken` from every session creds file before bind-mount, so the container's Claude Code only ever has an access token to spend — it can't race host or peer containers for Anthropic's once-per-refresh-token rotation window. This removes the "multiple concurrent containers → 401" failure mode that drove this feature.
 
+Claude credential refresh is selected-agent behavior. When Claude is selected, missing or dead host credentials remain fatal and the host refresh path may run before launch. When Claude is only advisory state for a Codex-selected session, ccairgap may copy readable stripped credentials, but it never invokes host refresh and missing or malformed Claude credentials are warning-only.
+
 To keep the access token fresh, ccairgap runs a short pre-launch refresh on the host:
 
 1. Read the host token and check remaining ttl.
@@ -36,3 +38,7 @@ Host-side external write (manual `cp` recovery, third-party tool): if you copy f
 Failure surfacing inside the TUI: 3 consecutive failures, or any failure under 15 minutes of remaining ttl, writes a banner to `$SESSION/auth-warnings/current.txt` which the entrypoint's UserPromptSubmit hook surfaces inside the session.
 
 `ccairgap doctor` prints one row per live session with the most recent refresh result and the current ttl.
+
+## Codex auth
+
+Codex auth does not use a host refresh path in ccairgap. Safe file auth from `$CODEX_HOME/auth.json` is sanitized into `$SESSION/codex-auth/auth.json` with mode `0600`. API-key file auth keeps only `OPENAI_API_KEY`; ChatGPT token auth blanks `tokens.refresh_token` and must be usable without immediate refresh. Unsupported, refresh-required, managed-eligible, unknown, or unparsable Codex auth is fatal only when Codex is selected and warning-only when Codex is advisory state.

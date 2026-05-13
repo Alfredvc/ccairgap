@@ -14,7 +14,8 @@ import { dirname, join } from "node:path";
  * Tmp file written + `fsync`'d, then `rename(2)`-swapped over the destination.
  * Mode 0600 on the new inode.
  *
- * Required by the runtime auth-refresh watcher: the directory bind-mount at
+ * Used by selected Claude refresh and non-selected Claude advisory
+ * materialization. Required by the runtime auth-refresh watcher: the directory bind-mount at
  * `/host-claude-creds-dir` survives a rename over the file inside it; the
  * earlier single-file mount did not.
  *

@@ -153,7 +153,8 @@ export type DirtyStatus =
  * as a distinct `scan-failed` kind — callers err on preserve.
  *
  * Paths excluded from the scan via pathspec:
- *   .claude/ | .mcp.json | CLAUDE.md
+ *   .claude/ | .mcp.json | CLAUDE.md | AGENTS.md | AGENTS.override.md
+ *   .codex/ | .agents/skills/
  *
  * `.claude/` (and the two top-level files) are populated at launch by
  * `overlayProjectClaudeConfig`, which copies an allowlisted subset of
@@ -175,6 +176,10 @@ export async function dirtyTree(dir: string): Promise<DirtyStatus> {
       ":(exclude).claude",
       ":(exclude).mcp.json",
       ":(exclude)CLAUDE.md",
+      ":(exclude)AGENTS.md",
+      ":(exclude)AGENTS.override.md",
+      ":(exclude).codex",
+      ":(exclude).agents/skills",
     ]);
     const lines = stdout.split("\n").filter((l) => l.length > 0);
     if (lines.length === 0) return { kind: "clean" };

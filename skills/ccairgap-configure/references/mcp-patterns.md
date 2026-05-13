@@ -113,3 +113,9 @@ Host files are never mutated; patched copies live under `$SESSION/mcp-policy/` a
 - "I want all my MCPs" → list every distinct name from `ccairgap inspect`. If it's a dozen, `"*"` is legal but loses the filter's safety net.
 - "MCPs are noise, I don't want any" → leave `mcp.enable` unset. Default behavior.
 - MCP references a binary that isn't in the base image or needs a secret → either extend the Dockerfile + pass the secret via `docker-run-arg: ["-e NAME"]`, or leave it disabled. Don't enable MCPs you know will fail at start.
+
+## Codex MCP
+
+Codex MCP entries in `$CODEX_HOME/config.toml` and project `.codex/config.toml` are disabled by default. `--mcp-enable` / `mcp.enable` can keep file-defined Codex MCP servers by name, using the same glob style as Claude MCP filtering.
+
+Codex MCP OAuth credentials, `mcp_oauth_credentials_store`, plugin MCP integrations, and `codex_apps` are always omitted in the first implementation. Enabling a matching MCP name does not enable app integrations or copied OAuth credentials.

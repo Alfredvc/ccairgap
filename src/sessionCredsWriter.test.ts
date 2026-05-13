@@ -60,4 +60,12 @@ describe("writeSessionCreds", () => {
     const m = statSync(join(credsDir, ".credentials.json")).mode & 0o777;
     expect(m).toBe(0o600);
   });
+
+  it("centralizes stripped credential writes for selected and advisory Claude paths", () => {
+    writeSessionCreds(session, '{"claudeAiOauth":{"accessToken":"at"}}');
+
+    expect(readFileSync(join(session, "creds", ".credentials.json"), "utf8")).toBe(
+      '{"claudeAiOauth":{"accessToken":"at"}}',
+    );
+  });
 });

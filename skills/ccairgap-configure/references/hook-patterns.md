@@ -101,3 +101,9 @@ ccairgap can't use Claude Code's `disableAllHooks: true` flag (it would also kil
 - Want "just my approve-tool hook" → target that command specifically. Exact match beats wildcards when you can. (Status line runs by default — no enable needed.)
 - Want "nothing, hooks are noise in the sandbox" → leave `hooks.enable` unset (or omit from config). Default behavior. Status line still runs unless you also remove it from host settings.
 - Hook references a binary that isn't in the base image → either add the binary to a custom Dockerfile and enable the hook, or leave it disabled. Don't enable hooks you know will fail.
+
+## Codex hooks
+
+Codex hook config is also filtered before it reaches a session. User `$CODEX_HOME/config.toml`, `$CODEX_HOME/hooks.json`, project `.codex/config.toml`, and project `.codex/hooks.json` keep only hook commands matched by `--hook-enable` / `hooks.enable`. Unmatched entries are removed, and `[features].codex_hooks` is enabled only when a matched non-managed hook remains.
+
+Managed or legacy managed Codex hook sources are not copied or mounted. If such sources are discovered for selected Codex, ccairgap fails closed until there is a separate managed-requirements design. Project `.codex/hooks/` support directories are not copied in the first implementation.

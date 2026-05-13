@@ -20,3 +20,7 @@ The macOS path translation is an explicit exception to ccairgap's usual absolute
 ## What's in scope
 
 This mount covers managed `managed-settings.json` and similar policy files that Claude Code reads from the OS policy dir. Managed MCP tiers (`managed-mcp.json`) and other policy-delivered MCPs are **not** in ccairgap's `--mcp-enable` filter surface — they pass through as the container's own managed policy.
+
+## Codex boundary
+
+This module remains Claude-owned. Codex managed, cloud, system requirement, and legacy managed hook inputs are not copied or mounted through Claude managed policy helpers. Codex selected auth fails closed for managed-eligible, FedRAMP, unknown, or unparsable ChatGPT file auth until a separate managed-requirements design exists.

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
 import {
+  materializeAdvisoryCredentials,
   stripRefreshToken,
   CredentialsDeadError,
   resolveCredentials,
@@ -197,6 +198,38 @@ describe.skipIf(platform() === "darwin")("resolveCredentials", () => {
     await expect(
       resolveCredentials(sessionDir, { refreshBelowMs: 120 * 60 * 1000 }),
     ).rejects.toThrow(/claudeAiOauth/);
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(existsSync(sessionDir)).toBe(false);
+  });
+
+  it("materializes advisory credentials without invoking host refresh", async () => {
+    const now = Date.now();
+    writeHostCreds({
+      claudeAiOauth: {
+        accessToken: "at",
+        refreshToken: "rt",
+        expiresAt: now - 60_000,
+      },
+    });
+    const refreshSpy = vi.spyOn(authRefresh, "refreshIfLowTtl");
+
+    const result = await materializeAdvisoryCredentials(sessionDir);
+
+    expect(result.ok).toBe(true);
+    expect(refreshSpy).not.toHaveBeenCalled();
+    const onDisk = JSON.parse(readFileSync(result.hostPath ?? "", "utf8"));
+    expect(onDisk.claudeAiOauth.refreshToken).toBeUndefined();
+    expect(onDisk.claudeAiOauth.accessToken).toBe("at");
+  });
+
+  it("returns advisory warning instead of throwing when non-selected Claude creds are missing", async () => {
+    rmSync(join(tmpHome, ".claude", ".credentials.json"), { force: true });
+    const refreshSpy = vi.spyOn(authRefresh, "refreshIfLowTtl");
+
+    const result = await materializeAdvisoryCredentials(sessionDir);
+
+    expect(result.ok).toBe(false);
+    expect(result.warning).toMatch(/host credentials missing/);
     expect(refreshSpy).not.toHaveBeenCalled();
     expect(existsSync(sessionDir)).toBe(false);
   });

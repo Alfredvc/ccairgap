@@ -87,6 +87,32 @@ describe("dirtyTree", () => {
     expect(r).toEqual({ kind: "clean" });
   });
 
+  it("ignores uncommitted Codex project overlay paths", async () => {
+    writeFileSync(join(clone, "AGENTS.md"), "agents\n");
+    writeFileSync(join(clone, "AGENTS.override.md"), "override\n");
+    mkdirSync(join(clone, ".codex", "skills"), { recursive: true });
+    writeFileSync(join(clone, ".codex", "config.toml"), "safe = true\n");
+    writeFileSync(join(clone, ".codex", "hooks.json"), "{}\n");
+    writeFileSync(join(clone, ".codex", "skills", "demo.md"), "skill\n");
+    mkdirSync(join(clone, ".agents", "skills"), { recursive: true });
+    writeFileSync(join(clone, ".agents", "skills", "demo.md"), "skill\n");
+
+    const r = await dirtyTree(clone);
+
+    expect(r).toEqual({ kind: "clean" });
+  });
+
+  it("still flags unrelated dirty files alongside Codex overlay paths", async () => {
+    writeFileSync(join(clone, "AGENTS.md"), "agents\n");
+    mkdirSync(join(clone, ".codex"), { recursive: true });
+    writeFileSync(join(clone, ".codex", "config.toml"), "safe = true\n");
+    writeFileSync(join(clone, "real-work.txt"), "work\n");
+
+    const r = await dirtyTree(clone);
+
+    expect(r).toEqual({ kind: "dirty", modified: 0, untracked: 1 });
+  });
+
   it("ignores modifications to committed overlay paths", async () => {
     writeFileSync(join(clone, "CLAUDE.md"), "original\n");
     git(["add", "CLAUDE.md"], clone);
