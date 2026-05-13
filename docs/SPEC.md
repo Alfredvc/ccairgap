@@ -543,9 +543,9 @@ The published image is built and signed in `.github/workflows/release.yml`'s `pu
 
 **Installed:**
 - Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via `ARG CLAUDE_CODE_VERSION` (default: host version detected at build time when building locally; `latest` for registry-built images since CI has no host claude). Override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
+- Codex CLI via `npm install -g @openai/codex@${CODEX_VERSION}`. The supported baseline is `CODEX_VERSION=0.130.0`; exact unsupported pins are rejected by the Codex image-version policy before later runtime chunks consume the image.
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`.
 - `python3`, `python3-pip`, `python3-venv` — common for user scripts and MCP servers. `build-essential` is intentionally **not** installed (~200MB bloat); `pip install` of packages with native deps will fail. Users who need it: `--dockerfile` a customized image.
-- `gosu` — used by the entrypoint to drop privileges from root to `claude` after the UID-fixup step (see §"Container UID portability").
 
 Apt invocation pattern (all package installs):
 ```dockerfile
@@ -564,6 +564,8 @@ Not installed: `tmux` (user handles tmux outside the container).
 Dockerfile (condensed):
 ```dockerfile
 ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=0.130.0
+RUN npm install -g @openai/codex@${CODEX_VERSION}
 # node:*-slim ships a `node` user at UID/GID 1000; rename in place. Cosmetic
 # only — the runtime user is whatever --user the CLI passes.
 RUN groupmod -n claude node \
@@ -573,6 +575,7 @@ ENV HOME=/home/claude
 ENV PATH=/home/claude/.local/bin:$PATH
 RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
 USER root
+RUN mkdir -p /home/claude/.claude/projects /home/claude/.codex/sessions
 RUN chmod -R go+rwX /home/claude
 ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
 ```
@@ -608,7 +611,7 @@ Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the cur
 
 Two supported paths to change what's inside the image:
 
-1. **`--docker-build-arg KEY=VAL`** — the bundled Dockerfile exposes `CLAUDE_CODE_VERSION`. Pin Claude Code without touching the Dockerfile.
+1. **`--docker-build-arg KEY=VAL`** — the bundled Dockerfile exposes `CLAUDE_CODE_VERSION` and `CODEX_VERSION`. Pin either agent without touching the Dockerfile.
 2. **Sidecar Dockerfile via `ccairgap init`** — materialize the bundled `Dockerfile` + `entrypoint.sh` into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo.
 
 `ccairgap init` writes three files: `Dockerfile`, `entrypoint.sh`, `config.yaml`. If any of the three already exist, `init` aborts with an error listing them; `--force` overwrites all three unconditionally (no merge — any prior edits to `config.yaml` are lost).
@@ -617,9 +620,11 @@ Two supported paths to change what's inside the image:
 
 ## Entrypoint
 
-Runs at container start. Steps:
+Runs at container start. Claude remains the default selected branch. The Codex branch is present in the entrypoint contract for dry-run and later runtime chunks, but normal `ccairgap --agent codex` launch is still rejected before Docker until Codex state/auth/mount prerequisites land.
 
-1. `mkdir -p /home/claude/.claude`
+Steps:
+
+1. `mkdir -p /home/claude/.claude "$CODEX_HOME" "$CODEX_HOME/sessions"`, with `CODEX_HOME` defaulting to `/home/claude/.codex`.
 2. Copy `/host-claude/` → `/home/claude/.claude/` with `rsync -rL --chmod=u+w` (transform symlinks into files, ensure writable in destination). Exclude these session-local entries so we don't drag host state into the container's fresh session view: `projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`. Also exclude `plugins/cache/` (RO-mounted separately at the same container path), `.credentials.json` (handled in the next step), `.DS_Store` (macOS metadata at any depth — often has ACLs that break copies), and `**/.venv/` + `**/venv/` (Python virtualenvs whose `bin/python*` are absolute symlinks into the host interpreter — following them with `-L` fails in-container, and the binaries are host-OS/arch anyway). Before the rsync, scan up to depth 5 for `.venv/`/`venv/` dirs and emit a stderr warning naming each one so the user knows which skills/agents will load with non-functional venvs. Absolute symlinks elsewhere under `~/.claude/` would also fail rsync `-L` in the container namespace (their `/Users/...` targets don't exist), so the CLI pre-materializes each one host-side and overlay-mounts the result at `/host-claude/<rel>` — by the time this step runs those entries have been replaced with real files/dirs. See §"Container mount manifest" and `src/claudeSymlinkOverlay.ts`. rsync exit code 23 ("some files/attrs not transferred") is tolerated with a warning to cover any remaining stragglers (e.g. a relative symlink pointing into an excluded subtree); other exit codes still abort.
 3. If `/host-claude-creds-dir/.credentials.json` exists, `ln -sf /host-claude-creds-dir/.credentials.json /home/claude/.claude/.credentials.json`. The symlink (rather than `cp`) lets upstream's mtime-cache invalidation (`auth.ts:1320`) observe host-driven runtime rewrites of the bind-mounted file.
 4. Copy `~/.claude.json` source → `/home/claude/.claude.json`. The MCP-policy overlay wins: if `/host-claude-patched-json` is mounted (strips user + user-project `mcpServers` per `--mcp-enable`), use it as the source; otherwise fall back to `/host-claude-json`. See §"MCP policy".
@@ -642,12 +647,16 @@ Runs at container start. Steps:
 8. Apply the `.ccairgap/` scope overlay — see §"`.ccairgap/` scope Claude config" for the full contract. `.ccairgap/CLAUDE.md` is appended to `~/.claude/CLAUDE.md`, `.ccairgap/settings.json` is deep-merged into `~/.claude/settings.json`, `.ccairgap/mcp.json` `mcpServers` are merged into `~/.claude.json`, and `.ccairgap/skills/` is rsynced into `~/.claude/skills/`. Overlay steps run after the hook-/MCP-policy passes so ccairgap-scope entries bypass `--hook-enable` / `--mcp-enable` by design.
 9. Append a baked-in bypass-immune-paths warning to `~/.claude/CLAUDE.md`. Informs the in-session model that Claude Code's upstream safety gate (`src/utils/permissions/permissions.ts` step 1g + `checkPathSafetyForAutoEdit` in `src/utils/permissions/filesystem.ts`) ignores `--dangerously-skip-permissions` for `.git/`, `.vscode/`, `.idea/`, `.claude/`, shell rc files, `.mcp.json`, `.claude.json`, and `.claude/{settings.json,settings.local.json}` — Edit/Write to any of those triggers an interactive prompt the sandbox cannot answer. The message is advisory (states the consequence, does not forbid the action). Appended after the `.ccairgap/` overlay so it is always the last block in `~/.claude/CLAUDE.md` regardless of user-supplied content. Mirrors the DANGEROUS_DIRECTORIES / DANGEROUS_FILES sets upstream — grow the warning when those lists change.
 10. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-11. Build the final `claude` args: always `--dangerously-skip-permissions`; then label, resume, passthrough, and (optionally) print:
+11. Build the final selected-agent args:
+   - **Claude branch:** always `claude --dangerously-skip-permissions`; then label, resume, passthrough, and optionally print.
    - **Label (`-n`):** `CCAIRGAP_NAME` carries the session id (always set by the CLI). Use `-n "ccairgap $CCAIRGAP_NAME"`. Fallback to `-n "ccairgap"` only when `CCAIRGAP_NAME` is unset (i.e. the entrypoint was launched directly without the CLI env).
    - **Resume (`-r`):** if `CCAIRGAP_RESUME` is set, append `-r "$CCAIRGAP_RESUME"`.
    - **Passthrough (`"$@"`):** the CLI appends filtered claude-args as positional args to `docker run`; they arrive at the entrypoint as `"$@"` and are spliced verbatim. Filtered host-side; the entrypoint does not re-validate. See §"Selected-agent arg passthrough".
    - The `-n` value (`"ccairgap <id>"`) is intentionally **not** the same as the UserPromptSubmit hook's `sessionTitle` output (`"[ccairgap] <id>"`): Claude Code's hook layer dedups against the current title, so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire.
    - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`. `-p` stays the final positional so claude treats `$CCAIRGAP_PRINT` as the prompt argument (claude's prompt-positional convention).
+   - **Codex interactive branch:** `codex --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@"`.
+   - **Codex print branch:** `codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@" "$CCAIRGAP_PRINT"`.
+12. If `CCAIRGAP_ENTRYPOINT_DRY_RUN=1`, print the selected branch, cwd, `CCAIRGAP_AGENT`, optional `CCAIRGAP_PRINT`, `CODEX_HOME`, home readiness, and final shell-quoted command, then exit before `exec`. This is test-only and differs from `CCAIRGAP_TEST_CMD`, which exits before branch selection.
 
 ## Auto-memory
 

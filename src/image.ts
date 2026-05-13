@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { execa } from "execa";
 import { cliVersion } from "./version.js";
 
+export const SUPPORTED_CODEX_VERSION = "0.130.0";
+
 export interface ImageBuildOptions {
   /** Absolute path to the Dockerfile to build. */
   dockerfile: string;
@@ -20,6 +22,12 @@ export interface ResolvedImage {
   contextDir: string;
   /** Absolute path to the Dockerfile itself. */
   dockerfile: string;
+}
+
+export interface CodexVersionValidation {
+  ok: boolean;
+  version?: string;
+  message?: string;
 }
 
 /**
@@ -70,6 +78,44 @@ export function computeTag(dockerfile: string, defaultPath: string): string {
   const content = readFileSync(dockerfile);
   const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
   return `ccairgap:custom-${hash}`;
+}
+
+export function normalizeCodexVersion(output: string): string | undefined {
+  return output.trim().match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/)?.[1];
+}
+
+export function validateExpectedCodexVersion(value: string): CodexVersionValidation {
+  const exact = value.match(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)?.[0];
+  if (exact === undefined) {
+    return {
+      ok: true,
+      message:
+        `CODEX_VERSION ${value} is not an exact supported semver; ` +
+        "runtime image contract inspection must verify the installed Codex version",
+    };
+  }
+  if (exact === SUPPORTED_CODEX_VERSION) {
+    return { ok: true, version: exact };
+  }
+  return {
+    ok: false,
+    version: exact,
+    message:
+      `unsupported CODEX_VERSION ${exact}; supported exact version is ` +
+      SUPPORTED_CODEX_VERSION,
+  };
+}
+
+export function defaultImageBuildArgs(options: {
+  claudeVersion?: string;
+  codexVersion?: string;
+  overrides?: Record<string, string>;
+} = {}): Record<string, string> {
+  return {
+    CLAUDE_CODE_VERSION: options.claudeVersion ?? "latest",
+    CODEX_VERSION: options.codexVersion ?? SUPPORTED_CODEX_VERSION,
+    ...(options.overrides ?? {}),
+  };
 }
 
 export async function imageExistsLocally(tag: string): Promise<boolean> {

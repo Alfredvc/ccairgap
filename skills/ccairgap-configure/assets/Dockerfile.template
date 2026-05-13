@@ -8,6 +8,7 @@
 FROM node:24-slim
 
 ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=0.130.0
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -24,6 +25,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       python3-pip \
       python3-venv \
  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @openai/codex@${CODEX_VERSION}
 
 # Rename baked node user/group → claude. Cosmetic: at runtime the CLI
 # overrides via `docker run --user $(id -u):$(id -g)` and bind-mounts a
@@ -49,7 +52,12 @@ RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
 # root:root before the entrypoint runs. Matches container paths:
 #   /home/claude/.claude/projects       <- $SESSION/transcripts (rw)
 #   /home/claude/.claude/plugins/cache  <- ~/.claude/plugins/cache (ro)
-RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache
+#   /home/claude/.codex                 <- future $SESSION/codex-home (rw)
+#   /home/claude/.codex/sessions        <- future $SESSION/codex-sessions (rw)
+RUN mkdir -p \
+      /home/claude/.claude/projects \
+      /home/claude/.claude/plugins/cache \
+      /home/claude/.codex/sessions
 
 # Make /home/claude writable for any runtime UID. The CLI launches with
 # --user $(id -u):$(id -g), and that UID needs to write inside $HOME

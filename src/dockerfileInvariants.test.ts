@@ -66,6 +66,27 @@ describe("docker/Dockerfile UID-portability invariants", () => {
   });
 });
 
+describe("docker/Dockerfile dual-agent invariants", () => {
+  it("installs Claude Code and Codex with explicit build args", () => {
+    expect(DOCKERFILE).toMatch(/\bARG CLAUDE_CODE_VERSION=latest\b/);
+    expect(DOCKERFILE).toMatch(/\bARG CODEX_VERSION=0\.130\.0\b/);
+    expect(DOCKERFILE).toMatch(/claude\.ai\/install\.sh/);
+    expect(DOCKERFILE).toMatch(/npm install -g @openai\/codex@\$\{CODEX_VERSION\}/);
+  });
+
+  it("copies the unified ccairgap entrypoint", () => {
+    expect(DOCKERFILE).toMatch(/COPY entrypoint\.sh \/usr\/local\/bin\/ccairgap-entrypoint/);
+    expect(DOCKERFILE).toMatch(/ENTRYPOINT \["\/usr\/local\/bin\/ccairgap-entrypoint"\]/);
+  });
+
+  it("pre-creates Claude and Codex bind-mount targets", () => {
+    expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.claude\b/);
+    expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.claude\/projects\b/);
+    expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.codex\b/);
+    expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.codex\/sessions\b/);
+  });
+});
+
 describe("docker/Dockerfile managed-policy invariants", () => {
   it("does NOT create anything under /etc/claude-code/", () => {
     // /etc/claude-code is the reserved container path for the host managed-

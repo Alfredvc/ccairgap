@@ -7,13 +7,14 @@ set -euo pipefail
 
 HOME_DIR="${HOME:-/home/claude}"
 CLAUDE_DIR="$HOME_DIR/.claude"
+export CODEX_HOME="${CODEX_HOME:-$HOME_DIR/.codex}"
 HOST_CLAUDE="/host-claude"
 HOST_CLAUDE_JSON="/host-claude-json"
 HOST_CLAUDE_CREDS_DIR="/host-claude-creds-dir"
 HOST_PATCHED_SETTINGS="/host-claude-patched-settings.json"
 HOST_PATCHED_CLAUDE_JSON="/host-claude-patched-json"
 
-mkdir -p "$CLAUDE_DIR"
+mkdir -p "$CLAUDE_DIR" "$CODEX_HOME" "$CODEX_HOME/sessions"
 
 # Detect Python virtualenvs anywhere under ~/.claude/ (most commonly inside
 # skill or agent dirs). They're excluded from the rsync below because
@@ -380,12 +381,78 @@ if [ -n "${CCAIRGAP_TEST_CMD:-}" ]; then
   exec sh -c "$CCAIRGAP_TEST_CMD"
 fi
 
-# Passthrough: tokens forwarded by ccairgap from CLI `--` tail and config
-# `claude-args:`. CLI already filtered against the denylist; entrypoint trusts
-# the input. Spliced between RESUME_ARGS and -p so that -p (when set) stays
-# the final positional, matching claude's prompt-positional convention.
-if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT"
-else
-    exec claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@"
+ENTRYPOINT_AGENT="${CCAIRGAP_AGENT:-claude}"
+
+print_command() {
+    local first=1
+    for token in "$@"; do
+        if [ "$first" -eq 0 ]; then
+            printf ' '
+        fi
+        printf '%q' "$token"
+        first=0
+    done
+    printf '\n'
+}
+
+dry_run() {
+    local branch="$1"
+    shift
+    printf 'ccairgap-entrypoint-dry-run\n'
+    printf 'branch=%s\n' "$branch"
+    printf 'cwd=%s\n' "$CWD"
+    printf 'CCAIRGAP_AGENT=%s\n' "$ENTRYPOINT_AGENT"
+    if [ -n "${CCAIRGAP_PRINT:-}" ]; then
+        printf 'CCAIRGAP_PRINT=%s\n' "$CCAIRGAP_PRINT"
+    fi
+    printf 'CODEX_HOME=%s\n' "$CODEX_HOME"
+    if [ -d "$CLAUDE_DIR" ]; then
+        printf 'claude_home_ready=1\n'
+    else
+        printf 'claude_home_ready=0\n'
+    fi
+    if [ -d "$CODEX_HOME" ]; then
+        printf 'codex_home_ready=1\n'
+    else
+        printf 'codex_home_ready=0\n'
+    fi
+    if [ -d "$CODEX_HOME/sessions" ]; then
+        printf 'codex_sessions_ready=1\n'
+    else
+        printf 'codex_sessions_ready=0\n'
+    fi
+    printf 'command='
+    print_command "$@"
+}
+
+case "$ENTRYPOINT_AGENT" in
+    claude)
+        # Passthrough: tokens forwarded by ccairgap from CLI `--` tail and config
+        # `claude-args:`. CLI already filtered against the denylist; entrypoint trusts
+        # the input. Spliced between RESUME_ARGS and -p so that -p (when set) stays
+        # the final positional, matching claude's prompt-positional convention.
+        if [ -n "${CCAIRGAP_PRINT:-}" ]; then
+            FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT")
+        else
+            FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@")
+        fi
+        ;;
+    codex)
+        if [ -n "${CCAIRGAP_PRINT:-}" ]; then
+            FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT")
+        else
+            FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@")
+        fi
+        ;;
+    *)
+        echo "ccairgap: unsupported CCAIRGAP_AGENT: $ENTRYPOINT_AGENT" >&2
+        exit 2
+        ;;
+esac
+
+if [ "${CCAIRGAP_ENTRYPOINT_DRY_RUN:-}" = "1" ]; then
+    dry_run "$ENTRYPOINT_AGENT" "${FINAL_CMD[@]}"
+    exit 0
 fi
+
+exec "${FINAL_CMD[@]}"

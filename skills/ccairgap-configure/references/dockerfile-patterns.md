@@ -14,6 +14,7 @@ Use a custom Dockerfile when a workflow needs a binary not in the base image. Pa
 
 - `node`, `npm` (from base)
 - `@anthropic-ai/claude-code` (installed via `claude.ai/install.sh`, pinned via `CLAUDE_CODE_VERSION` build arg, default `latest`)
+- `@openai/codex` (installed with `npm install -g @openai/codex@${CODEX_VERSION}`, default `CODEX_VERSION=0.130.0`)
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `tzdata`, `vim`
 - `python3`, `python3-pip`, `python3-venv`
 
@@ -24,9 +25,9 @@ No `uv`, no browsers, no other language toolchains, no Docker client, no cloud S
 Your custom image must keep four things working or the container won't launch / won't match host file ownership:
 
 1. **`/home/claude` is writable for any runtime UID.** The CLI launches the container with `docker run --user $(id -u):$(id -g)`, and the runtime UID needs to read+execute everything under `$HOME` and create new files there. The bundled Dockerfile achieves this with `chmod -R go+rwX /home/claude` near the end. Don't add a final `USER claude` directive — it's overridden by `--user`, but a stale directive is misleading.
-2. **`/home/claude/.claude/projects` and `/home/claude/.claude/plugins/cache` exist with permissive perms.** The CLI mounts under both. They must be traversable by the runtime UID.
+2. **Agent mount targets exist with permissive perms.** The image must pre-create `/home/claude/.claude/projects`, `/home/claude/.claude/plugins/cache`, `/home/claude/.codex`, and `/home/claude/.codex/sessions`. They must be traversable by the runtime UID.
 3. **`/usr/local/bin/ccairgap-entrypoint` exists** — copied from `entrypoint.sh` in the ccairgap package. The `ENTRYPOINT` line must point at it.
-4. **Claude Code is installed and on the runtime PATH.** Either install via `claude.ai/install.sh` like the bundled Dockerfile does (under build-time `USER claude`), or any other method that lands the binary somewhere on `PATH`.
+4. **Both agent CLIs are installed and on the runtime PATH.** Claude Code is installed via `claude.ai/install.sh` in the bundled Dockerfile. Codex is installed from the npm package with `CODEX_VERSION`. Claude remains the default selected agent; Codex runtime launch is still staged until later implementation chunks.
 
 The CLI also bind-mounts a per-session `/etc/passwd` and `/etc/group` RO so libc lookups for the runtime UID resolve to "claude" (Node's `os.userInfo()`, git's GECOS read, etc.). You don't have to do anything for this — it happens regardless of which Dockerfile you use — but be aware that any baked `/etc/passwd` modifications are overlaid at runtime.
 
@@ -40,6 +41,7 @@ Best when you want to add packages without reasoning about the full image layout
 FROM node:24-slim
 
 ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=0.130.0
 
 # Stock apt packages, kept as-is.
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
@@ -57,6 +59,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       python3-pip \
       python3-venv \
  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g @openai/codex@${CODEX_VERSION}
 
 # --- Project additions ---
 RUN pip3 install --break-system-packages --no-cache-dir uv
@@ -78,7 +82,10 @@ RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
     else \
         curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
     fi
-RUN mkdir -p /home/claude/.claude/projects /home/claude/.claude/plugins/cache
+RUN mkdir -p \
+      /home/claude/.claude/projects \
+      /home/claude/.claude/plugins/cache \
+      /home/claude/.codex/sessions
 
 # Make /home/claude writable for any runtime UID. The CLI passes
 # --user $(id -u):$(id -g); that UID needs to read+execute baked content
@@ -201,6 +208,17 @@ docker-build-arg:
 ```
 
 Or environment variable on the host: `CCAIRGAP_CC_VERSION=1.2.3`. Or CLI: `--docker-build-arg CLAUDE_CODE_VERSION=1.2.3`.
+
+## Pinning Codex version
+
+The bundled Dockerfile exposes `CODEX_VERSION`, defaulting to the supported baseline `0.130.0`:
+
+```yaml
+docker-build-arg:
+  CODEX_VERSION: "0.130.0"
+```
+
+Exact unsupported Codex pins are rejected by the image-version policy before launch work in the Codex runtime chunks that consume it. Non-exact inputs such as dist-tags require runtime image contract inspection because the installed version is only known after build or pull.
 
 ## Rebuild semantics
 

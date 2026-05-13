@@ -26,7 +26,13 @@ npm run test:e2e:tier2
 | Suite | Tier | What it covers |
 |-------|------|----------------|
 | `e2e/tier1/` | 1 | Container lifecycle: launch, exit, CCAIRGAP_TEST_CMD backdoor, entrypoint env wiring |
-| `e2e/tier2/` | 2 | Integration: repo cloning, mount correctness, handoff, recover |
+| `e2e/tier2/` | 2 | Integration: repo cloning, mount correctness, handoff, recover, selected-agent entrypoint dry-run |
+
+## Entrypoint dry-run
+
+`CCAIRGAP_TEST_CMD` is the older early-exit test hook: after basic entrypoint setup it executes a shell command instead of launching the agent. It is useful for container lifecycle tests, but it exits before the Claude/Codex branch is selected.
+
+`CCAIRGAP_ENTRYPOINT_DRY_RUN=1` runs setup, selects the final agent command, prints the branch, cwd, relevant env, home readiness, and shell-quoted command, then exits before `exec`. Tier 2 uses it with the fake image to verify `agent=claude`, `agent=codex`, and Codex print-mode branch selection without invoking real agent CLIs.
 
 ## Smoke test
 
