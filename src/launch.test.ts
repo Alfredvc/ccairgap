@@ -670,4 +670,185 @@ describe("launch agent=codex staging guard", () => {
     expect(handoffSpy).not.toHaveBeenCalled();
     expect(existsSync(join(ccairgapHome, "sessions"))).toBe(false);
   });
+
+  it("validates Codex args before the staged disabled message and side effects", async () => {
+    await vi.resetModules();
+    const generateId = vi.fn(async () => {
+      throw new Error("generateId should not be reached for invalid codex args");
+    });
+    const resolveCredentials = vi.fn(async () => {
+      throw new Error("resolveCredentials should not be reached for invalid codex args");
+    });
+    const scanOrphans = vi.fn(async () => {
+      throw new Error("scanOrphans should not be reached for invalid codex args");
+    });
+    const ensureImage = vi.fn(async () => {
+      throw new Error("ensureImage should not be reached for invalid codex args");
+    });
+    const dockerRun = vi.fn(async () => {
+      throw new Error("docker run should not be reached for invalid codex args");
+    });
+    const handoffSpy = vi.fn(async () => {
+      throw new Error("handoff should not be reached for invalid codex args");
+    });
+
+    vi.doMock("./binaries.js", () => ({
+      requireHostBinaries: vi.fn(async () => {}),
+    }));
+    vi.doMock("./sessionId.js", () => ({
+      generateId,
+      listAllContainerNames: vi.fn(async () => []),
+    }));
+    vi.doMock("./credentials.js", () => ({
+      CredentialsDeadError: class CredentialsDeadError extends Error {
+        finalTtlMs = 0;
+      },
+      readHostCredsJson: vi.fn(),
+      resolveCredentials,
+    }));
+    vi.doMock("./orphans.js", () => ({ scanOrphans }));
+    vi.doMock("./image.js", () => ({
+      defaultDockerfile: vi.fn(() => "/unused/Dockerfile"),
+      ensureImage,
+      hostClaudeVersion: vi.fn(async () => "1.0.0"),
+    }));
+    vi.doMock("execa", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("execa")>()),
+      execa: dockerRun,
+    }));
+    vi.doMock("./handoff.js", () => ({ handoff: handoffSpy }));
+
+    const { launch: isolatedLaunch } = await import("./launch.js");
+
+    await expect(
+      isolatedLaunch({
+        agent: "codex",
+        repos: [repoDir],
+        ros: [],
+        cp: [],
+        sync: [],
+        mount: [],
+        keepContainer: false,
+        dockerBuildArgs: {},
+        rebuild: false,
+        hookEnable: [],
+        mcpEnable: [],
+        dockerRunArgs: [],
+        warnDockerArgs: false,
+        bare: false,
+        clipboard: false,
+        noPreserveDirty: false,
+        claudeArgs: [],
+        codexArgs: ["--skip-git-repo-check"],
+        noAutoMemory: false,
+        refreshBelowTtlMinutes: 0,
+      }),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines.some((line) => line.includes("--skip-git-repo-check"))).toBe(true);
+    expect(stderrLines).not.toContain(
+      "ccairgap: agent=codex is accepted but runtime launch is disabled in this build",
+    );
+    expect(generateId).not.toHaveBeenCalled();
+    expect(resolveCredentials).not.toHaveBeenCalled();
+    expect(scanOrphans).not.toHaveBeenCalled();
+    expect(ensureImage).not.toHaveBeenCalled();
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(handoffSpy).not.toHaveBeenCalled();
+    expect(existsSync(join(ccairgapHome, "sessions"))).toBe(false);
+  });
+
+  it("uses --cp directories as container-visible roots for Codex image validation", async () => {
+    await vi.resetModules();
+    const copiedDir = join(root, "copied-assets");
+    const imagePath = join(copiedDir, "screenshot.png");
+    mkdirSync(copiedDir, { recursive: true });
+    writeFileSync(imagePath, "fake image");
+
+    const generateId = vi.fn(async () => {
+      throw new Error("generateId should not be reached for agent=codex");
+    });
+    const resolveCredentials = vi.fn(async () => {
+      throw new Error("resolveCredentials should not be reached for agent=codex");
+    });
+    const scanOrphans = vi.fn(async () => {
+      throw new Error("scanOrphans should not be reached for agent=codex");
+    });
+    const ensureImage = vi.fn(async () => {
+      throw new Error("ensureImage should not be reached for agent=codex");
+    });
+    const dockerRun = vi.fn(async () => {
+      throw new Error("docker run should not be reached for agent=codex");
+    });
+    const handoffSpy = vi.fn(async () => {
+      throw new Error("handoff should not be reached for agent=codex");
+    });
+
+    vi.doMock("./binaries.js", () => ({
+      requireHostBinaries: vi.fn(async () => {}),
+    }));
+    vi.doMock("./sessionId.js", () => ({
+      generateId,
+      listAllContainerNames: vi.fn(async () => []),
+    }));
+    vi.doMock("./credentials.js", () => ({
+      CredentialsDeadError: class CredentialsDeadError extends Error {
+        finalTtlMs = 0;
+      },
+      readHostCredsJson: vi.fn(),
+      resolveCredentials,
+    }));
+    vi.doMock("./orphans.js", () => ({ scanOrphans }));
+    vi.doMock("./image.js", () => ({
+      defaultDockerfile: vi.fn(() => "/unused/Dockerfile"),
+      ensureImage,
+      hostClaudeVersion: vi.fn(async () => "1.0.0"),
+    }));
+    vi.doMock("execa", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("execa")>()),
+      execa: dockerRun,
+    }));
+    vi.doMock("./handoff.js", () => ({ handoff: handoffSpy }));
+
+    const { launch: isolatedLaunch } = await import("./launch.js");
+
+    await expect(
+      isolatedLaunch({
+        agent: "codex",
+        repos: [repoDir],
+        ros: [],
+        cp: [copiedDir],
+        sync: [],
+        mount: [],
+        keepContainer: false,
+        dockerBuildArgs: {},
+        rebuild: false,
+        hookEnable: [],
+        mcpEnable: [],
+        dockerRunArgs: [],
+        warnDockerArgs: false,
+        bare: false,
+        clipboard: false,
+        noPreserveDirty: false,
+        claudeArgs: [],
+        codexArgs: ["--image", imagePath],
+        noAutoMemory: false,
+        refreshBelowTtlMinutes: 0,
+      }),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines).toContain(
+      "ccairgap: agent=codex is accepted but runtime launch is disabled in this build",
+    );
+    expect(stderrLines.some((line) => line.includes("non-visible image path"))).toBe(false);
+    expect(generateId).not.toHaveBeenCalled();
+    expect(resolveCredentials).not.toHaveBeenCalled();
+    expect(scanOrphans).not.toHaveBeenCalled();
+    expect(ensureImage).not.toHaveBeenCalled();
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(handoffSpy).not.toHaveBeenCalled();
+    expect(existsSync(join(ccairgapHome, "sessions"))).toBe(false);
+  });
 });

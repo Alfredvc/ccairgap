@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { execa } from "execa";
 import {
   hostClaudeDir,
@@ -44,6 +44,7 @@ import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } 
 import { resolveResumeArg } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { validateClaudeArgs } from "./claudeArgs.js";
+import { validateCodexArgs } from "./codexArgs.js";
 import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
 import { resolveManagedPolicyDir } from "./managedPolicy.js";
 import { resolveCcairgapDir } from "./config.js";
@@ -179,6 +180,37 @@ function dedupeResolved(paths: string[]): string[] {
   return out;
 }
 
+function deriveCodexVisiblePaths(opts: {
+  repos: string[];
+  ros: string[];
+  cp: string[];
+  sync: string[];
+  mount: string[];
+  bare: boolean;
+}): { visibleRoots: string[]; visiblePaths: string[] } {
+  const visibleRoots = dedupeResolved([...opts.repos, ...opts.ros]);
+  const workspaceRepo = visibleRoots[0];
+  const anchor = opts.bare ? process.cwd() : workspaceRepo;
+  const visiblePaths: string[] = [];
+
+  for (const raw of [...opts.cp, ...opts.sync, ...opts.mount]) {
+    if (!isAbsolute(raw) && anchor === undefined) {
+      throw new Error(
+        `Codex --image visibility cannot use relative --cp/--sync/--mount path without a workspace repo: ${raw}`,
+      );
+    }
+    const absolute = isAbsolute(raw) ? resolve(raw) : resolve(anchor!, raw);
+    const resolvedPath = realpath(absolute);
+    if (statSync(resolvedPath).isDirectory()) {
+      visibleRoots.push(resolvedPath);
+    } else {
+      visiblePaths.push(resolvedPath);
+    }
+  }
+
+  return { visibleRoots: dedupeResolved(visibleRoots), visiblePaths: dedupeResolved(visiblePaths) };
+}
+
 /**
  * Validates that `opts.repos` entries resolve to distinct real paths and that
  * no `opts.ros` entry resolves to the same real path as any repo. Uses
@@ -249,6 +281,17 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   const selectedAgent: AgentKind = opts.agent ?? "claude";
   if (selectedAgent === "codex") {
+    try {
+      const visible = deriveCodexVisiblePaths(opts);
+      validateCodexArgs({
+        mode: { agent: "codex", print: opts.print },
+        argv: opts.codexArgs ?? [],
+        visibleRoots: visible.visibleRoots,
+        visiblePaths: visible.visiblePaths,
+      });
+    } catch (e) {
+      die((e as Error).message);
+    }
     die("agent=codex is accepted but runtime launch is disabled in this build");
   }
 

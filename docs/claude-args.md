@@ -2,7 +2,7 @@
 
 Anything ccairgap doesn't own (`--model`, `--effort`, `--agents`, `--betas`, …) can be forwarded to the selected agent by writing it after `--`.
 
-Claude remains the default and is the only runtime-enabled agent in this build:
+Claude remains the default and is the only runtime-enabled agent in this build. With `--agent claude`, the selected-agent tail is validated by Claude's denylist and then forwarded to Claude:
 
 ```bash
 # Pin the model and bump effort
@@ -24,7 +24,7 @@ claude-args:
 
 Config and CLI are concatenated (config first, CLI appended); claude's last-wins arg parser handles duplicates, so `-- --model sonnet` from the CLI overrides a config `--model opus`.
 
-`--agent codex` and `codex-args` are accepted as staged configuration surfaces, but Codex launch is rejected before side effects until Codex runtime support lands. When `agent: codex` is selected, the CLI `--` tail is reserved for Codex passthrough instead of `claude-args`; the later Codex validation chunk defines which Codex tokens are allowed.
+`--agent codex` and `codex-args` are accepted as staged configuration surfaces, but Codex launch is rejected before side effects until Codex runtime support lands. When `agent: codex` is selected, the CLI `--` tail is reserved for Codex passthrough instead of `claude-args`; ccairgap validates it with a mode-aware allowlist before the staged runtime-disabled guard. See [codex.md](codex.md) for allowed Codex flags, denied surfaces, and `--image` visibility rules.
 
 ## Denylist
 
