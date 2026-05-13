@@ -54,7 +54,7 @@ Codex state preparation is session-local:
 - `$SESSION/codex-home/config.toml` is rewritten with a TOML parser and forces `cli_auth_credentials_store = "file"`.
 - `$SESSION/codex-sessions/` is created for container-local rollout records. During handoff or `recover`, ccairgap copies only validated rollout JSONL files back to `<manifest.codex.host_home>/sessions/`.
 
-API-key file auth keeps only `OPENAI_API_KEY`. ChatGPT token file auth blanks `tokens.refresh_token` and requires a usable access token or fresh `last_refresh` inside ccairgap's safety buffer. `agent_identity`, keyring-only, ephemeral, missing, refresh-required, managed-eligible, unknown, and unparsable token auth fail for selected Codex and are warning-only for advisory Codex state.
+API-key file auth keeps only `OPENAI_API_KEY`. ChatGPT token file auth blanks `tokens.refresh_token` and requires a usable access token or fresh `last_refresh` inside ccairgap's safety buffer. `agent_identity`, keyring-only, ephemeral, missing, refresh-required, and unparsable token auth fail for selected Codex and are warning-only for advisory Codex state. Plan tier (Plus/Pro/Business/Enterprise/etc.) is not gated — OpenAI enforces plan policy server-side.
 
 Codex auth is copied in, never copied out. Runtime writes to `auth.json`, logs, history, SQLite state, memories, themes, plugin data, and marketplace data remain session-local.
 

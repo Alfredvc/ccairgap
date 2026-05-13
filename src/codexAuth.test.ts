@@ -106,22 +106,24 @@ describe("sanitizeCodexAuthJson", () => {
     expect(advisory.warnings[0]?.code).toBe("unsupported-agent-identity");
   });
 
-  it("fails closed for managed and unknown ChatGPT file auth", () => {
-    for (const idPayload of [{ plan_type: "Business" }, {}]) {
-      expect(() =>
-        sanitizeCodexAuthJson({
-          selected: true,
-          nowMs: now,
-          json: JSON.stringify({
-            last_refresh: "2026-05-12T00:00:00.000Z",
-            tokens: {
-              id_token: jwt(idPayload),
-              access_token: jwt({ exp: Math.floor((now + 60 * 60 * 1000) / 1000) }),
-              refresh_token: "secret",
-            },
-          }),
+  it("accepts any ChatGPT plan tier — plan is server-enforced metadata", () => {
+    for (const planType of ["plus", "pro", "business", "enterprise", "hc", "edu", undefined]) {
+      const idPayload = planType
+        ? { "https://api.openai.com/auth": { chatgpt_plan_type: planType } }
+        : {};
+      const result = sanitizeCodexAuthJson({
+        selected: true,
+        nowMs: now,
+        json: JSON.stringify({
+          last_refresh: "2026-05-12T00:00:00.000Z",
+          tokens: {
+            id_token: jwt(idPayload),
+            access_token: jwt({ exp: Math.floor((now + 60 * 60 * 1000) / 1000) }),
+            refresh_token: "secret",
+          },
         }),
-      ).toThrow(CodexAuthError);
+      });
+      expect(result.ok).toBe(true);
     }
   });
 });

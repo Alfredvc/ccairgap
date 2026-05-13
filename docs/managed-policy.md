@@ -23,4 +23,4 @@ This mount covers managed `managed-settings.json` and similar policy files that 
 
 ## Codex boundary
 
-This module remains Claude-owned. Codex managed, cloud, system requirement, and legacy managed hook inputs are not copied or mounted through Claude managed policy helpers. Codex selected auth fails closed for managed-eligible, FedRAMP, unknown, or unparsable ChatGPT file auth until a separate managed-requirements design exists.
+This module remains Claude-owned. Codex managed, cloud, system requirement, and legacy managed hook source files are not copied or mounted through Claude managed policy helpers. Codex plan tier (Plus/Pro/Business/Enterprise/FedRAMP) is not gated by ccairgap — OpenAI enforces plan policy server-side, and the in-container Codex may still fetch cloud requirements over the network. The ccairgap perimeter (Docker sandbox, RO host mounts, managed-policy not copied) is the same regardless of plan tier.

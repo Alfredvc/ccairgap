@@ -53,46 +53,21 @@ function failOrWarn(options: {
   };
 }
 
-function parseJwtPayload(token: unknown): Record<string, unknown> | undefined {
+function jwtExpiryMs(token: unknown): number | undefined {
   if (typeof token !== "string") return undefined;
   const part = token.split(".")[1];
   if (!part) return undefined;
   try {
     const padded = part.padEnd(Math.ceil(part.length / 4) * 4, "=");
-    return JSON.parse(Buffer.from(padded, "base64url").toString("utf8")) as Record<
+    const payload = JSON.parse(Buffer.from(padded, "base64url").toString("utf8")) as Record<
       string,
       unknown
     >;
+    const exp = payload?.exp;
+    return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : undefined;
   } catch {
     return undefined;
   }
-}
-
-function jwtExpiryMs(token: unknown): number | undefined {
-  const payload = parseJwtPayload(token);
-  const exp = payload?.exp;
-  return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : undefined;
-}
-
-function managedReason(tokens: Record<string, unknown>): string | undefined {
-  const payload = parseJwtPayload(tokens.id_token);
-  if (!payload) return "managed requirements eligibility is unknown";
-  const rawPlan =
-    payload.plan_type ??
-    payload.planType ??
-    payload.account_plan ??
-    payload.accountPlan ??
-    payload.plan;
-  const plan = typeof rawPlan === "string" ? rawPlan : undefined;
-  if (!plan) return "managed requirements eligibility is unknown";
-  if (["Business", "EnterpriseCbpUsageBased", "Enterprise"].includes(plan)) {
-    return `managed requirements are not supported for ${plan} Codex file auth`;
-  }
-  const fedramp = payload.fedramp ?? payload.is_fedramp;
-  if (fedramp === true || plan === "FedRAMP") {
-    return "FedRAMP Codex file auth is not supported";
-  }
-  return undefined;
 }
 
 function sanitizeParsedAuth(parsed: unknown, nowMs: number, source?: string): CodexAuthPlan {
@@ -130,9 +105,6 @@ function sanitizeParsedAuth(parsed: unknown, nowMs: number, source?: string): Co
   if (typeof obj.last_refresh !== "string" || obj.last_refresh.length === 0) {
     throw new CodexAuthError("refresh-required", "Codex token auth is missing last_refresh");
   }
-
-  const managed = managedReason(tokenObj);
-  if (managed) throw new CodexAuthError("managed-requirements", managed);
 
   const expiryMs = jwtExpiryMs(tokenObj.access_token);
   if (expiryMs !== undefined && expiryMs - nowMs <= COLD_START_FLOOR_MS) {
