@@ -61,4 +61,21 @@ describe("inspectImageContract", () => {
     expect(result.findings.map((finding) => finding.code)).toContain("missing-codex-sessions");
     expect(result.findings.map((finding) => finding.code)).toContain("codex-home-not-uid-portable");
   });
+
+  it("checks UID-portable permissions using the same runtime user posture as launch", async () => {
+    const calls: string[][] = [];
+    await inspectImageContract("ccairgap:test", {
+      run: async (args) => {
+        calls.push(args);
+        return { stdout: args.includes("codex --version") ? "codex-cli 0.130.0" : "" };
+      },
+    });
+
+    const writableChecks = calls.filter((args) => args.join(" ").includes("test -w "));
+    expect(writableChecks.length).toBeGreaterThan(0);
+    for (const args of writableChecks) {
+      expect(args).toContain("--user");
+      expect(args).toContain(`${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`);
+    }
+  });
 });

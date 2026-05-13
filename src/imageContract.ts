@@ -106,7 +106,19 @@ function runInImage(
   tag: string,
   command: string[],
 ): Promise<{ stdout: string }> {
-  return run(["run", "--rm", "--entrypoint", "sh", tag, "-lc", command.join(" ")]);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  return run([
+    "run",
+    "--rm",
+    "--user",
+    `${uid}:${gid}`,
+    "--entrypoint",
+    "sh",
+    tag,
+    "-lc",
+    command.join(" "),
+  ]);
 }
 
 async function dockerRun(args: string[]): Promise<{ stdout: string }> {

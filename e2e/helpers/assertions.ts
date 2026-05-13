@@ -71,6 +71,20 @@ export async function assertFileExists(filePath: string): Promise<void> {
 }
 
 /**
+ * Assert that a file does not exist at the given path.
+ */
+export async function assertFileNotExists(filePath: string): Promise<void> {
+  let exists = false;
+  try {
+    await fs.access(filePath);
+    exists = true;
+  } catch {
+    exists = false;
+  }
+  expect(exists, `Expected file not to exist: ${filePath}`).toBe(false);
+}
+
+/**
  * Assert that a file's content matches a string or regular expression.
  */
 export async function assertFileContains(filePath: string, pattern: string | RegExp): Promise<void> {

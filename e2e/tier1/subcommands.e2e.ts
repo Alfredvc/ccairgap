@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkTmpHome, seedGitRepo, seedClaudeHome, runCli } from "../../e2e/helpers/env.js";
-import { assertFileExists, assertFileContains } from "../../e2e/helpers/assertions.js";
+import { assertFileExists, assertFileContains, assertFileNotExists } from "../../e2e/helpers/assertions.js";
 import * as fs from "fs/promises";
 import * as path from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -45,7 +45,7 @@ describe("subcommands e2e", () => {
     await assertFileExists(dockerfilePath);
 
     const entrypointPath = path.join(repoPath, ".ccairgap", "entrypoint.sh");
-    await assertFileExists(entrypointPath);
+    await assertFileNotExists(entrypointPath);
   });
 
   it("init exits non-zero outside a git repo (no --config)", async () => {
