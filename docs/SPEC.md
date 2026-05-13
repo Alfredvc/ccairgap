@@ -561,7 +561,7 @@ The published image is built and signed in `.github/workflows/release.yml`'s `pu
 
 **Installed:**
 - Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via `ARG CLAUDE_CODE_VERSION` (default: host version detected at build time when building locally; `latest` for registry-built images since CI has no host claude). Override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
-- Codex CLI via `npm install -g @openai/codex@${CODEX_VERSION}`. The supported baseline is `CODEX_VERSION=0.130.0`; exact unsupported pins are rejected by the Codex image-version policy before later runtime chunks consume the image.
+- Codex CLI via `npm install -g @openai/codex@${CODEX_VERSION}`. The supported baseline is `CODEX_VERSION=0.130.0`; exact unsupported pins are rejected by the Codex image-version policy before launch.
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`.
 - `python3`, `python3-pip`, `python3-venv` — common for user scripts and MCP servers. `build-essential` is intentionally **not** installed (~200MB bloat); `pip install` of packages with native deps will fail. Users who need it: `--dockerfile` a customized image.
 
@@ -638,7 +638,7 @@ Two supported paths to change what's inside the image:
 
 ## Entrypoint
 
-Runs at container start. Claude remains the default selected branch. The Codex branch is present in the entrypoint contract for dry-run and later runtime chunks, but normal `ccairgap --agent codex` launch is still rejected before Docker until Codex state/auth/mount prerequisites land.
+Runs at container start. Claude remains the default selected branch. When `CCAIRGAP_AGENT=codex`, the entrypoint launches Codex in interactive mode or `codex exec` in print mode after the same home and policy preparation steps.
 
 Steps:
 
@@ -868,20 +868,20 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 
 ## Selected-agent arg passthrough
 
-ccairgap treats tokens after CLI `--` as the selected-agent passthrough tail. Claude remains the default and is the only runtime-enabled agent in this build. With `agent=claude`, ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
+ccairgap treats tokens after CLI `--` as the selected-agent passthrough tail. Claude remains the default selected agent. With `agent=claude`, ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
 
-`agent=codex` and config `codex-args:` are accepted and layered now, but Codex launch is rejected before session, auth, image, Docker, or handoff side effects. A later chunk defines Codex passthrough validation before runtime is enabled.
+With `agent=codex`, ccairgap merges config `codex-args:` and the CLI `--` tail, validates them with the Codex mode-aware allowlist, verifies container-visible `--image` paths, and forwards the filtered argv to the in-container Codex invocation.
 
 **Sources:**
 
 - **CLI:** tokens after a bare `--` are the passthrough tail. Example: `ccairgap --repo . -- --model opus --effort high`. The pre-split runs in `src/cliSplit.ts` before commander parses, so the existing unknown-positional guard still catches typos like `ccairgap lsit`. `--` passthrough on a known subcommand (`list`, `recover`, `discard`, `doctor`, `inspect`, `init`) errors with "`--` passthrough is only valid on the default launch command".
 - **Config:** `claude-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Same shape as the CLI tail: a list of literal tokens. No map form — `claude-args: {model: opus}` is rejected by `assertStringArray`.
-- **Codex config:** `codex-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Parsed and layered now; validation and runtime use are added later.
+- **Codex config:** `codex-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Used when `agent=codex`; config tokens come before the CLI tail and are validated with the Codex passthrough allowlist before launch.
 - **Merge:** config tokens come first, CLI tokens append. Claude's last-wins arg parser handles duplicates; users can rely on that to override config values from the CLI (config sets `--model opus`, CLI passes `-- --model sonnet` → claude keeps the last).
 
-**Plumbing:** the merged + filtered list is appended as positional args to `docker run`. Docker forwards them to the entrypoint as `"$@"` (execve-style — no shell parsing, no JSON layer). The entrypoint splices `"$@"` between `RESUME_ARGS` and `-p` in the `exec claude` line. Argv (not env-var JSON) avoids serialization layers and the per-env-var size cap; values with spaces, quotes, or newlines round-trip unchanged.
+**Plumbing:** the merged + filtered list is appended as positional args to `docker run`. Docker forwards them to the entrypoint as `"$@"` (execve-style — no shell parsing, no JSON layer). The entrypoint splices `"$@"` into the selected agent command: after Claude's built-in launch args, after Codex's built-in `codex` launch args, or before the final prompt for Codex print mode. Argv (not env-var JSON) avoids serialization layers and the per-env-var size cap; values with spaces, quotes, or newlines round-trip unchanged.
 
-**Filtering** runs in `src/claudeArgs.ts`. Hard-denied flags abort launch with exit 1 before any session-dir side effects (same ordering as `--resume` validation). Soft-dropped flags are stripped with a stderr warning; launch continues. The entrypoint does not re-validate — the CLI is the trust boundary, not the image.
+**Filtering** runs in `src/claudeArgs.ts` for Claude and `src/codexArgs.ts` for Codex. Hard-denied flags abort launch with exit 1 before any session-dir side effects (same ordering as `--resume` validation). Claude soft-dropped flags are stripped with a stderr warning; launch continues. The entrypoint does not re-validate — the CLI is the trust boundary, not the image.
 
 ### Denylist
 

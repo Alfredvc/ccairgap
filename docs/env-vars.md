@@ -17,7 +17,7 @@ These are set inside Docker by ccairgap or by the entrypoint contract:
 
 | Env var | Effect |
 |---------|--------|
-| `CCAIRGAP_AGENT` | Selects the entrypoint branch. Defaults to `claude`; `codex` is used by the staged Codex runtime contract and dry-run tests. Normal Codex launch remains disabled until later chunks. |
+| `CCAIRGAP_AGENT` | Selects the entrypoint branch. Defaults to `claude`; `codex` launches the Codex branch in interactive mode or `codex exec` in print mode. |
 | `CCAIRGAP_PRINT` | Prompt for non-interactive print mode. Claude receives it as the final `-p` prompt; Codex receives it as the final `codex exec` prompt. |
 | `CODEX_HOME` | Codex config/session home inside the container. Defaults to `/home/claude/.codex`; the image pre-creates this directory and `sessions/`. |
 | `CCAIRGAP_ENTRYPOINT_DRY_RUN` | Test-only entrypoint mode. When set to `1`, setup runs, the selected command is printed, and the entrypoint exits before `exec`. |

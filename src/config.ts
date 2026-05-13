@@ -55,7 +55,7 @@ export interface ConfigFile {
   noPreserveDirty?: boolean;
   /** Tokens forwarded verbatim to `claude` (subject to denylist). */
   claudeArgs?: string[];
-  /** Tokens forwarded verbatim to `codex` once Codex launch is enabled. */
+  /** Tokens forwarded to `codex` after Codex allowlist validation. */
   codexArgs?: string[];
   noAutoMemory?: boolean;
   /** Minutes. Host token ttl below this triggers pre-launch `claude auth login`. */

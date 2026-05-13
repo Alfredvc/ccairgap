@@ -148,7 +148,7 @@ async function main() {
         "(e.g. --profile web → <git-root>/.ccairgap/web.config.yaml). " +
         "Missing profile file is a hard error. Mutually exclusive with --config.",
     )
-    .option("--agent <claude|codex>", "selected agent. Claude is the default; Codex launch is staged and disabled in this build.")
+    .option("--agent <claude|codex>", "selected agent. Claude is the default; Codex launch is supported.")
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo exposed alongside --repo (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])

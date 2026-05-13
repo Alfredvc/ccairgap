@@ -52,7 +52,7 @@ If you inherit from the published image and only add packages, these are already
 1. **`/home/claude` is writable for any runtime UID.** The CLI launches the container with `docker run --user $(id -u):$(id -g)`, and the runtime UID needs to read+execute everything under `$HOME` and create new files there. The bundled Dockerfile achieves this with `chmod -R go+rwX /home/claude` near the end. Don't add a final `USER claude` directive — it's overridden by `--user`, but a stale directive is misleading.
 2. **Agent mount targets exist with permissive perms.** The image must pre-create `/home/claude/.claude/projects`, `/home/claude/.claude/plugins/cache`, `/home/claude/.codex`, and `/home/claude/.codex/sessions`. They must be traversable by the runtime UID.
 3. **`/usr/local/bin/ccairgap-entrypoint` exists** — copied from `entrypoint.sh` in the ccairgap package. The `ENTRYPOINT` line must point at it.
-4. **Both agent CLIs are installed and on the runtime PATH.** Claude Code is installed via `claude.ai/install.sh` in the bundled Dockerfile. Codex is installed from the npm package with `CODEX_VERSION`. Claude remains the default selected agent; Codex runtime launch is still staged until later implementation chunks.
+4. **Both agent CLIs are installed and on the runtime PATH.** Claude Code is installed via `claude.ai/install.sh` in the bundled Dockerfile. Codex is installed from the npm package with `CODEX_VERSION`. Claude remains the default selected agent, and Codex is launched when selected with `--agent codex` or `agent: codex`.
 
 The CLI also bind-mounts a per-session `/etc/passwd` and `/etc/group` RO so libc lookups for the runtime UID resolve to "claude" (Node's `os.userInfo()`, git's GECOS read, etc.). You don't have to do anything for this — it happens regardless of which Dockerfile you use — but be aware that any baked `/etc/passwd` modifications are overlaid at runtime.
 
@@ -151,7 +151,7 @@ docker-build-arg:
   CODEX_VERSION: "0.130.0"
 ```
 
-Exact unsupported Codex pins are rejected by the image-version policy before launch work in the Codex runtime chunks that consume it. Non-exact inputs such as dist-tags require runtime image contract inspection because the installed version is only known after build or pull. Extension Dockerfiles inherit the Codex version from their `FROM` image.
+Exact unsupported Codex pins are rejected by the image-version policy before launch. Non-exact inputs such as dist-tags require runtime image contract inspection because the installed version is only known after build or pull. Extension Dockerfiles inherit the Codex version from their `FROM` image.
 
 ## Rebuild semantics
 
