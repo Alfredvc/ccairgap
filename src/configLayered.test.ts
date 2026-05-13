@@ -59,6 +59,16 @@ describe("mergeLayers", () => {
     ]);
   });
 
+  it("claudeArgs: concatenate user-wide then project order with per-element provenance", () => {
+    const r = mergeLayers({
+      integrations: [],
+      userWide: { claudeArgs: ["--verbose"] },
+      project: { claudeArgs: ["--permission-mode", "plan"] },
+    });
+    expect(r.merged.claudeArgs).toEqual(["--verbose", "--permission-mode", "plan"]);
+    expect(r.provenance.claudeArgs).toEqual(["user-wide", "project", "project"]);
+  });
+
   it("hooks.enable: concat across layers", () => {
     const r = mergeLayers({
       integrations: [

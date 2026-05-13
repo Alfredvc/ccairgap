@@ -39,6 +39,25 @@ describe("splitClaudeArgs", () => {
     expect(r.cliClaudeArgs).toEqual(["--model", "opus"]);
   });
 
+  it("preserves launch passthrough after `--` as a raw ordered tail", () => {
+    const r = splitClaudeArgs([
+      "node",
+      "ccairgap",
+      "--repo",
+      ".",
+      "--",
+      "--permission-mode",
+      "plan",
+      "--dangerously-skip-permissions",
+    ]);
+    expect(r.argvForCommander).toEqual(["node", "ccairgap", "--repo", "."]);
+    expect(r.cliClaudeArgs).toEqual([
+      "--permission-mode",
+      "plan",
+      "--dangerously-skip-permissions",
+    ]);
+  });
+
   it("keeps later `--` tokens inside the passthrough tail (only the first splits)", () => {
     const r = splitClaudeArgs(["node", "ccairgap", "--", "--model", "--", "x"]);
     expect(r.cliClaudeArgs).toEqual(["--model", "--", "x"]);

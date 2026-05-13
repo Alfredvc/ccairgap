@@ -112,6 +112,12 @@ User-facing config and env-var reference lives in [docs/config.md](docs/config.m
 
 ## When adding features
 
+### Codex Support Staging
+
+Codex support is staged through `docs/plans/2026-05-13-codex-agent-support.md`. Until Chunk 6 lands, `agent=codex` must not reach Docker execution. Earlier chunks may add parsing, validation, manifests, image contracts, state materialization, and mount inputs only when launch still rejects Codex before side effects or the relevant code path is unreachable for Codex runtime execution.
+
+Keep Claude as the default launch behavior throughout the migration. Do not rename Claude-owned modules unless the plan explicitly touches that boundary, and route shared selection through `src/agent.ts` once Chunk 1 introduces it.
+
 1. Update `docs/SPEC.md` first if behavior or contract changes.
 2. Update `README.md` for user-facing flags/env/subcommands.
 3. Keep runtime deps minimal. No new deps without reason.
