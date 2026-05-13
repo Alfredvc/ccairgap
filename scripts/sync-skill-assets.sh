@@ -6,7 +6,8 @@
 #   pre-commit: runs this script, then `git add` the skill files.
 #   CI: runs this script, then `git diff --exit-code skills/` to fail on drift.
 #
-# Edit the canonical source (docs/*.md, docker/Dockerfile) and re-run this
+# Edit the canonical source (docs/*.md, docker/Dockerfile, docker/entrypoint.sh)
+# and re-run this
 # script. Do not hand-edit files under skills/ccairgap-configure/references/
 # or skills/ccairgap-configure/assets/Dockerfile.template — they are generated.
 set -euo pipefail
@@ -46,10 +47,22 @@ generated_header_dockerfile() {
 # Source: $source_path
 # Regenerate with: scripts/sync-skill-assets.sh
 #
-# To customize for your project, copy this file to <git-root>/.ccairgap/Dockerfile
-# and edit the copy. See docs/dockerfile.md for extension patterns.
+# To customize for your project, copy this file to <git-root>/.ccairgap/Dockerfile.
+# Add only project-specific image changes below the FROM line.
 
 EOF
+}
+
+default_image_ref() {
+    node -e '
+const fs = require("fs");
+const crypto = require("crypto");
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const h = crypto.createHash("sha256");
+h.update(fs.readFileSync("docker/Dockerfile"));
+h.update(fs.readFileSync("docker/entrypoint.sh"));
+console.log(`ghcr.io/alfredvc/ccairgap:${pkg.version}-${h.digest("hex").slice(0, 8)}`);
+'
 }
 
 sync_markdown() {
@@ -66,18 +79,18 @@ sync_markdown() {
     echo "  $src -> $dst"
 }
 
-sync_dockerfile() {
-    local src="$1" dst="$2"
-    if [ ! -f "$src" ]; then
-        echo "sync-skill-assets: missing source $src" >&2
+sync_dockerfile_template() {
+    local dst="$1"
+    if [ ! -f "docker/Dockerfile" ] || [ ! -f "docker/entrypoint.sh" ]; then
+        echo "sync-skill-assets: missing docker image sources" >&2
         return 1
     fi
     mkdir -p "$(dirname "$dst")"
     {
-        generated_header_dockerfile "$src"
-        cat "$src"
+        generated_header_dockerfile "published image tag from docker/Dockerfile + docker/entrypoint.sh"
+        printf 'FROM %s\n' "$(default_image_ref)"
     } > "$dst"
-    echo "  $src -> $dst"
+    echo "  published image Dockerfile template -> $dst"
 }
 
 echo "Syncing skill assets…"
@@ -88,6 +101,6 @@ for pair in "${doc_pairs[@]}"; do
     sync_markdown "$src" "$dst"
 done
 
-sync_dockerfile "docker/Dockerfile" "$skill_assets/Dockerfile.template"
+sync_dockerfile_template "$skill_assets/Dockerfile.template"
 
 echo "Done."

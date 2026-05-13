@@ -9,7 +9,7 @@ Files inside `.ccairgap/` are injected into every session, regardless of profile
 | `.ccairgap/mcp.json` | `mcpServers` merged into user-scope MCP (same format as `.mcp.json`) |
 | `.ccairgap/skills/` | Each immediate subdirectory containing `SKILL.md` becomes a slash command |
 
-**Note:** Changing `entrypoint.sh` bumps the image content hash, so a new image builds automatically on first launch after upgrading ccairgap. Run `ccairgap doctor` to see the previous image tag; prune via `docker image rm <tag>`.
+**Note:** `.ccairgap/Dockerfile` is a host-consumed sidecar, not an injected session file. `ccairgap init` creates a minimal Dockerfile that starts from the published ccairgap image; edit it only for project-specific image additions.
 
 **Example — deny `AskUserQuestion` in every session:**
 
@@ -50,7 +50,7 @@ Files inside `.ccairgap/` are injected into every session, regardless of profile
   }
 }
 ```
-The command path must be valid inside the container (`node:24-slim` Linux), not on the host.
+The command path must be valid inside the ccairgap container image, not on the host.
 
 ## Codex boundary
 

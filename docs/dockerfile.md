@@ -14,9 +14,34 @@ Use a custom Dockerfile when a workflow needs a binary not in the base image. Pa
 
 No `uv`, no browsers, no other language toolchains, no Docker client, no cloud SDKs, no `build-essential` (~200MB; opt in via custom Dockerfile if `pip install` of native-dep packages is needed).
 
-## Required invariants for a custom Dockerfile
+## Default extension pattern
 
-Your custom image must keep four things working or the container won't launch / won't match host file ownership:
+`ccairgap init` writes a minimal extension Dockerfile:
+
+```dockerfile
+FROM ghcr.io/alfredvc/ccairgap:<cli-version>-<hash8>
+```
+
+The tag is the same deterministic image tag the CLI would pull for the bundled image. Add only project-specific packages or files below that `FROM` line:
+
+```dockerfile
+FROM ghcr.io/alfredvc/ccairgap:<cli-version>-<hash8>
+
+USER root
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --break-system-packages --no-cache-dir uv
+```
+
+This keeps the ccairgap entrypoint, runtime user model, agent CLIs, and mount target layout inherited from the published image. `docker build` pulls the base image if it is not already present locally, then builds your `ccairgap:custom-<hash>` image on top.
+
+## Required invariants for replacement Dockerfiles
+
+If you inherit from the published image and only add packages, these are already satisfied. If you replace the base image or override entrypoint/user/home behavior, your custom image must keep four things working or the container won't launch / won't match host file ownership:
 
 1. **`/home/claude` is writable for any runtime UID.** The CLI launches the container with `docker run --user $(id -u):$(id -g)`, and the runtime UID needs to read+execute everything under `$HOME` and create new files there. The bundled Dockerfile achieves this with `chmod -R go+rwX /home/claude` near the end. Don't add a final `USER claude` directive — it's overridden by `--user`, but a stale directive is misleading.
 2. **Agent mount targets exist with permissive perms.** The image must pre-create `/home/claude/.claude/projects`, `/home/claude/.claude/plugins/cache`, `/home/claude/.codex`, and `/home/claude/.codex/sessions`. They must be traversable by the runtime UID.
@@ -25,103 +50,7 @@ Your custom image must keep four things working or the container won't launch / 
 
 The CLI also bind-mounts a per-session `/etc/passwd` and `/etc/group` RO so libc lookups for the runtime UID resolve to "claude" (Node's `os.userInfo()`, git's GECOS read, etc.). You don't have to do anything for this — it happens regardless of which Dockerfile you use — but be aware that any baked `/etc/passwd` modifications are overlaid at runtime.
 
-Simplest safe pattern: copy the stock Dockerfile and add your extras in the middle. The stock file lives at `<ccairgap-repo>/docker/Dockerfile` (or inside the installed npm package under `docker/`).
-
-## Pattern 1 — Extend the stock recipe
-
-Best when you want to add packages without reasoning about the full image layout. Copy stock → add in the middle.
-
-```dockerfile
-FROM node:24-slim
-
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.130.0
-
-# Stock apt packages, kept as-is.
-RUN DEBIAN_FRONTEND=noninteractive apt-get update \
- && apt-get install -y --no-install-recommends \
-      git \
-      git-lfs \
-      curl \
-      jq \
-      rsync \
-      ca-certificates \
-      less \
-      tzdata \
-      vim \
-      python3 \
-      python3-pip \
-      python3-venv \
- && rm -rf /var/lib/apt/lists/*
-
-RUN npm install -g @openai/codex@${CODEX_VERSION}
-
-# --- Project additions ---
-RUN pip3 install --break-system-packages --no-cache-dir uv
-# --- End additions ---
-
-# node:*-slim ships a `node` user at UID/GID 1000; rename in place. The
-# user is cosmetic at runtime — the CLI launches with `--user $(id -u):$(id -g)`,
-# overriding it. See docs/SPEC.md §"Container UID portability".
-RUN groupmod -n claude node \
- && usermod -l claude -d /home/claude -m -s /bin/bash node
-
-ENV HOME=/home/claude
-ENV PATH=/home/claude/.local/bin:$PATH
-
-USER claude
-WORKDIR /home/claude
-RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
-        curl -fsSL https://claude.ai/install.sh | bash; \
-    else \
-        curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
-    fi
-RUN mkdir -p \
-      /home/claude/.claude/projects \
-      /home/claude/.claude/plugins/cache \
-      /home/claude/.codex/sessions
-
-# Make /home/claude writable for any runtime UID. The CLI passes
-# --user $(id -u):$(id -g); that UID needs to read+execute baked content
-# and create new files inside $HOME without owning it. Capital `X`
-# preserves the executable bit on already-executable files.
-USER root
-RUN chmod -R go+rwX /home/claude
-
-RUN mkdir -p /run/ccairgap-clipboard \
- && chmod 1777 /run/ccairgap-clipboard
-COPY entrypoint.sh /usr/local/bin/ccairgap-entrypoint
-RUN chmod 0755 /usr/local/bin/ccairgap-entrypoint
-
-# No final USER directive — `docker run --user` from the CLI sets it.
-WORKDIR /home/claude
-ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
-```
-
-This requires `entrypoint.sh` to sit next to the Dockerfile. Copy it from the ccairgap package (`<node_modules>/ccairgap/docker/entrypoint.sh` or the repo) into your project's `.ccairgap/` dir. `ccairgap init` scaffolds this for you.
-
-## Pattern 2 — `FROM` the already-built ccairgap image
-
-Shorter, but only works after ccairgap has built the base image at least once. Tag is `ccairgap:<cli-version>-<hash8>` (the hash tracks content of `Dockerfile`+`entrypoint.sh`). Custom Dockerfiles of this shape produce a new tag content-addressed from your Dockerfile hash.
-
-```dockerfile
-ARG CCAIRGAP_BASE_TAG
-FROM ccairgap:${CCAIRGAP_BASE_TAG}
-
-USER root
-
-RUN DEBIAN_FRONTEND=noninteractive apt-get update \
- && apt-get install -y --no-install-recommends \
-      python3 \
-      python3-pip \
- && rm -rf /var/lib/apt/lists/*
-
-RUN pip3 install --break-system-packages --no-cache-dir uv
-
-USER claude
-```
-
-Caveat: if the base tag doesn't exist locally (e.g. first run on a new machine), Docker errors. Pattern 1 is portable; Pattern 2 is concise. Pattern 1 is safer for committed config.
+The full stock Dockerfile remains in the npm package under `docker/Dockerfile` for auditing and advanced replacement builds, but it is not the recommended customization surface.
 
 ## Common add-ons
 
@@ -157,11 +86,13 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
  && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g playwright
-RUN npx playwright install chromium   # browsers land in /home/claude/.cache/ms-playwright if done as `claude`
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npm install -g playwright \
+ && npx playwright install chromium \
+ && chmod -R go+rwX /ms-playwright
 ```
 
-Do `npx playwright install` **after** the user switch (`USER claude`) so browsers land in the `claude` user's cache, not root's.
+`PLAYWRIGHT_BROWSERS_PATH` keeps the browser cache outside root's home, and `go+rwX` makes it readable by the runtime UID passed by the CLI.
 
 ### Rust
 
@@ -194,7 +125,7 @@ Installing the Docker CLI inside the container is fine. **Do not** mount `/var/r
 
 ## Pinning Claude Code version
 
-Default is `latest` at build time, which drifts. Pin via `docker-build-arg`:
+Default is `latest` at build time for the bundled Dockerfile, which drifts. Pin via `docker-build-arg` when you are using the bundled Dockerfile directly:
 
 ```yaml
 docker-build-arg:
@@ -202,6 +133,8 @@ docker-build-arg:
 ```
 
 Or environment variable on the host: `CCAIRGAP_CC_VERSION=1.2.3`. Or CLI: `--docker-build-arg CLAUDE_CODE_VERSION=1.2.3`.
+
+For an extension Dockerfile generated by `ccairgap init`, the agent versions are inherited from the `FROM ghcr.io/alfredvc/ccairgap:<tag>` base image. Change that base image tag to move to a different prebuilt ccairgap image.
 
 ## Pinning Codex version
 
@@ -212,13 +145,13 @@ docker-build-arg:
   CODEX_VERSION: "0.130.0"
 ```
 
-Exact unsupported Codex pins are rejected by the image-version policy before launch work in the Codex runtime chunks that consume it. Non-exact inputs such as dist-tags require runtime image contract inspection because the installed version is only known after build or pull.
+Exact unsupported Codex pins are rejected by the image-version policy before launch work in the Codex runtime chunks that consume it. Non-exact inputs such as dist-tags require runtime image contract inspection because the installed version is only known after build or pull. Extension Dockerfiles inherit the Codex version from their `FROM` image.
 
 ## Rebuild semantics
 
 - Built-in image tag: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>`.
 - Custom image tag: `ccairgap:custom-<sha256(dockerfile)[:12]>`. Content-addressed.
-- Source order on launch: local image with the computed tag → registry pull from `ghcr.io/alfredvc/ccairgap:<tag>` (default-Dockerfile only) → local build. `--rebuild` skips the first two steps and forces a build. Custom Dockerfiles (`--dockerfile`) skip registry, so first launch always builds locally.
+- Source order on launch: local image with the computed tag → registry pull from `ghcr.io/alfredvc/ccairgap:<tag>` (default-Dockerfile only) → local build. `--rebuild` skips the first two steps and forces a build. Custom Dockerfiles (`--dockerfile`) produce a local custom image; when they `FROM ghcr.io/alfredvc/ccairgap:<tag>`, Docker pulls that base image during the build if needed.
 - Override the registry repo with `CCAIRGAP_REGISTRY=<host>/<owner>/<repo>` (e.g. for forks or private mirrors).
 - Image age is never auto-rebuilt. `ccairgap doctor` warns if > 14 days old.
 

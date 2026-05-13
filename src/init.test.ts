@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initCmd, resolveInitTarget } from "./subcommands.js";
-import { defaultDockerfile, defaultEntrypoint } from "./image.js";
+import { computeTag, defaultDockerfile, registryRef } from "./image.js";
 
 let root: string;
 
@@ -94,7 +94,14 @@ describe("resolveInitTarget", () => {
 });
 
 describe("initCmd", () => {
-  it("writes Dockerfile, entrypoint.sh, and config.yaml into target dir", () => {
+  function expectedExtensionDockerfile(): string {
+    const defaultTag = computeTag(defaultDockerfile(), defaultDockerfile());
+    const ref = registryRef(defaultTag);
+    if (ref === undefined) throw new Error("default image registry ref unavailable");
+    return `FROM ${ref}\n`;
+  }
+
+  it("writes an extension Dockerfile and config.yaml into target dir", () => {
     const repo = join(root, "repo");
     mkdirSync(repo);
     initGitRepo(repo);
@@ -103,11 +110,9 @@ describe("initCmd", () => {
 
     const target = join(repo, ".ccairgap");
     expect(readFileSync(join(target, "Dockerfile"), "utf8")).toBe(
-      readFileSync(defaultDockerfile(), "utf8"),
+      expectedExtensionDockerfile(),
     );
-    expect(readFileSync(join(target, "entrypoint.sh"), "utf8")).toBe(
-      readFileSync(defaultEntrypoint(), "utf8"),
-    );
+    expect(existsSync(join(target, "entrypoint.sh"))).toBe(false);
     expect(readFileSync(join(target, "config.yaml"), "utf8")).toContain(
       "dockerfile: Dockerfile",
     );
@@ -128,7 +133,7 @@ describe("initCmd", () => {
     expect(readFileSync(join(target, "Dockerfile"), "utf8")).toBe("USER edited\n");
   });
 
-  it("--force overwrites all three files unconditionally", () => {
+  it("--force overwrites Dockerfile and config.yaml without touching legacy entrypoint.sh", () => {
     const repo = join(root, "repo");
     mkdirSync(repo);
     initGitRepo(repo);
@@ -141,10 +146,10 @@ describe("initCmd", () => {
     initCmd({ cwd: repo, force: true });
 
     expect(readFileSync(join(target, "Dockerfile"), "utf8")).toBe(
-      readFileSync(defaultDockerfile(), "utf8"),
+      expectedExtensionDockerfile(),
     );
     expect(readFileSync(join(target, "entrypoint.sh"), "utf8")).toBe(
-      readFileSync(defaultEntrypoint(), "utf8"),
+      "#!/bin/sh\necho user\n",
     );
     // config.yaml is fully rewritten — prior keys are gone.
     const cfg = readFileSync(join(target, "config.yaml"), "utf8");

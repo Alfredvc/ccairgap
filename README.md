@@ -110,7 +110,7 @@ Full subcommand reference: [docs/subcommands.md](docs/subcommands.md).
 
 ## Agent Skills
 
-Install the `ccairgap-configure` skill so Claude (on your host) can set up ccairgap for a new project — detect which host binaries the workflow needs, generate a custom `Dockerfile`, and write `.ccairgap/config.yaml` with the right `--ro`, hook, and MCP entries.
+Install the `ccairgap-configure` skill so Claude (on your host) can set up ccairgap for a new project — detect which host binaries the workflow needs, generate a small extension `Dockerfile`, and write `.ccairgap/config.yaml` with the right `--ro`, hook, and MCP entries.
 
 ```bash
 npx skills add alfredvc/ccairgap

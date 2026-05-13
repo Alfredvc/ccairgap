@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -30,6 +29,7 @@ import {
   defaultEntrypoint,
   computeTag,
   imageExistsLocally,
+  registryRef,
 } from "./image.js";
 import { probeCredentials } from "./credentials.js";
 import { checkHostBinary } from "./binaries.js";
@@ -738,11 +738,22 @@ function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isCurrentExtensionDockerfile(content: string): boolean {
+  const tag = computeTag(defaultDockerfile(), defaultDockerfile()).slice("ccairgap:".length);
+  return new RegExp(`^(?:\\s*#.*\\n|\\s*\\n)*FROM \\S+:${escapeRegExp(tag)}\\s*$`).test(
+    content,
+  );
+}
+
 /**
- * Hash-compare sidecar Dockerfile / entrypoint.sh under
- * <git-root>/.ccairgap/ against the bundled copies. Returns undefined
- * when the sidecar dir does not exist (no drift to report). Returns a single
- * check summarizing per-file drift otherwise.
+ * Check sidecar Dockerfile / entrypoint.sh under <git-root>/.ccairgap/.
+ * The generated extension Dockerfile is current when it points at this CLI's
+ * default published image tag; other sidecars are hash-compared against the
+ * bundled copies. Returns undefined when the sidecar dir does not exist.
  */
 function checkSidecarDrift(): DoctorCheck | undefined {
   let gitRoot: string | undefined;
@@ -768,14 +779,18 @@ function checkSidecarDrift(): DoctorCheck | undefined {
     const sidecar = join(sidecarDir, name);
     if (!existsSync(sidecar)) continue;
     anyPresent = true;
-    if (sha256File(sidecar) !== sha256File(bundled)) diverged.push(name);
+    const content = readFileSync(sidecar, "utf8");
+    if (name === "Dockerfile" && isCurrentExtensionDockerfile(content)) continue;
+    if (createHash("sha256").update(content).digest("hex") !== sha256File(bundled)) {
+      diverged.push(name);
+    }
   }
   if (!anyPresent) return undefined;
   if (diverged.length === 0) {
     return {
       name: "sidecar docker assets",
       ok: true,
-      detail: `${sidecarDir} matches bundled copies`,
+      detail: `${sidecarDir} matches current CLI docker assets`,
     };
   }
   return {
@@ -783,7 +798,7 @@ function checkSidecarDrift(): DoctorCheck | undefined {
     ok: true,
     warn: true,
     detail:
-      `${diverged.join(", ")} under ${sidecarDir} diverge from bundled ` +
+      `${diverged.join(", ")} under ${sidecarDir} differ from current CLI docker assets ` +
       `(CLI v${cliVersion()}). Re-run \`ccairgap init --force\` to reset, or ` +
       `keep local edits.`,
   };
@@ -862,11 +877,20 @@ function checkUserWideConfig(): DoctorCheck[] {
 function defaultInitConfigYaml(): string {
   return [
     "# ccairgap config — see README.md §\"Config file\" for all keys.",
-    "# Sidecar Dockerfile lives next to this file; the entry below makes",
-    "# ccairgap build from it (image tag becomes ccairgap:custom-<hash>).",
+    "# Sidecar Dockerfile lives next to this file and extends the published",
+    "# ccairgap image. Add only project-specific image changes there.",
     "dockerfile: Dockerfile",
     "",
   ].join("\n");
+}
+
+/** Minimal Dockerfile written by `ccairgap init` for image extension. */
+function defaultInitDockerfile(): string {
+  const ref = registryRef(computeTag(defaultDockerfile(), defaultDockerfile()));
+  if (ref === undefined) {
+    throw new Error("could not resolve default ccairgap registry image ref");
+  }
+  return `FROM ${ref}\n`;
 }
 
 export interface InitOptions {
@@ -917,7 +941,7 @@ export function resolveInitTarget(opts: InitOptions): string {
   );
 }
 
-/** Write bundled Dockerfile + entrypoint.sh + a minimal config.yaml. */
+/** Write an extension Dockerfile + minimal config.yaml. */
 export function initCmd(opts: InitOptions): void {
   if (opts.user) {
     initUserWide(opts);
@@ -926,7 +950,6 @@ export function initCmd(opts: InitOptions): void {
   const targetDir = resolveInitTarget(opts);
   const targets = {
     dockerfile: join(targetDir, "Dockerfile"),
-    entrypoint: join(targetDir, "entrypoint.sh"),
     config: join(targetDir, "config.yaml"),
   };
 
@@ -935,21 +958,19 @@ export function initCmd(opts: InitOptions): void {
     if (existing.length > 0) {
       throw new Error(
         `refusing to overwrite existing files:\n  ${existing.join("\n  ")}\n` +
-          `Re-run with --force to overwrite all three (destructive; no merge).`,
+          `Re-run with --force to overwrite both files (destructive; no merge).`,
       );
     }
   }
 
   mkdirSync(targetDir, { recursive: true });
-  copyFileSync(defaultDockerfile(), targets.dockerfile);
-  copyFileSync(defaultEntrypoint(), targets.entrypoint);
+  writeFileSync(targets.dockerfile, defaultInitDockerfile());
   writeFileSync(targets.config, defaultInitConfigYaml());
 
   console.log(`wrote ${targets.dockerfile}`);
-  console.log(`wrote ${targets.entrypoint}`);
   console.log(`wrote ${targets.config}`);
   console.log(
-    `\nedit ${basename(targets.dockerfile)} to customize; next \`ccairgap\` ` +
+    `\nadd project-specific image changes to ${basename(targets.dockerfile)}; next \`ccairgap\` ` +
       `launch rebuilds as \`ccairgap:custom-<hash>\`.`,
   );
 }

@@ -613,10 +613,10 @@ async function main() {
   program
     .command("init")
     .description(
-      "materialize the bundled Dockerfile, entrypoint.sh, and a minimal " +
+      "materialize an extension Dockerfile and a minimal " +
         "config.yaml into <git-root>/.ccairgap/ (or <git-root>/.config/ccairgap/ " +
         "when that dir already exists, or dirname(--config) if --config is " +
-        "passed). Lets you customize the container image without forking the repo.",
+        "passed). Lets you customize the container image without copying the raw bundled Dockerfile.",
     )
     .option(
       "--config <path>",
@@ -626,7 +626,7 @@ async function main() {
     )
     .option(
       "--force",
-      "overwrite existing Dockerfile / entrypoint.sh / config.yaml (destructive; no merge)",
+      "overwrite existing Dockerfile / config.yaml (destructive; no merge)",
     )
     .option("--user", "scaffold user-wide config at ~/.config/ccairgap/ instead of project dir")
     .action((opts) => {

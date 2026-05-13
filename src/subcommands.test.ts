@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 import { writeManifest, type Manifest } from "./manifest.js";
 import { resolveUserWideDir } from "./userConfig.js";
+import { computeTag, defaultDockerfile, registryRef } from "./image.js";
 
 let root: string;
 let fakeBinDir: string;
@@ -580,6 +581,56 @@ describe("recover Codex rollout handoff", () => {
     ).toBe(true);
     expect(existsSync(join(envHome, "sessions"))).toBe(false);
     expect(existsSync(sd)).toBe(false);
+  });
+});
+
+describe("doctor: sidecar drift", () => {
+  function stubAllDoctorDeps(): void {
+    const script = [
+      'case "$1" in',
+      '  version) echo "27.0.0" ;;',
+      "  ps) : ;;",
+      "  image)",
+      '    case "$2" in',
+      '      inspect) echo "2099-01-01T00:00:00Z" ;;',
+      "      ls) : ;;",
+      "    esac",
+      "    ;;",
+      "esac",
+    ].join("\n");
+    stubDocker(script);
+  }
+
+  function expectedExtensionDockerfile(): string {
+    const defaultTag = computeTag(defaultDockerfile(), defaultDockerfile());
+    const ref = registryRef(defaultTag);
+    if (ref === undefined) throw new Error("default image registry ref unavailable");
+    return `FROM ${ref}\n`;
+  }
+
+  it("treats the current generated extension Dockerfile as up to date", async () => {
+    const repo = join(root, "repo");
+    mkdirSync(join(repo, ".ccairgap"), { recursive: true });
+    execaSync("git", ["init", "-q"], { cwd: repo });
+    writeFileSync(
+      join(repo, ".ccairgap", "Dockerfile"),
+      `# copied from the skill template\n\n${expectedExtensionDockerfile()}`,
+    );
+
+    stubAllDoctorDeps();
+    const oldCwd = process.cwd();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      process.chdir(repo);
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+      expect(lines).toMatch(/\[OK\] sidecar docker assets:/);
+      expect(lines).not.toMatch(/\[WARN\] sidecar docker assets:/);
+    } finally {
+      process.chdir(oldCwd);
+      logSpy.mockRestore();
+    }
   });
 });
 
