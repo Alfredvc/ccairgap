@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.6.0](https://github.com/Alfredvc/ccairgap/compare/v0.5.2...v0.6.0) (2026-05-13)
+
+
+### Features
+
+* add `ccairgap attach <id>` to spawn second claude in running container ([b5fb432](https://github.com/Alfredvc/ccairgap/commit/b5fb43255d47a42688ad69025eea1b3aa6799130))
+* **agent:** add selected agent config surface ([3e81335](https://github.com/Alfredvc/ccairgap/commit/3e8133577a4ef410ca39cd092f6105c92c755c08))
+* **auth:** propagate host-driven `/login` account swap to running container ([001d4f6](https://github.com/Alfredvc/ccairgap/commit/001d4f69e899b87721c44e7dd733b67e02d63dc4))
+* **cli:** wire user-wide layer + --no-user-config ([d30897e](https://github.com/Alfredvc/ccairgap/commit/d30897e18071bf95ddca13885804d7cc6ba82ed0))
+* **codex:** materialize sanitized codex state ([7f07f71](https://github.com/Alfredvc/ccairgap/commit/7f07f71226ad90f7aa9c0592741cba9b27ac8cb7))
+* **codex:** validate selected codex args ([75657f5](https://github.com/Alfredvc/ccairgap/commit/75657f5fcdd141ded196d2629531fc515df48b38))
+* **config:** add resolveUserWideConfigPaths ([4d0183c](https://github.com/Alfredvc/ccairgap/commit/4d0183c28843c20152081f4220abe13c31bed89f))
+* **config:** dotfiles-repo realpath collision check ([0e95432](https://github.com/Alfredvc/ccairgap/commit/0e954327d9bc882117ec46c48a85b0f814196b9e))
+* **config:** layered merge with provenance tracking ([9ae188e](https://github.com/Alfredvc/ccairgap/commit/9ae188e043dbec72fe67cc3ba5084b060304ed19))
+* **docker-run-arg:** add integration safe-flag allowlist ([5f324b5](https://github.com/Alfredvc/ccairgap/commit/5f324b521f25a6b550e6b1da2bc264a85b4f6088))
+* **doctor:** user-wide config subsection ([e3476d9](https://github.com/Alfredvc/ccairgap/commit/e3476d9934de5699817192056d4b1e4f71a2d2db))
+* **entrypoint:** user-wide overlay before project; emit CCAIRGAP_USER_DIR ([806c1ac](https://github.com/Alfredvc/ccairgap/commit/806c1ac2ea48c6308dcf0119cbbe5011f4f56ca4))
+* **handoff:** copy codex rollout sessions safely ([58a222f](https://github.com/Alfredvc/ccairgap/commit/58a222f200ccb3db6243904d2d9e14c4957a2bee))
+* **init:** add --user flag for user-wide scaffolding ([fd501df](https://github.com/Alfredvc/ccairgap/commit/fd501df225626f88f9952945ad379c7f7d4d23da))
+* **init:** scaffold extension Dockerfile ([21784a2](https://github.com/Alfredvc/ccairgap/commit/21784a2ae2557029271240d5ff2537c25514787a))
+* **inspect:** expose layered config + provenance ([705ea59](https://github.com/Alfredvc/ccairgap/commit/705ea59ffc1f6091d4578ea9e3da87712d0ffae9))
+* **inspect:** honor --no-user-config and --bare ([a2936cc](https://github.com/Alfredvc/ccairgap/commit/a2936cc4616d8efb685ced0d090e96fcd21d8a8e))
+* **inspect:** render object values as K=V per line in RESOLVED CONFIG ([94a8734](https://github.com/Alfredvc/ccairgap/commit/94a87347ce1fd812567b633ae91f9957013a24cf))
+* **integration:** allow bare `-e KEY` env passthrough in drop-ins ([ebf43ba](https://github.com/Alfredvc/ccairgap/commit/ebf43ba73bf8add6ec7b1479b9da2bc8cdbd77e0))
+* **launch:** enable selected codex runtime ([d7d8777](https://github.com/Alfredvc/ccairgap/commit/d7d877754f448a3e1f96e11f673975cf97141138))
+* **mounts:** add codex state mount inputs ([38daf2a](https://github.com/Alfredvc/ccairgap/commit/38daf2a97f06106db39773a50360327c684b9672))
+* **mounts:** emit /ccairgap-user-dir mount ([9408bae](https://github.com/Alfredvc/ccairgap/commit/9408baeab36aecbfec7924110001332faedb5339))
+* **mounts:** reserve /ccairgap-user-dir + MountSource arm ([a999df5](https://github.com/Alfredvc/ccairgap/commit/a999df5e8e3fb6a7e0f015b8217ec07c1a087449))
+* **runtime:** add dual-agent image contract ([adaf86a](https://github.com/Alfredvc/ccairgap/commit/adaf86a12c14216a7f55f90ef491174113344afc))
+* **subcommands:** make agent subcommands codex-aware ([dc1fcad](https://github.com/Alfredvc/ccairgap/commit/dc1fcad47af5ceddf66e4699b7733035dbe11591))
+* **user-config:** add resolveUserWideDir helper ([411f3dd](https://github.com/Alfredvc/ccairgap/commit/411f3dd6ee804fe6f003617f9723f46d140be963))
+* **user-config:** integration drop-in loader with key + flag allowlists ([61f0715](https://github.com/Alfredvc/ccairgap/commit/61f071594f669a5c875d8eb50cdb5d34aa005a87))
+* **user-config:** load + resolve user-wide config.yaml ([ada8a24](https://github.com/Alfredvc/ccairgap/commit/ada8a2491c93cb88aba573109411f0edef34c46b))
+
+
+### Bug Fixes
+
+* **auth:** keep runtime watcher mirroring host across throws and host-side writes ([6800d79](https://github.com/Alfredvc/ccairgap/commit/6800d795c521f144ed23c61055caa7fd20931724))
+* **codex:** copy installed skill trees verbatim, drop dot-files ([9e6d47d](https://github.com/Alfredvc/ccairgap/commit/9e6d47dcbe73b021a2a461183a14b2ef9b7f82a6))
+* **codex:** drop plan-tier auth gate ([8b55f1c](https://github.com/Alfredvc/ccairgap/commit/8b55f1caee791333825aabdb6bc56d84287c931a))
+* **codex:** materialize guidance symlinks ([0c27d1e](https://github.com/Alfredvc/ccairgap/commit/0c27d1efa0f36abf2c67a9f3e44f206068c46d2f))
+* **config:** collision detection works under --no-user-config ([a710e02](https://github.com/Alfredvc/ccairgap/commit/a710e02b142433a2a89bd85714deb76bb3e8250c))
+* **doctor:** split user-wide policy bypass from overlay files ([65d9bae](https://github.com/Alfredvc/ccairgap/commit/65d9baea297007b8c67aba20e012f954f824bab1))
+* **entrypoint:** match overlay skills rsync to main rsync (.venv excludes + exit-23 tolerance) ([7a9dfe5](https://github.com/Alfredvc/ccairgap/commit/7a9dfe59cd93ee3feee484f1db623c17009aed20))
+* **inspect:** look up hooks.enable/mcp.enable provenance under dotted key ([595b068](https://github.com/Alfredvc/ccairgap/commit/595b0680c069a6e454479b831b71191b4e82ebd2))
+* **launch:** pre-materialize absolute symlinks under ~/.claude/ host-side ([854f29f](https://github.com/Alfredvc/ccairgap/commit/854f29fa067722700ee4bb5cfcdc60e6efce8fd6))
+* **release:** close final review blockers ([1a1ba17](https://github.com/Alfredvc/ccairgap/commit/1a1ba17e5c28ba1b46dbfd392c0ca65369680e5c))
+* **resume:** encode cwd like Claude Code's sanitizePath ([582c0ff](https://github.com/Alfredvc/ccairgap/commit/582c0ffa33c0e1a5bcdeb31ee7c96ca5a45cdb8f))
+
+
+### Refactors
+
+* **cli:** drop duplicate userWideDir existence gate ([ec356fc](https://github.com/Alfredvc/ccairgap/commit/ec356fc92f7d7e432bb7ca8d69d150ff91500bc9))
+* **handoff:** one log line per main session id, skip sidecars ([673afa7](https://github.com/Alfredvc/ccairgap/commit/673afa704c7b0aa235c14f5b3b680a10972d02b4))
+* **mounts:** one kind per line in MountSource union ([4dd68c4](https://github.com/Alfredvc/ccairgap/commit/4dd68c43aaf93ee91ca9f7ef977bc73ce83da0ea))
+
 ## [0.5.2](https://github.com/Alfredvc/ccairgap/compare/v0.5.1...v0.5.2) (2026-05-01)
 
 

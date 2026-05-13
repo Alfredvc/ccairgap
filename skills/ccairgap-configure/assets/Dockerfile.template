@@ -5,4 +5,4 @@
 # To customize for your project, copy this file to <git-root>/.ccairgap/Dockerfile.
 # Add only project-specific image changes below the FROM line.
 
-FROM ghcr.io/alfredvc/ccairgap:0.5.2-ee680ee3
+FROM ghcr.io/alfredvc/ccairgap:0.6.0-ee680ee3
