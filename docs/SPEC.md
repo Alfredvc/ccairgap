@@ -98,7 +98,7 @@ Default (no subcommand): start a new session.
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
-| `--agent <claude\|codex>` | no | Select the agent provider. Default is `claude`. In the current staged build, `codex` is accepted by CLI/config parsing but launch is rejected before session, auth, image, Docker, or handoff side effects. |
+| `--agent <claude\|codex>` | no | Select the agent provider. Default is `claude`. `codex` runs Codex CLI inside the ccairgap container with selected-agent validation, sanitized session-local Codex state, selected-only auth behavior, and image contract inspection. |
 | `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `ccairgap/<id>` created. If omitted, defaults to the current working directory (must be a git repo). |
 | `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `ccairgap/<id>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
@@ -108,9 +108,9 @@ Default (no subcommand): start a new session.
 | `--base <ref>` | no | Base ref for `ccairgap/<id>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
 | `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm ccairgap-<id>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
-| `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code. |
+| `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code or `CODEX_VERSION=0.130.0` to pin Codex. Exact unsupported Codex versions fail before image pull/build; non-exact values still require post-resolution image contract inspection. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
-| `-p, --print <prompt>` | no | Run Claude Code in non-interactive print mode: `claude -p "<prompt>"` instead of the REPL. The container still runs with full permissions and all mounts; it just does a single prompt and exits. Useful for smoke tests and scripted runs. |
+| `-p, --print <prompt>` | no | Run the selected agent in non-interactive print mode: Claude uses `claude -p "<prompt>"`; Codex uses `codex exec`. For selected Codex, host `CODEX_API_KEY` is forwarded only in print mode and can satisfy selected auth for that launch. |
 | `-r, --resume <id-or-name>` | no | Resume an existing Claude session inside the sandbox. Accepts **either** a session UUID **or** the session's custom title (what `claude` prints on exit). Titles are matched case-insensitively and must be exact; 0 or >1 matches abort launch with a candidate list. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` (plus the optional `<uuid>/` subagents dir) into `$SESSION/transcripts/` before `docker run`. Inside the container, `claude -r "$CCAIRGAP_RESUME"` always uses the resolved UUID (not the raw name). Requires a workspace repo; errors under `--bare` / ro-only. Works with both host-born and ccairgap-born sessions — no separate UX per origin. Config key: `resume: <id-or-name>` (scalar). |
 | `-n, --name <name>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix, so the final `<id>` is `<name>-<4hex>`. Drives the sandbox branch (`ccairgap/<id>`), docker container (`ccairgap-<id>`), session dir, and Claude's session label (`-n "<name>"`, rewritten to `[ccairgap] <name>` by the UserPromptSubmit hook on first prompt; see §"Container entrypoint" for the full precedence). Validated once via `git check-ref-format refs/heads/ccairgap/<id>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref. On collision with an existing session dir, container (running or stopped), or branch in the workspace repo (`--repo`), the hex suffix is re-rolled up to 8 times before aborting. `--extra-repo` branches are not pre-checked, so a stale branch in one of them surfaces at fetch time on exit. Omitted, a random `<adj>-<noun>` prefix is generated — see §"Session identifier". |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
@@ -118,9 +118,22 @@ Default (no subcommand): start a new session.
 | `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
 | `--no-auto-memory` | no | Kill switch for the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var. When set, ccairgap does not surface the host auto-memory directory into the container; Claude Code falls back to its in-container default path under `~/.claude/projects/<sanitized>/memory/` which only exists for the current session (discarded on exit). Config key: `no-auto-memory: true`. |
 | `--bare` | no | Launch a "naked" container: no config-file loading, no workspace-repo inference from cwd. User mounts whatever they need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. All Claude config flow is unchanged (`~/.claude` RO mount, credentials, plugins cache, etc.). See §"Bare mode". |
-| `-- <selected-agent-args…>` | no | Tokens after `--` are the selected-agent passthrough tail. With `--agent claude`, they are forwarded verbatim to the in-container `claude` invocation, subject to the Claude denylist (see §"Selected-agent arg passthrough"). With `--agent codex`, they are reserved for Codex passthrough, but launch is still rejected before runtime in this build. |
+| `-- <selected-agent-args…>` | no | Tokens after `--` are the selected-agent passthrough tail. With `--agent claude`, they are forwarded verbatim to the in-container `claude` invocation, subject to the Claude denylist (see §"Selected-agent arg passthrough"). With `--agent codex`, they are forwarded to Codex after fail-closed allowlist validation and container-visible `--image` checks. |
 
 No `--auth` flag. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
+
+### Codex launch semantics
+
+Claude remains the default selected agent. When `--agent codex` or `agent: codex` is selected, launch validation changes before any session directory is created:
+
+- A workspace repo is required. `--agent codex --bare --repo <path>` is valid, but ro-only/no-repo launches and `--agent codex --bare` without `--repo` fail before side effects.
+- `--resume` is rejected before side effects. Resume remains Claude-only until Codex resume semantics are designed.
+- Codex passthrough args are validated with the Codex allowlist, and `--image` values must already be visible through a workspace repo, `--ro`, `--cp`, `--sync`, or `--mount`.
+- Exact unsupported `CODEX_VERSION` build args fail before image pull/build. After image resolution, ccairgap inspects the image for both agent binaries, the supported Codex version, and required Codex mount targets.
+- Selected Codex auth is fatal unless `--print` has a host `CODEX_API_KEY`. In that print-mode API-key case, `$CODEX_HOME/auth.json` is advisory and copied only if it sanitizes safely.
+- Claude credentials may be copied as advisory peer state for a Codex-selected launch, but selected Codex never runs the Claude pre-launch refresh path and never starts the runtime auth-refresh watcher.
+
+At Docker execution, ccairgap passes `CCAIRGAP_AGENT=codex`, `CODEX_HOME=/home/claude/.codex`, and the validated Codex argv tail. The entrypoint runs `codex` for interactive mode and `codex exec` for print mode.
 
 **Subcommands:**
 
@@ -205,7 +218,7 @@ YAML file that mirrors launch flags. Default locations (checked in order): `<git
 
 - **Load:** the CLI walks up from `cwd` to find the git root; it checks `<git-root>/.ccairgap/config.yaml` first, then `<git-root>/.config/ccairgap/config.yaml`; the first one found is loaded. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
 - **Profiles:** `--profile <name>` loads `<git-root>/.ccairgap/<name>.config.yaml` (fallback `<git-root>/.config/ccairgap/<name>.config.yaml`) instead of the default `config.yaml`. `--profile default` is equivalent to no flag (loads `config.yaml`). Missing profile file is a hard error (unlike the silent walk-fallback for the default). Profile names must match `[A-Za-z0-9._-]+`. `--config` and `--profile` are mutually exclusive. Relative-path anchoring (see §"Relative path resolution") treats profile files identically to `config.yaml` — same canonical-dir detection, so `repo: .` in `web.config.yaml` still means the git root. Profiles are a filename lookup only: no inheritance, no merge between profiles.
-- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth. `agent: codex` and `codex-args` are accepted as staged surfaces, but Codex launch is disabled before side effects until the runtime chunks land.
+- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth. `agent: codex` selects Codex runtime and `codex-args` supplies Codex passthrough tokens.
 - **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`, `codex-args`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
 - **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
 
@@ -227,7 +240,7 @@ Implementation: `src/config.ts` `resolveConfigPaths` handles `repo`/`extra-repo`
 # <git-root>/.ccairgap/config.yaml  (or .config/ccairgap/config.yaml)
 
 # Workspace-space (anchored on git root)
-agent: claude             # default; `codex` is parsed but runtime-disabled in this build
+agent: claude             # default; use `codex` to run Codex CLI instead
 repo: .                 # optional; defaults to git root anyway
 extra-repo:
   - ../sibling          # sibling of git root
@@ -261,8 +274,7 @@ claude-args:
   - --effort
   - high
 
-# Reserved for future Codex runtime passthrough. Parsed and layered now;
-# launch still rejects agent: codex before side effects in this build.
+# Forwarded to Codex when `agent: codex`, after fail-closed validation.
 codex-args:
   - --model
   - gpt-5

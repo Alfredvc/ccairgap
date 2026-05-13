@@ -6,7 +6,7 @@ Codex is an opt-in selected agent surface:
 ccairgap --agent codex --repo .
 ```
 
-Codex runtime launch is still staged. In this build, `agent=codex` is parsed and Codex passthrough args are validated, then launch exits before session creation, Docker, auth copying, or handoff.
+Claude remains the default. When Codex is selected, ccairgap validates the Codex workspace, args, expected image version, and selected auth before creating a session. Codex requires a workspace repo; `--agent codex --bare --repo <path>` is valid, but ro-only/no-repo launches and `--agent codex --bare` without `--repo` are rejected before side effects. `--resume` is currently Claude-only and is rejected for Codex before session creation.
 
 ## Passthrough args
 
@@ -43,11 +43,11 @@ Unknown flags fail closed until they are reviewed against the supported Codex CL
 
 ## Images
 
-Codex `--image` values are not auto-mounted. Each image path must already be container-visible through a workspace repo, `--ro`, `--cp`, `--sync`, `--mount`, or another ccairgap-controlled mount. Host-only paths fail before the staged runtime-disabled message.
+Codex `--image` values are not auto-mounted. Each image path must already be container-visible through a workspace repo, `--ro`, `--cp`, `--sync`, `--mount`, or another ccairgap-controlled mount. Host-only paths fail before session creation.
 
 ## Host state preparation
 
-Codex state preparation is implemented but not wired into runtime launch until the later launch chunk. The prepared state is session-local:
+Codex state preparation is session-local:
 
 - Host `$CODEX_HOME` is resolved at launch time, or defaults to `~/.codex`, and the absolute host path is the value later recorded in manifests.
 - `$CODEX_HOME/auth.json` is parsed and sanitized into `$SESSION/codex-auth/auth.json` with mode `0600` when safe.
@@ -57,6 +57,14 @@ Codex state preparation is implemented but not wired into runtime launch until t
 API-key file auth keeps only `OPENAI_API_KEY`. ChatGPT token file auth blanks `tokens.refresh_token` and requires a usable access token or fresh `last_refresh` inside ccairgap's safety buffer. `agent_identity`, keyring-only, ephemeral, missing, refresh-required, managed-eligible, unknown, and unparsable token auth fail for selected Codex and are warning-only for advisory Codex state.
 
 Codex auth is copied in, never copied out. Runtime writes to `auth.json`, logs, history, SQLite state, memories, themes, plugin data, and marketplace data remain session-local.
+
+In print mode, `CODEX_API_KEY` from the host environment is forwarded into the container only for `--agent codex -p/--print`. That print-mode API key is enough selected auth for launch; any host `$CODEX_HOME/auth.json` is then treated as advisory state and is copied only if it passes the same sanitization checks.
+
+## Runtime command
+
+ccairgap sets `CCAIRGAP_AGENT=codex` and `CODEX_HOME=/home/claude/.codex` for the container. Interactive mode executes Codex through the unified entrypoint as `codex ...`; print mode executes `codex exec ...`. User passthrough tokens appear after the image tag in the Docker argv and are validated before Docker starts.
+
+Before Docker execution, ccairgap inspects the resolved image for both agent binaries, supported Codex version, and required Codex mount targets. Exact unsupported `CODEX_VERSION` build args fail even earlier, before pull or build.
 
 ## Config and guidance policy
 

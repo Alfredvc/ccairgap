@@ -10,7 +10,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 
 | YAML key | Type | Equivalent flag | Notes |
 |----------|------|-----------------|-------|
-| `agent` | `claude` or `codex` | `--agent` | Default `claude`. `codex` is accepted by config and CLI, but launch is rejected before side effects until Codex runtime support lands. |
+| `agent` | `claude` or `codex` | `--agent` | Default `claude`. `codex` opts into Codex CLI runtime with pre-side-effect workspace, arg, image-version, and auth validation. |
 | `repo` | string | `--repo` | Workspace repo. Single path. **Optional** — defaults to the git root containing the config. Relative → resolved against the **workspace anchor**. |
 | `extra-repo` | `[string]` | `--extra-repo` (repeat) | Additional repos mounted + cloned. Same anchor as `repo`. Not the workspace. |
 | `ro` | `[string]` | `--ro` (repeat) | RO bind mounts. Any path. Same anchor as `repo`. |
@@ -29,7 +29,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `docker-run-arg` | `[string]` | `--docker-run-arg` (repeat) | Raw docker tokens, shell-split. See [docker-run-args.md](docker-run-args.md). |
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |
 | `claude-args` | `[string]` | `-- <token> …` (tail) | Tokens forwarded verbatim to `claude` inside the container, subject to the denylist. Config first, CLI `--` tail appended. |
-| `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens reserved for Codex passthrough. They are parsed and layered now, but Codex launch is still disabled before runtime in this build. |
+| `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens forwarded to Codex inside the container after fail-closed allowlist validation. Config first, CLI `--` tail appended. |
 | `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
 | `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |

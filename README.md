@@ -47,7 +47,7 @@ npm i -g ccairgap
 
 **Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Full reference: [docs/completion.md](docs/completion.md).
 
-**Agent selection:** Claude is the default. `--agent codex` and `agent: codex` are accepted as staged configuration, but Codex runtime launch is still rejected before side effects until the Codex support migration is complete.
+**Agent selection:** Claude is the default. `--agent codex` and `agent: codex` opt into Codex CLI inside the same ccairgap sandbox. Codex launches require a workspace repo and use sanitized session-local Codex state.
 
 ## Quick start
 
@@ -79,6 +79,9 @@ ccairgap --repo ~/src/foo --extra-repo ~/src/bar
 
 # Hand it a task and walk away
 ccairgap -p "add login flow"
+
+# Use Codex instead of Claude
+ccairgap --agent codex --repo .
 
 # Resume a session — UUID or the session name claude prints on exit
 ccairgap -r 01234567-89ab-cdef-0123-456789abcdef

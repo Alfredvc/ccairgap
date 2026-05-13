@@ -41,4 +41,6 @@ Failure surfacing inside the TUI: 3 consecutive failures, or any failure under 1
 
 ## Codex auth
 
-Codex auth does not use a host refresh path in ccairgap. Safe file auth from `$CODEX_HOME/auth.json` is sanitized into `$SESSION/codex-auth/auth.json` with mode `0600`. API-key file auth keeps only `OPENAI_API_KEY`; ChatGPT token auth blanks `tokens.refresh_token` and must be usable without immediate refresh. Unsupported, refresh-required, managed-eligible, unknown, or unparsable Codex auth is fatal only when Codex is selected and warning-only when Codex is advisory state.
+Codex auth does not use a host refresh path in ccairgap, and selecting Codex never starts the Claude runtime refresh watcher. Safe file auth from `$CODEX_HOME/auth.json` is sanitized into `$SESSION/codex-auth/auth.json` with mode `0600`. API-key file auth keeps only `OPENAI_API_KEY`; ChatGPT token auth blanks `tokens.refresh_token` and must be usable without immediate refresh. Unsupported, refresh-required, managed-eligible, unknown, or unparsable Codex auth is fatal only when Codex is selected and warning-only when Codex is advisory state.
+
+For `--agent codex -p/--print`, host `CODEX_API_KEY` is forwarded into Docker and satisfies selected Codex auth for that launch. In that mode `$CODEX_HOME/auth.json` is advisory: ccairgap copies it only if it is safe, otherwise it emits a warning and continues.

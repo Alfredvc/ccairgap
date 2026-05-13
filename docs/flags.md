@@ -4,7 +4,7 @@
 |------|---------|------------|-------------|
 | `--config <path>` | `<git-root>/.ccairgap/config.yaml` (fallback: `<git-root>/.config/ccairgap/config.yaml`) | no | YAML config file. See [config.md](config.md). |
 | `--profile <name>` | — | no | Named config under the canonical dir: `default` = `config.yaml`, any other `<name>` = `<name>.config.yaml`. Missing profile file is a hard error. Mutually exclusive with `--config`. |
-| `--agent <claude\|codex>` | `claude` | no | Select the agent provider. `claude` is the default. `codex` is accepted by the CLI/config surface and its passthrough args are validated, but launch is rejected before side effects until Codex runtime support lands. See [codex.md](codex.md). |
+| `--agent <claude\|codex>` | `claude` | no | Select the agent provider. `claude` is the default. `codex` runs Codex CLI with sanitized session-local Codex state and selected-only auth handling. See [codex.md](codex.md). |
 | `--repo <path>` | cwd (if git repo) | no | Host repo exposed as the workspace (container cwd). Cloned `--shared`; branch `ccairgap/<id>` created on exit. |
 | `--extra-repo <path>` | — | yes | Additional repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | — | yes | Extra read-only bind mount. |
@@ -14,11 +14,11 @@
 | `--base <ref>` | HEAD of each repo | no | Base ref for `ccairgap/<id>`. |
 | `--keep-container` | off | no | Omit `docker run --rm` so the container persists for postmortem. |
 | `--dockerfile <path>` | bundled | no | Build from a user-supplied Dockerfile. See [dockerfile.md](dockerfile.md). |
-| `--docker-build-arg KEY=VAL` | — | yes | Forwarded to `docker build --build-arg`. Use `CLAUDE_CODE_VERSION=<semver>` to pin Claude Code. |
+| `--docker-build-arg KEY=VAL` | — | yes | Forwarded to `docker build --build-arg`. Use `CLAUDE_CODE_VERSION=<semver>` to pin Claude Code or `CODEX_VERSION=<semver>` to pin Codex. Exact unsupported `CODEX_VERSION` values fail before image build. |
 | `--rebuild` | off | no | Force image rebuild. |
-| `-p, --print <prompt>` | — | no | `claude -p "<prompt>"` instead of the REPL. |
+| `-p, --print <prompt>` | — | no | Non-interactive prompt. Claude runs `claude -p`; Codex runs `codex exec`. For `--agent codex`, host `CODEX_API_KEY` is forwarded only in print mode. |
 | `-n, --name <name>` | random `<adj>-<noun>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix; the final id is `<name>-<4hex>`. Drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label. Must be a valid git ref component. See notes below. |
-| `-r, --resume <id-or-name>` | — | no | Resume an existing Claude session inside the sandbox. Accepts a session **UUID** or the session's **custom title** (case-insensitive exact match). Ambiguous or missing titles error with a candidate list. Works with both host-born and ccairgap-born sessions. Requires a workspace repo. On exit, ccairgap prints `ccairgap --resume <uuid>` so you can re-enter. |
+| `-r, --resume <id-or-name>` | — | no | Resume an existing Claude session inside the sandbox. Accepts a session **UUID** or the session's **custom title** (case-insensitive exact match). Ambiguous or missing titles error with a candidate list. Works with both host-born and ccairgap-born sessions. Requires a workspace repo. Rejected for `--agent codex` before session creation. |
 | `--hook-enable <glob>` | all disabled | yes | Opt-in a hook by matching its raw `command` string. Wildcard `*`. See [hooks.md](hooks.md). |
 | `--mcp-enable <glob>` | all disabled | yes | Opt-in an MCP server by `name`. Wildcard `*`. See [mcp.md](mcp.md). |
 | `--docker-run-arg <args>` | — | yes | Extra args appended to `docker run`. Shell-quoted. Can weaken isolation. See [docker-run-args.md](docker-run-args.md). |
@@ -29,7 +29,7 @@
 | `--no-clipboard` | — | no | Disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See [SPEC.md](SPEC.md) §"Bare mode". |
 | `--no-user-config` | off | no | Skip the user-wide layer (`~/.config/ccairgap/` config.yaml + integrations/ + CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations that want a hermetic launch without going full `--bare`. See [config.md](config.md) §"User-wide config". |
-| `-- <selected-agent-args…>` | — | no | Tokens after `--` are the selected-agent passthrough tail. Claude uses denylist validation; Codex uses fail-closed allowlist validation before the staged runtime-disabled guard. See [claude-args.md](claude-args.md) and [codex.md](codex.md). |
+| `-- <selected-agent-args…>` | — | no | Tokens after `--` are the selected-agent passthrough tail. Claude uses denylist validation; Codex uses a fail-closed allowlist and validates `--image` paths against container-visible inputs before session creation. See [claude-args.md](claude-args.md) and [codex.md](codex.md). |
 
 ## Notes on `--name`
 

@@ -21,11 +21,23 @@ import { generateId, listAllContainerNames } from "./sessionId.js";
 import { discoverLocalMarketplaces } from "./plugins.js";
 import { filterSubsumedMarketplaces } from "./marketplaces.js";
 import { buildMounts, mountArg, type Mount } from "./mounts.js";
-import { ensureImage, defaultDockerfile, hostClaudeVersion } from "./image.js";
+import {
+  ensureImage,
+  defaultDockerfile,
+  hostClaudeVersion,
+  defaultImageBuildArgs,
+  validateExpectedCodexVersion,
+} from "./image.js";
+import { inspectImageContract } from "./imageContract.js";
 import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
-import { resolveCredentials, CredentialsDeadError, readHostCredsJson } from "./credentials.js";
+import {
+  resolveCredentials,
+  materializeAdvisoryCredentials,
+  CredentialsDeadError,
+  readHostCredsJson,
+} from "./credentials.js";
 import { startRuntimeAuthRefresh } from "./runtimeAuthRefresh.js";
 import { pointLfsAtHost, writeAlternates } from "./alternates.js";
 import { alternatesName } from "./alternatesName.js";
@@ -45,6 +57,11 @@ import { resolveResumeArg } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { validateClaudeArgs } from "./claudeArgs.js";
 import { validateCodexArgs } from "./codexArgs.js";
+import { resolveCodexHome, type CodexHomePlan } from "./codexHome.js";
+import { planCodexAuth } from "./codexAuth.js";
+import { materializeCodexState, type CodexStatePlan } from "./codexState.js";
+import { overlayProjectCodexConfig } from "./codexProjectOverlay.js";
+import { agentCommandPlan, validatedAgentArgv, type AgentCommandPlan } from "./agentCommand.js";
 import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js";
 import { resolveManagedPolicyDir } from "./managedPolicy.js";
 import { resolveCcairgapDir } from "./config.js";
@@ -280,33 +297,73 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
 
   const selectedAgent: AgentKind = opts.agent ?? "claude";
+  let codexHomePlan: CodexHomePlan | undefined;
+  const selectedCodexUsesPrintApiKey =
+    selectedAgent === "codex" && opts.print !== undefined && typeof env.CODEX_API_KEY === "string" && env.CODEX_API_KEY.length > 0;
+  let selectedArgv: string[];
   if (selectedAgent === "codex") {
+    if (opts.resume !== undefined) {
+      die("--resume is not supported for agent=codex");
+    }
+    if (opts.repos.length === 0) {
+      die(
+        opts.bare
+          ? "agent=codex --bare requires --repo"
+          : "agent=codex requires a workspace repo (--repo or cwd git repo)",
+      );
+    }
     try {
       const visible = deriveCodexVisiblePaths(opts);
-      validateCodexArgs({
+      selectedArgv = validateCodexArgs({
         mode: { agent: "codex", print: opts.print },
         argv: opts.codexArgs ?? [],
         visibleRoots: visible.visibleRoots,
         visiblePaths: visible.visiblePaths,
       });
+      const expectedCodexVersion = opts.dockerBuildArgs.CODEX_VERSION;
+      if (expectedCodexVersion !== undefined) {
+        const versionValidation = validateExpectedCodexVersion(expectedCodexVersion);
+        if (!versionValidation.ok) {
+          throw new Error(versionValidation.message ?? "unsupported CODEX_VERSION");
+        }
+        if (versionValidation.message) {
+          console.error(`ccairgap: ${versionValidation.message}`);
+        }
+      }
+      codexHomePlan = resolveCodexHome({
+        env,
+        protectedHostPaths: [...opts.repos, ...opts.ros],
+      });
+      if (!selectedCodexUsesPrintApiKey) {
+        planCodexAuth({
+          hostHome: codexHomePlan.hostHome,
+          selected: true,
+        });
+      }
     } catch (e) {
       die((e as Error).message);
     }
-    die("agent=codex is accepted but runtime launch is disabled in this build");
+  } else {
+    // claude-args passthrough: filter against the denylist before any side
+    // effects so hard-denied flags exit 1 with no $SESSION on disk. The merged
+    // list mixes config (first) and CLI (appended); source attribution per
+    // entry is not preserved here — error messages hint that config may be the
+    // source via the prefix.
+    const claudeArgsValidation = validateClaudeArgs(opts.claudeArgs, "merged");
+    if (claudeArgsValidation.hardDenied.length > 0) {
+      for (const h of claudeArgsValidation.hardDenied) console.error(h.message);
+      process.exit(1);
+    }
+    for (const s of claudeArgsValidation.softDropped) console.error(s.reason);
+    selectedArgv = claudeArgsValidation.filtered;
   }
 
-  // claude-args passthrough: filter against the denylist before any side
-  // effects so hard-denied flags exit 1 with no $SESSION on disk. The merged
-  // list mixes config (first) and CLI (appended); source attribution per
-  // entry is not preserved here — error messages hint that config may be the
-  // source via the prefix.
-  const claudeArgsValidation = validateClaudeArgs(opts.claudeArgs, "merged");
-  if (claudeArgsValidation.hardDenied.length > 0) {
-    for (const h of claudeArgsValidation.hardDenied) console.error(h.message);
-    process.exit(1);
-  }
-  for (const s of claudeArgsValidation.softDropped) console.error(s.reason);
-  const filteredClaudeArgs = claudeArgsValidation.filtered;
+  const commandPlan: AgentCommandPlan = agentCommandPlan(
+    selectedAgent === "claude"
+      ? { agent: "claude", print: opts.print, resume: opts.resume }
+      : { agent: "codex", print: opts.print },
+    validatedAgentArgv(selectedArgv),
+  );
 
   // Resume requires a workspace repo: the source transcript lives under
   // ~/.claude/projects/<encoded-cwd>/ and the cwd is the workspace.
@@ -474,40 +531,71 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // any session state is materialized, so the user's resumable source session
   // and branches stay untouched. Soft failure surfaces via a stderr banner
   // but launch proceeds.
-  let creds: Awaited<ReturnType<typeof resolveCredentials>>;
-  try {
-    creds = await resolveCredentials(sessionPath, {
-      refreshBelowMs: opts.refreshBelowTtlMinutes * 60_000,
-    });
-  } catch (e) {
-    if (e instanceof CredentialsDeadError) {
-      const mins = Math.max(0, Math.round(e.finalTtlMs / 60_000));
-      console.error(`ccairgap: ✗ Host auth is dead (${e.message}; ${mins}m left).`);
-      console.error(`  Run \`claude\` on host to re-login, then retry ccairgap.`);
-      process.exit(1);
+  let creds: Awaited<ReturnType<typeof resolveCredentials>> | undefined;
+  if (selectedAgent === "claude") {
+    try {
+      creds = await resolveCredentials(sessionPath, {
+        refreshBelowMs: opts.refreshBelowTtlMinutes * 60_000,
+      });
+    } catch (e) {
+      if (e instanceof CredentialsDeadError) {
+        const mins = Math.max(0, Math.round(e.finalTtlMs / 60_000));
+        console.error(`ccairgap: ✗ Host auth is dead (${e.message}; ${mins}m left).`);
+        console.error(`  Run \`claude\` on host to re-login, then retry ccairgap.`);
+        process.exit(1);
+      }
+      die((e as Error).message);
     }
-    die((e as Error).message);
-  }
 
-  if (!creds.refreshResult.ok) {
-    const clock =
-      Number.isFinite(creds.finalTtlMs)
-        ? new Date(Date.now() + creds.finalTtlMs).toTimeString().slice(0, 5)
-        : "??:??";
-    const mins = Number.isFinite(creds.finalTtlMs)
-      ? Math.max(0, Math.round(creds.finalTtlMs / 60_000))
-      : 0;
-    console.error(
-      `ccairgap: ⚠ Auth refresh failed: ${creds.refreshResult.reason}. ` +
-        `Token expires ${clock} (${mins}m).`,
-    );
-    console.error(`  When it hits: Claude will error. Run /login in Claude to recover.`);
+    if (!creds.refreshResult.ok) {
+      const clock =
+        Number.isFinite(creds.finalTtlMs)
+          ? new Date(Date.now() + creds.finalTtlMs).toTimeString().slice(0, 5)
+          : "??:??";
+      const mins = Number.isFinite(creds.finalTtlMs)
+        ? Math.max(0, Math.round(creds.finalTtlMs / 60_000))
+        : 0;
+      console.error(
+        `ccairgap: ⚠ Auth refresh failed: ${creds.refreshResult.reason}. ` +
+          `Token expires ${clock} (${mins}m).`,
+      );
+      console.error(`  When it hits: Claude will error. Run /login in Claude to recover.`);
+    }
   }
 
   mkdirSync(join(sessionPath, "repos"), { recursive: true });
   mkdirSync(join(sessionPath, "transcripts"), { recursive: true });
   mkdirSync(join(sessionPath, "auth-warnings"), { recursive: true });
   mkdirSync(outputDirPath(env), { recursive: true });
+
+  if (selectedAgent === "codex") {
+    const advisoryCreds = await materializeAdvisoryCredentials(sessionPath);
+    if (!advisoryCreds.ok && advisoryCreds.warning) {
+      console.error(`ccairgap: advisory Claude credentials unavailable: ${advisoryCreds.warning}`);
+    }
+  }
+
+  let codexStatePlan: CodexStatePlan | undefined;
+  if (selectedAgent === "codex") {
+    if (codexHomePlan === undefined) {
+      die("internal error: Codex home was not resolved before materialization");
+    }
+    try {
+      codexStatePlan = materializeCodexState({
+        sessionDir: sessionPath,
+        hostHome: codexHomePlan.hostHome,
+        selected: !selectedCodexUsesPrintApiKey,
+        homeAgentSkillsDir: join(home, ".agents", "skills"),
+        hookEnable: opts.hookEnable,
+        mcpEnable: opts.mcpEnable,
+      });
+      for (const warning of codexStatePlan.warnings) {
+        console.error(`ccairgap: Codex warning: ${warning.message}`);
+      }
+    } catch (e) {
+      die((e as Error).message);
+    }
+  }
 
   // Generate per-session /etc/passwd + /etc/group so libc's getpwuid/getgrgid
   // resolve the runtime UID (which may not exist in the baked image's
@@ -561,6 +649,17 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         hostPath: plan.hostPath,
         clonePath,
       });
+      if (selectedAgent === "codex") {
+        const codexOverlay = overlayProjectCodexConfig({
+          hostPath: plan.hostPath,
+          clonePath,
+          hookEnable: opts.hookEnable,
+          mcpEnable: opts.mcpEnable,
+        });
+        for (const warning of codexOverlay.warnings) {
+          console.error(`ccairgap: Codex warning: ${warning.message}`);
+        }
+      }
 
       repoEntries.push(plan);
     }
@@ -583,19 +682,29 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // Step 7: image
   const dockerfilePath = opts.dockerfile ?? defaultDockerfile();
   const defaultClaudeVersion = opts.dockerBuildArgs.CLAUDE_CODE_VERSION ?? (await hostClaudeVersion()) ?? "latest";
-  const buildArgs: Record<string, string> = {
-    CLAUDE_CODE_VERSION: defaultClaudeVersion,
-    ...opts.dockerBuildArgs,
-  };
+  const buildArgs = defaultImageBuildArgs({
+    claudeVersion: defaultClaudeVersion,
+    overrides: opts.dockerBuildArgs,
+  });
   const image = await ensureImage({
     dockerfile: dockerfilePath,
     buildArgs,
     rebuild: opts.rebuild,
   });
+  if (selectedAgent === "codex") {
+    const contract = await inspectImageContract(image.tag);
+    if (!contract.ok) {
+      for (const finding of contract.findings) {
+        console.error(`ccairgap: image contract failed: ${finding.message}`);
+      }
+      die("image does not satisfy the Codex runtime contract");
+    }
+  }
 
   // Step 8: manifest
   const manifest: Manifest = {
     version: 1,
+    ...(selectedAgent === "codex" ? { agent: selectedAgent } : {}),
     cli_version: cliVersion(),
     image_tag: image.tag,
     created_at: new Date().toISOString(),
@@ -610,6 +719,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     claude_code: {
       host_version: await hostClaudeVersion(),
     },
+    ...(codexStatePlan !== undefined
+      ? {
+          codex: {
+            host_home: codexStatePlan.hostHome,
+          },
+        }
+      : {}),
   };
   writeManifest(sessionPath, manifest);
 
@@ -765,6 +881,16 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       nodeExtraCa,
       ccairgapDir,
       userWideDir: opts.userWideDir,
+      agentMounts: codexStatePlan
+        ? {
+            codex: {
+              homeDir: codexStatePlan.homeDir,
+              authDir: codexStatePlan.authDir,
+              authFile: codexStatePlan.authFile,
+              sessionsDir: codexStatePlan.sessionsDir,
+            },
+          }
+        : undefined,
       // --cp abs-source, --sync abs-source, --mount all bind RW. Hook- and
       // MCP-policy overrides are nested single-file overlays (RO) on top of the
       // plugin cache and session clones. Appended AFTER repo/plugin-cache mounts
@@ -819,6 +945,15 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
+  for (const [k, v] of Object.entries(commandPlan.env)) {
+    dockerArgs.push("-e", `${k}=${v}`);
+  }
+  if (selectedAgent === "codex") {
+    dockerArgs.push("-e", "CODEX_HOME=/home/claude/.codex");
+    if (opts.print !== undefined && env.CODEX_API_KEY) {
+      dockerArgs.push("-e", `CODEX_API_KEY=${env.CODEX_API_KEY}`);
+    }
+  }
   dockerArgs.push("-e", "COLORTERM=truecolor");
   // Match host timezone inside the container. IANA name from the host's ICU
   // data; tzdata in the image makes it resolvable. Falls back silently if the
@@ -830,9 +965,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
   if (nodeExtraCa !== undefined) {
     dockerArgs.push("-e", `NODE_EXTRA_CA_CERTS=${nodeExtraCa.containerPath}`);
-  }
-  if (opts.print !== undefined) {
-    dockerArgs.push("-e", `CCAIRGAP_PRINT=${opts.print}`);
   }
   // CCAIRGAP_NAME = the session id (always). The entrypoint builds
   // `claude -n "ccairgap $CCAIRGAP_NAME"` and the UserPromptSubmit rename hook
@@ -872,19 +1004,22 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   dockerArgs.push(image.tag);
 
-  // claude-args passthrough: appended as positional argv to `docker run`.
-  // Docker forwards them to the entrypoint as "$@", which splices them into
-  // the `exec claude` line between -r and -p. argv (not env-var JSON) avoids
-  // serialization layers and the per-env-var size cap.
-  dockerArgs.push(...filteredClaudeArgs);
+  // selected-agent passthrough: appended as positional argv to `docker run`.
+  // Docker forwards them to the entrypoint as "$@", and entrypoint branches on
+  // CCAIRGAP_AGENT. argv (not env-var JSON) avoids serialization layers and
+  // the per-env-var size cap.
+  dockerArgs.push(...commandPlan.argv);
 
   // Step 11: exec docker run with exit-trap handoff
   let exitCode = 0;
-  const refreshHandle = startRuntimeAuthRefresh({
-    sessionDir: sessionPath,
-    lockPath: hostClaude,
-    readHostCreds: readHostCredsJson,
-  });
+  const refreshHandle =
+    selectedAgent === "claude"
+      ? startRuntimeAuthRefresh({
+          sessionDir: sessionPath,
+          lockPath: hostClaude,
+          readHostCreds: readHostCredsJson,
+        })
+      : undefined;
   try {
     const result = await execa("docker", dockerArgs, {
       stdio: "inherit",
@@ -897,7 +1032,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     // and writes its result; then run clipboard cleanup; then handoff.
     // Bounded latency: 120 s for the auth child, plus existing handoff time.
     try {
-      await refreshHandle.stop();
+      await refreshHandle?.stop();
     } catch (e) {
       console.error(`ccairgap: runtime refresh shutdown failed: ${(e as Error).message}`);
     }
