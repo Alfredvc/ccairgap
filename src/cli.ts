@@ -3,7 +3,16 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
 import { launch } from "./launch.js";
-import { attach, doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
+import {
+  attach,
+  doctor,
+  discard,
+  initCmd,
+  inspectCmd,
+  listOrphans,
+  recover,
+  resolveSubcommandAgent,
+} from "./subcommands.js";
 import { type ConfigFile } from "./config.js";
 import { loadAllLayers } from "./configLayered.js";
 import { splitSelectedAgentArgs } from "./cliSplit.js";
@@ -448,19 +457,48 @@ async function main() {
   program
     .command("attach <id>")
     .description(
-      "spawn a second interactive `claude` inside the running container ccairgap-<id> " +
-        "(advanced; no flags, no claude-arg passthrough). Exiting the attached claude " +
-        "does not stop the container; only the original PID-1 claude controls lifecycle.",
+      "spawn a second interactive selected agent inside the running container ccairgap-<id>. " +
+        "Defaults to the session manifest agent; exiting the attached agent does not stop the container.",
     )
-    .action(async (id: string) => {
-      await attach(id);
+    .option("--agent <claude|codex>", "agent to attach. Defaults to the session manifest agent.")
+    .action(async (id: string, opts: { agent?: string }) => {
+      await attach(id, {
+        agent: opts.agent !== undefined ? parseAgentKind(opts.agent, "attach --agent") : undefined,
+        selectedAgentArgs: cliSelectedAgentArgs,
+      });
     });
 
   program
     .command("doctor")
     .description("preflight checks")
-    .action(async () => {
-      await doctor();
+    .option("--config <path>", "path to yaml config file (same semantics as launch)")
+    .option("--profile <name>", "load a named config file (same semantics as launch; mutually exclusive with --config)")
+    .option("--agent <claude|codex>", "selected agent to preflight. Defaults to config, then claude.")
+    .option(
+      "--bare",
+      "skip config-file loading unless --config/--profile is explicit (same semantics as launch)",
+    )
+    .option(
+      "--no-user-config",
+      "skip the user-wide config layer (same semantics as launch)",
+    )
+    .action(async (opts) => {
+      if (opts.config && opts.profile) {
+        console.error("ccairgap: --config and --profile are mutually exclusive");
+        process.exit(1);
+      }
+      const { layered } = loadAllLayers({
+        configPath: opts.config,
+        profile: opts.profile,
+        bare: Boolean(opts.bare),
+        userConfigEnabled: opts.userConfig !== false,
+      });
+      await doctor({
+        agent: resolveSubcommandAgent({
+          cliAgent: opts.agent !== undefined ? parseAgentKind(opts.agent, "doctor --agent") : undefined,
+          configAgent: layered.merged.agent,
+        }),
+      });
     });
 
   program
@@ -475,6 +513,7 @@ async function main() {
     .option("--profile <name>", "load a named config file (same semantics as launch; mutually exclusive with --config)")
     .option("--repo <path>", "host repo whose .claude/settings.json[.local] and .mcp.json should be included. Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo to include. Repeatable.", collect, [])
+    .option("--agent <claude|codex>", "selected agent to inspect. Defaults to config, then claude.")
     .option("--pretty", "render human-readable tables instead of JSON")
     .option(
       "--bare",
@@ -526,7 +565,15 @@ async function main() {
         }
       }
 
-      inspectCmd({ repos, pretty: Boolean(opts.pretty), config: layered });
+      inspectCmd({
+        repos,
+        pretty: Boolean(opts.pretty),
+        config: layered,
+        agent: resolveSubcommandAgent({
+          cliAgent: opts.agent !== undefined ? parseAgentKind(opts.agent, "inspect --agent") : undefined,
+          configAgent: layered.merged.agent,
+        }),
+      });
     });
 
   program

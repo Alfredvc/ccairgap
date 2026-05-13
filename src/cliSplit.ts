@@ -34,6 +34,12 @@ export function splitSelectedAgentArgs(argv: string[]): { argvForCommander: stri
   if (firstPositional === "completion-server") {
     return { argvForCommander: argv.slice(0, sep), cliSelectedAgentArgs: [] };
   }
+  if (firstPositional === "attach") {
+    return {
+      argvForCommander: argv.slice(0, sep),
+      cliSelectedAgentArgs: argv.slice(sep + 1),
+    };
+  }
   if (firstPositional && SUBCOMMANDS.has(firstPositional)) {
     console.error(
       `ccairgap: -- passthrough is only valid on the default launch command, not on subcommand '${firstPositional}'`,

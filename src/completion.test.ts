@@ -20,6 +20,7 @@ function makeProgram(): Command {
     .option("-r, --resume <id>", "resume");
   p.command("list").description("list").action(() => {});
   p.command("recover [id]").description("recover").action(() => {});
+  p.command("attach <id>").option("--agent <claude|codex>", "agent").action(() => {});
   p.command("completion-server", { hidden: true }).action(() => {});
   return p;
 }
@@ -92,10 +93,24 @@ describe("completion — candidatesFor routing", () => {
     expect(await candidatesFor("--agent", program)).toEqual(["claude", "codex"]);
   });
 
+  it("prev=attach → attach flags plus session ids", async () => {
+    const out = await candidatesFor("attach", program);
+    expect(out).toContain("--agent");
+  });
+
   it("prev is an unrelated flag → subcommand + flag list", async () => {
     const out = await candidatesFor("--unknown", program);
     expect(out).toEqual(
-      expect.arrayContaining(["list", "recover", "--repo", "--ro", "--agent", "--resume"]),
+      expect.arrayContaining([
+        "list",
+        "recover",
+        "attach",
+        "--repo",
+        "--ro",
+        "--agent",
+        "--resume",
+        "codex-args",
+      ]),
     );
   });
 

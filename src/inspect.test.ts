@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LayeredResult } from "./configLayered.js";
 
 let tmpDir: string;
@@ -13,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.CODEX_HOME;
   vi.restoreAllMocks();
   rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -60,6 +62,40 @@ describe("inspectCmd JSON output", () => {
     const output = logSpy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output) as Record<string, unknown>;
     expect(parsed).not.toHaveProperty("config");
+  });
+
+  it("reports Codex sanitized state without printing auth secrets", async () => {
+    const codexHome = realpathSync(mkdtempSync(tmpdir() + "/ccairgap-codex-inspect-"));
+    process.env.CODEX_HOME = codexHome;
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      [
+        'model = "gpt-5"',
+        'openai_base_url = "https://secret.example"',
+        "[mcp_servers.secret]",
+        'command = "printenv"',
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(codexHome + "/auth.json", JSON.stringify({ OPENAI_API_KEY: "sk-secret" }));
+    mkdirSync(join(codexHome, "sessions", "2026", "05", "13"), { recursive: true });
+    writeFileSync(
+      join(codexHome, "sessions", "2026", "05", "13", "rollout-test.jsonl"),
+      "{}\n",
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const { inspectCmd } = await import("./subcommands.js");
+    inspectCmd({ repos: [], pretty: false, agent: "codex" });
+
+    const output = logSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("disabled Codex MCP server");
+    expect(output).not.toContain("sk-secret");
+    expect(output).not.toContain("https://secret.example");
+    const parsed = JSON.parse(output) as { codex?: { auth?: { present?: boolean; kind?: string }; sessions?: { rolloutFiles?: number } } };
+    expect(parsed.codex?.auth?.present).toBe(true);
+    expect(parsed.codex?.auth?.kind).toBe("api-key");
+    expect(parsed.codex?.sessions?.rolloutFiles).toBe(1);
   });
 });
 
@@ -164,5 +200,36 @@ describe("formatInspectPretty config section", () => {
     expect(output).toContain("BAR=2");
     // Must NOT fall back to JSON format
     expect(output).not.toContain('{"FOO"');
+  });
+
+  it("renders Codex inspect state without secrets", async () => {
+    const { formatInspectPretty } = await import("./inspectFormat.js");
+    const output = formatInspectPretty({
+      hooks: [],
+      mcpServers: [],
+      env: [],
+      marketplaces: [],
+      codex: {
+        hostHome: "/tmp/codex",
+        config: {
+          present: true,
+          sanitized: 'cli_auth_credentials_store = "file"\n',
+          warnings: [{ code: "x", message: "removed Codex config key", source: "/tmp/codex/config.toml" }],
+        },
+        hooks: {
+          present: true,
+          sanitized: "{}\n",
+          warnings: [{ code: "hook", message: "disabled Codex hook", source: "/tmp/codex/hooks.json" }],
+        },
+        auth: { present: true, ok: true, kind: "api-key", warnings: [] },
+        sessions: { present: true, rolloutFiles: 2 },
+        warnings: [],
+      },
+    });
+    expect(output).toContain("CODEX");
+    expect(output).toContain("api-key");
+    expect(output).toContain("disabled Codex hook");
+    expect(output).toContain("rolloutFiles=2");
+    expect(output).not.toContain("OPENAI_API_KEY");
   });
 });

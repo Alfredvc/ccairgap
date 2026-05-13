@@ -16,6 +16,7 @@ import { listProjectSessions } from "./resumeResolver.js";
 
 const PROGRAM_NAME = "ccairgap";
 const AGENT_COMPLETION_CANDIDATES = ["claude", "codex"];
+const CONFIG_KEY_COMPLETION_CANDIDATES = ["codex-args"];
 
 // Matches @pnpm/tabtab's COMPLETION_DIR + completionFileName(name, shell) layout.
 // Kept local so we don't reach into tabtab internals. Extend if tabtab adds a shell.
@@ -127,6 +128,9 @@ export async function candidatesFor(prev: string, program: Command): Promise<str
   if (prev === "--agent") {
     return AGENT_COMPLETION_CANDIDATES;
   }
+  if (prev === "attach") {
+    return ["--agent", ...sessionIdCandidates()];
+  }
   if (prev === "recover" || prev === "discard") {
     return sessionIdCandidates();
   }
@@ -136,5 +140,5 @@ export async function candidatesFor(prev: string, program: Command): Promise<str
   if (prev === "install-completion") {
     return ["bash", "zsh", "fish"];
   }
-  return [...subcommandNames(program), ...launchFlags(program)];
+  return [...subcommandNames(program), ...launchFlags(program), ...CONFIG_KEY_COMPLETION_CANDIDATES];
 }

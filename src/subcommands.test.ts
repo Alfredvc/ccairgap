@@ -34,6 +34,7 @@ beforeEach(() => {
   savedEnv = {
     CCAIRGAP_HOME: process.env.CCAIRGAP_HOME,
     PATH: process.env.PATH,
+    CODEX_HOME: process.env.CODEX_HOME,
   };
   process.env.CCAIRGAP_HOME = root;
   process.env.PATH = `${fakeBinDir}:${savedEnv.PATH ?? ""}`;
@@ -209,6 +210,54 @@ describe("doctor: auth-refresh rows", () => {
   });
 });
 
+describe("doctor: selected agent", () => {
+  function stubAllDoctorDeps(runningOutput = ""): void {
+    const script = [
+      'case "$1" in',
+      '  version) echo "27.0.0" ;;',
+      `  ps) printf '%s' '${runningOutput}' ;;`,
+      '  image)',
+      '    case "$2" in',
+      '      inspect) echo "2099-01-01T00:00:00Z" ;;',
+      '      ls) : ;;',
+      '    esac',
+      '    ;;',
+      'esac',
+    ].join("\n");
+    stubDocker(script);
+  }
+
+  it("resolves default, config, and CLI-selected agents", async () => {
+    const { resolveSubcommandAgent } = await import("./subcommands.js");
+
+    expect(resolveSubcommandAgent()).toBe("claude");
+    expect(resolveSubcommandAgent({ configAgent: "codex" })).toBe("codex");
+    expect(resolveSubcommandAgent({ cliAgent: "claude", configAgent: "codex" })).toBe("claude");
+  });
+
+  it("emits a Codex doctor credential row without printing auth secrets", async () => {
+    const codexHome = join(root, "codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-secret" }));
+    process.env.CODEX_HOME = codexHome;
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor({ agent: "codex" });
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+
+      expect(lines).toContain("[OK] selected agent: codex");
+      expect(lines).toContain("[OK] codex credentials: api-key");
+      expect(lines).not.toContain("host credentials");
+      expect(lines).not.toContain("auth refresh:");
+      expect(lines).not.toContain("sk-secret");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
 describe("attach", () => {
   it("aborts with a clear message when the container does not exist", async () => {
     // docker inspect exits non-zero when the container is missing.
@@ -276,6 +325,106 @@ describe("attach", () => {
     expect(argv).toContain("ccairgap-live-abcd");
     expect(argv).toContain("claude");
     expect(argv).toContain("--dangerously-skip-permissions");
+  });
+
+  it("defaults attach to the manifest-selected Codex agent", async () => {
+    const sd = join(root, "sessions", "codex-live");
+    mkdirSync(sd, { recursive: true });
+    writeManifest(sd, {
+      version: 1,
+      agent: "codex",
+      cli_version: "test",
+      image_tag: "test:1",
+      created_at: new Date().toISOString(),
+      repos: [],
+      branch: "ccairgap/codex-live",
+      codex: { host_home: join(root, "host-codex") },
+      claude_code: {},
+    });
+    const argvSink = join(root, "docker-exec-codex.log");
+    stubDocker(
+      [
+        'case "$1" in',
+        '  inspect) printf "%s\\n" "true" "CCAIRGAP_CWD=/workspace/foo" "CODEX_HOME=/home/claude/.codex" ;;',
+        '  exec) printf "%s\\n" "$@" > "' + argvSink + '"; exit 0 ;;',
+        "esac",
+      ].join("\n"),
+    );
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("codex-live")).rejects.toThrow(/process\.exit\(0\)/);
+
+    const argv = readFileSync(argvSink, "utf8").trimEnd().split("\n");
+    expect(argv).toContain("codex");
+    expect(argv).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(argv).not.toContain("claude");
+  });
+
+  it("treats old manifests without agent as Claude", async () => {
+    const argvSink = join(root, "docker-exec-old-manifest.log");
+    stubDocker(
+      [
+        'case "$1" in',
+        '  inspect) printf "%s\\n" "true" "CCAIRGAP_CWD=/workspace/foo" ;;',
+        '  exec) printf "%s\\n" "$@" > "' + argvSink + '"; exit 0 ;;',
+        "esac",
+      ].join("\n"),
+    );
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("live-abcd")).rejects.toThrow(/process\.exit\(0\)/);
+
+    const argv = readFileSync(argvSink, "utf8").trimEnd().split("\n");
+    expect(argv).toContain("claude");
+    expect(argv).toContain("--dangerously-skip-permissions");
+  });
+
+  it("allows safe Codex attach passthrough and rejects unsafe Codex flags", async () => {
+    const argvSink = join(root, "docker-exec-codex-tail.log");
+    stubDocker(
+      [
+        'case "$1" in',
+        '  inspect) printf "%s\\n" "true" "CCAIRGAP_CWD=/workspace/foo" "CODEX_HOME=/home/claude/.codex" ;;',
+        '  exec) printf "%s\\n" "$@" > "' + argvSink + '"; exit 0 ;;',
+        "esac",
+      ].join("\n"),
+    );
+    const { attach } = await import("./subcommands.js");
+
+    await expect(
+      attach("live-abcd", { agent: "codex", selectedAgentArgs: ["--model", "gpt-5"] }),
+    ).rejects.toThrow(/process\.exit\(0\)/);
+    let argv = readFileSync(argvSink, "utf8").trimEnd().split("\n");
+    expect(argv).toContain("--model");
+    expect(argv).toContain("gpt-5");
+
+    await expect(
+      attach("live-abcd", { agent: "codex", selectedAgentArgs: ["--cd", "/tmp"] }),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("Codex passthrough contains denied flag");
+  });
+
+  it("validates Claude attach passthrough with the Claude denylist", async () => {
+    stubDocker('printf "%s\\n" "true" "CCAIRGAP_CWD=/workspace/foo"');
+    const { attach } = await import("./subcommands.js");
+
+    await expect(
+      attach("live-abcd", { agent: "claude", selectedAgentArgs: ["--resume", "abc"] }),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("claude-args contains a flag ccairgap does not allow");
+  });
+
+  it("rejects Codex attach override when Codex state is unavailable in the container", async () => {
+    stubDocker('printf "%s\\n" "true" "CCAIRGAP_CWD=/workspace/foo"');
+    const { attach } = await import("./subcommands.js");
+
+    await expect(attach("live-abcd", { agent: "codex" })).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
+    expect(stderr).toContain("Codex state is not available");
   });
 });
 

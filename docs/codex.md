@@ -68,6 +68,14 @@ ccairgap sets `CCAIRGAP_AGENT=codex` and `CODEX_HOME=/home/claude/.codex` for th
 
 Before Docker execution, ccairgap inspects the resolved image for both agent binaries, supported Codex version, and required Codex mount targets. Exact unsupported `CODEX_VERSION` build args fail even earlier, before pull or build.
 
+## Agent-aware subcommands
+
+`ccairgap attach <id>` defaults to the agent recorded in the session manifest. Old manifests without `agent` default to Claude. `ccairgap attach --agent codex <id>` is allowed only when the running container exposes Codex state (`CODEX_HOME`), and its `--` tail is validated with the same interactive Codex passthrough allowlist documented above.
+
+`ccairgap inspect --agent codex` reports sanitized Codex config, auth status, rollout session counts, and policy warnings. It never prints auth secret values or stripped external connection values.
+
+`ccairgap doctor --agent codex` runs the shared host checks and validates `$CODEX_HOME/auth.json` through the selected Codex auth sanitizer. It reports the auth kind, not the secret. Without `--agent`, doctor uses config `agent` and then falls back to Claude.
+
 ## Config and guidance policy
 
 Codex config is filtered rather than copied wholesale. ccairgap preserves unknown non-automation keys, disables MCP servers and hooks unless matched by explicit enable globs, strips credential-routing and external-connection keys such as custom providers, `openai_base_url`, `chatgpt_base_url`, profiles, telemetry, `notify`, plugin integrations, app integrations, and MCP OAuth credential stores.

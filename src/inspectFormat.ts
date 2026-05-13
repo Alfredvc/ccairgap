@@ -197,6 +197,30 @@ export interface FormatInspectInput {
   env: EnvRecord[];
   marketplaces: MarketplaceRecord[];
   config?: import("./configLayered.js").LayeredResult;
+  codex?: {
+    hostHome: string;
+    config?: {
+      present: boolean;
+      sanitized?: string;
+      warnings: Array<{ code: string; message: string; source?: string }>;
+    };
+    hooks?: {
+      present: boolean;
+      sanitized?: string;
+      warnings: Array<{ code: string; message: string; source?: string }>;
+    };
+    auth?: {
+      present: boolean;
+      ok: boolean;
+      kind?: string;
+      warnings: Array<{ code: string; message: string; source?: string }>;
+    };
+    sessions?: {
+      present: boolean;
+      rolloutFiles: number;
+    };
+    warnings: Array<{ code: string; message: string; source?: string }>;
+  };
 }
 
 function renderConfig(layered: import("./configLayered.js").LayeredResult): string {
@@ -233,6 +257,28 @@ function renderConfig(layered: import("./configLayered.js").LayeredResult): stri
   )}`;
 }
 
+function renderCodex(codex: NonNullable<FormatInspectInput["codex"]>): string {
+  const rows: string[][] = [
+    ["home", codex.hostHome],
+    ["config", codex.config?.present ? "present" : "absent"],
+    ["hooks", codex.hooks?.present ? "present" : "absent"],
+    ["auth", codex.auth?.present ? `${codex.auth.ok ? "ok" : "unavailable"}${codex.auth.kind ? ` ${codex.auth.kind}` : ""}` : "absent"],
+    ["sessions", codex.sessions?.present ? `rolloutFiles=${codex.sessions.rolloutFiles}` : "absent"],
+  ];
+  for (const warning of [
+    ...(codex.config?.warnings ?? []),
+    ...(codex.hooks?.warnings ?? []),
+    ...(codex.auth?.warnings ?? []),
+    ...codex.warnings,
+  ]) {
+    rows.push(["warning", warning.message]);
+  }
+  return `${sectionTitle("CODEX", rows.length)}\n${renderTable(
+    [{ header: "key" }, { header: "value", cap: 80 }],
+    rows,
+  )}`;
+}
+
 export function formatInspectPretty(input: FormatInspectInput): string {
   const parts = [
     renderHooks(input.hooks),
@@ -242,6 +288,9 @@ export function formatInspectPretty(input: FormatInspectInput): string {
   ];
   if (input.config) {
     parts.push(renderConfig(input.config));
+  }
+  if (input.codex) {
+    parts.push(renderCodex(input.codex));
   }
   parts.push("");
   return parts.join("\n");

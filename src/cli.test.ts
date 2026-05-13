@@ -84,11 +84,27 @@ describe("splitClaudeArgs", () => {
     }
   });
 
-  it("blocks -- passthrough on attach (no claude-arg surface)", () => {
-    expect(() =>
-      splitClaudeArgs(["node", "ccairgap", "attach", "live-abcd", "--", "--model", "opus"]),
-    ).toThrow(/process\.exit\(1\)/);
-    expect(errSpy.mock.calls[0]?.[0]).toMatch(/subcommand 'attach'/);
+  it("allows -- passthrough on attach as the selected-agent tail", () => {
+    const r = splitSelectedAgentArgs([
+      "node",
+      "ccairgap",
+      "attach",
+      "--agent",
+      "codex",
+      "live-abcd",
+      "--",
+      "--model",
+      "gpt-5",
+    ]);
+    expect(r.argvForCommander).toEqual([
+      "node",
+      "ccairgap",
+      "attach",
+      "--agent",
+      "codex",
+      "live-abcd",
+    ]);
+    expect(r.cliSelectedAgentArgs).toEqual(["--model", "gpt-5"]);
   });
 
   it("silently drops the `--` tail on `completion-server` (tabtab callback)", () => {

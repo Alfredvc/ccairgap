@@ -22,6 +22,7 @@ import {
   stateRoot,
 } from "./paths.js";
 import { handoff, scanDirtyRepos } from "./handoff.js";
+import { readManifest, readManifestAgent } from "./manifest.js";
 import { scanOrphans } from "./orphans.js";
 import { cliVersion } from "./version.js";
 import {
@@ -39,6 +40,16 @@ import { formatInspectPretty } from "./inspectFormat.js";
 import { detectClipboardMode, isWsl2, hasCommand } from "./clipboardBridge.js";
 import { runningContainerNames } from "./sessionId.js";
 import { resolveUserWideDir } from "./userConfig.js";
+import { validateClaudeArgs } from "./claudeArgs.js";
+import { validateCodexArgs } from "./codexArgs.js";
+import type { AgentKind } from "./agent.js";
+import { resolveCodexHome } from "./codexHome.js";
+import {
+  filterCodexConfigToml,
+  filterCodexHooksJson,
+  type CodexPolicyWarning,
+} from "./codexConfigPolicy.js";
+import { sanitizeCodexAuthJson, type CodexAuthWarning } from "./codexAuth.js";
 
 /**
  * Return true if a container named `ccairgap-<id>` is currently running.
@@ -140,9 +151,13 @@ export async function recover(
  * but the container terminating kills every attached claude. Handoff fires
  * only on PID-1 exit. See docs/SPEC.md §"Attach".
  *
- * No claude-arg passthrough — attach is a deliberately bare interactive shim.
+ * Attach accepts a selected-agent passthrough tail and validates it with the
+ * same provider-specific policy as launch.
  */
-export async function attach(id: string): Promise<void> {
+export async function attach(id: string, opts: {
+  agent?: AgentKind;
+  selectedAgentArgs?: string[];
+} = {}): Promise<void> {
   const containerName = `ccairgap-${id}`;
   // One inspect call surfaces both running-state and CCAIRGAP_CWD. Format
   // template: `<running>\n<env-line-1>\n<env-line-2>\n…`. Newline is safe
@@ -175,6 +190,21 @@ export async function attach(id: string): Promise<void> {
     process.exit(1);
   }
   const cwd = cwdLine.slice("CCAIRGAP_CWD=".length);
+  const envAgent = lines
+    .find((l) => l.startsWith("CCAIRGAP_AGENT="))
+    ?.slice("CCAIRGAP_AGENT=".length);
+  const manifestAgent = readAttachManifestAgent(id);
+  const selectedAgent = opts.agent ?? (envAgent === "claude" || envAgent === "codex" ? envAgent : manifestAgent);
+  const tail = opts.selectedAgentArgs ?? [];
+  const commandTail = validateAttachTail({
+    agent: selectedAgent,
+    args: tail,
+    cwd,
+  });
+  if (selectedAgent === "codex" && !lines.some((l) => l.startsWith("CODEX_HOME="))) {
+    console.error(`ccairgap: Codex state is not available in ${containerName}; cannot attach --agent codex.`);
+    process.exit(1);
+  }
 
   const suffix = randomBytes(2).toString("hex");
   const attachedName = `${id}#${suffix}`;
@@ -194,12 +224,54 @@ export async function attach(id: string): Promise<void> {
       "-e",
       `CCAIRGAP_NAME=${attachedName}`,
       containerName,
-      "claude",
-      "--dangerously-skip-permissions",
+      ...(selectedAgent === "claude"
+        ? ["claude", "--dangerously-skip-permissions", ...commandTail]
+        : [
+            "codex",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--cd",
+            cwd,
+            ...commandTail,
+          ]),
     ],
     { stdio: "inherit", reject: false },
   );
   process.exit(typeof result.exitCode === "number" ? result.exitCode : 1);
+}
+
+function readAttachManifestAgent(id: string): AgentKind {
+  try {
+    return readManifestAgent(readManifest(sessionDirFn(id), cliVersion()));
+  } catch {
+    return "claude";
+  }
+}
+
+function validateAttachTail(options: {
+  agent: AgentKind;
+  args: string[];
+  cwd: string;
+}): string[] {
+  if (options.agent === "codex") {
+    try {
+      return validateCodexArgs({
+        mode: { agent: "codex" },
+        argv: options.args,
+        visibleRoots: [options.cwd],
+      });
+    } catch (e) {
+      console.error(`ccairgap: ${(e as Error).message}`);
+      process.exit(1);
+    }
+  }
+
+  const validated = validateClaudeArgs(options.args, "cli");
+  for (const dropped of validated.softDropped) console.error(dropped.reason);
+  if (validated.hardDenied.length > 0) {
+    for (const denied of validated.hardDenied) console.error(denied.message);
+    process.exit(1);
+  }
+  return validated.filtered;
 }
 
 export function discard(id: string): void {
@@ -241,6 +313,33 @@ async function checkCredentials(): Promise<DoctorCheck> {
     parts.push(`scopes=${r.scopes.join(" ")}`);
   }
   return { name: "host credentials", ok: true, detail: parts.join("; ") };
+}
+
+function checkCodexCredentials(): DoctorCheck {
+  const home = resolveCodexHome().hostHome;
+  const authPath = join(home, "auth.json");
+  if (!existsSync(authPath)) {
+    return {
+      name: "codex credentials",
+      ok: false,
+      detail: `missing ${authPath}; run codex login on the host`,
+    };
+  }
+  try {
+    const auth = sanitizeCodexAuthJson({
+      json: readFileSync(authPath, "utf8"),
+      selected: true,
+      source: authPath,
+    });
+    if (!auth.ok) {
+      const detail = auth.warnings.map((w) => w.message).join("; ") || "unusable auth.json";
+      return { name: "codex credentials", ok: false, detail };
+    }
+    const kind = auth.authKind ?? "unknown";
+    return { name: "codex credentials", ok: true, detail: `${kind} at ${authPath}` };
+  } catch (e) {
+    return { name: "codex credentials", ok: false, detail: (e as Error).message };
+  }
 }
 
 function checkStateDir(): DoctorCheck {
@@ -354,7 +453,9 @@ export function inspectCmd(opts: {
   repos: string[];
   pretty?: boolean;
   config?: import("./configLayered.js").LayeredResult;
+  agent?: AgentKind;
 }): void {
+  const agent = opts.agent ?? opts.config?.merged.agent ?? "claude";
   const hcd = realpath(hostClaudeDirFn());
   const claudeJsonPath = hostClaudeJsonFn();
   const pluginsCache = join(hcd, "plugins", "cache");
@@ -379,10 +480,12 @@ export function inspectCmd(opts: {
   });
   const env = enumerateEnv({ hostClaudeDir: hcd, repos });
   const marketplaces = enumerateMarketplaces({ hostClaudeDir: hcd, repos });
+  const codex = agent === "codex" ? inspectCodexState(opts.config) : undefined;
   if (opts.pretty) {
-    console.log(formatInspectPretty({ hooks, mcpServers, env, marketplaces, config: opts.config }));
+    console.log(formatInspectPretty({ hooks, mcpServers, env, marketplaces, config: opts.config, codex }));
   } else {
     const payload: Record<string, unknown> = { hooks, mcpServers, env, marketplaces };
+    if (codex) payload.codex = codex;
     if (opts.config) {
       payload.config = {
         merged: opts.config.merged,
@@ -391,6 +494,117 @@ export function inspectCmd(opts: {
     }
     console.log(JSON.stringify(payload, null, 2));
   }
+}
+
+interface CodexInspectState {
+  hostHome: string;
+  config?: {
+    present: boolean;
+    sanitized?: string;
+    warnings: CodexPolicyWarning[];
+  };
+  hooks?: {
+    present: boolean;
+    sanitized?: string;
+    warnings: CodexPolicyWarning[];
+  };
+  auth?: {
+    present: boolean;
+    ok: boolean;
+    kind?: string;
+    warnings: CodexAuthWarning[];
+  };
+  sessions?: {
+    present: boolean;
+    rolloutFiles: number;
+  };
+  warnings: Array<{ code: string; message: string; source?: string }>;
+}
+
+function inspectCodexState(layered?: import("./configLayered.js").LayeredResult): CodexInspectState {
+  const warnings: CodexInspectState["warnings"] = [];
+  const home = resolveCodexHome().hostHome;
+  const mcpEnable = layered?.merged.mcp?.enable ?? [];
+  const hookEnable = layered?.merged.hooks?.enable ?? [];
+  const state: CodexInspectState = { hostHome: home, warnings };
+
+  const configPath = join(home, "config.toml");
+  if (existsSync(configPath)) {
+    try {
+      const filtered = filterCodexConfigToml({
+        toml: readFileSync(configPath, "utf8"),
+        source: configPath,
+        mcpEnable,
+        hookEnable,
+      });
+      state.config = { present: true, sanitized: filtered.content, warnings: filtered.warnings };
+    } catch (e) {
+      state.config = {
+        present: true,
+        warnings: [{ code: "codex-config-unreadable", message: (e as Error).message, source: configPath }],
+      };
+    }
+  } else {
+    state.config = { present: false, warnings: [] };
+  }
+
+  const hooksPath = join(home, "hooks.json");
+  if (existsSync(hooksPath)) {
+    try {
+      const filtered = filterCodexHooksJson({
+        json: readFileSync(hooksPath, "utf8"),
+        source: hooksPath,
+        hookEnable,
+      });
+      state.hooks = { present: true, sanitized: filtered.content, warnings: filtered.warnings };
+    } catch (e) {
+      state.hooks = {
+        present: true,
+        warnings: [{ code: "codex-hooks-unreadable", message: (e as Error).message, source: hooksPath }],
+      };
+    }
+  } else {
+    state.hooks = { present: false, warnings: [] };
+  }
+
+  const authPath = join(home, "auth.json");
+  if (existsSync(authPath)) {
+    const auth = sanitizeCodexAuthJson({
+      json: readFileSync(authPath, "utf8"),
+      selected: false,
+      source: authPath,
+    });
+    state.auth = {
+      present: true,
+      ok: auth.ok,
+      kind: auth.authKind,
+      warnings: auth.warnings,
+    };
+  } else {
+    state.auth = { present: false, ok: false, warnings: [] };
+  }
+
+  const sessionsPath = join(home, "sessions");
+  state.sessions = {
+    present: existsSync(sessionsPath),
+    rolloutFiles: existsSync(sessionsPath) ? countCodexRollouts(sessionsPath) : 0,
+  };
+
+  return state;
+}
+
+function countCodexRollouts(dir: string): number {
+  let count = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) count += countCodexRollouts(path);
+      else if (entry.isFile() && entry.name.startsWith("rollout-") && entry.name.endsWith(".jsonl")) count++;
+    }
+  } catch {
+    // inspect is read-only best-effort; unreadable sessions are surfaced as zero.
+  }
+  return count;
 }
 
 /**
@@ -483,10 +697,19 @@ async function checkAuthRefresh(): Promise<DoctorCheck[]> {
   return checks;
 }
 
-export async function doctor(): Promise<void> {
+export function resolveSubcommandAgent(opts: {
+  cliAgent?: AgentKind;
+  configAgent?: AgentKind;
+} = {}): AgentKind {
+  return opts.cliAgent ?? opts.configAgent ?? "claude";
+}
+
+export async function doctor(opts: { agent?: AgentKind } = {}): Promise<void> {
+  const agent = opts.agent ?? "claude";
   const checks: DoctorCheck[] = [];
+  checks.push({ name: "selected agent", ok: true, detail: agent });
   checks.push(await checkDocker());
-  checks.push(await checkCredentials());
+  checks.push(agent === "codex" ? checkCodexCredentials() : await checkCredentials());
   checks.push(checkStateDir());
   checks.push(checkSessions());
   checks.push(await checkHostBinary("git"));
@@ -494,7 +717,9 @@ export async function doctor(): Promise<void> {
   checks.push(await checkHostBinary("cp"));
   checks.push(await checkImage());
   checks.push(checkClipboard());
-  for (const c of await checkAuthRefresh()) checks.push(c);
+  if (agent === "claude") {
+    for (const c of await checkAuthRefresh()) checks.push(c);
+  }
   const drift = checkSidecarDrift();
   if (drift) checks.push(drift);
   for (const c of checkUserWideConfig()) checks.push(c);

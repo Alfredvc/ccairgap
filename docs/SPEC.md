@@ -142,9 +142,9 @@ At Docker execution, ccairgap passes `CCAIRGAP_AGENT=codex`, `CODEX_HOME=/home/c
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<id>`. |
 | `recover [<id>]` | Run the handoff routine against `$SESSION/<id>/`. Idempotent. With no `<id>` argument, equivalent to `list`. |
 | `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
-| `attach <id>` | Spawn a second `claude` inside the running container `ccairgap-<id>` via `docker exec`. Advanced. No flags, no claude-arg passthrough. See §"Attach". |
-| `doctor` | Preflight checks (Docker running, host credentials present, state dir writable, `git` + `rsync` + `cp` on PATH, image present/stale). Also hash-compares any sidecar `Dockerfile` / `entrypoint.sh` under `<git-root>/.ccairgap/` against the bundled copies and warns on drift — useful after a CLI upgrade to decide whether to re-run `ccairgap init --force`. |
-| `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch so the enumeration matches what a real launch would filter. See §"Hook policy". |
+| `attach <id>` | Spawn a second selected agent inside the running container `ccairgap-<id>` via `docker exec`. Advanced. Defaults to the session manifest agent, with absent `agent` in old manifests treated as `claude`; `--agent claude\|codex` can override when that agent's in-container state exists. `attach` is the only subcommand that accepts a selected-agent `--` passthrough tail. See §"Attach". |
+| `doctor` | Agent-aware preflight checks. Defaults to config `agent`, then `claude`; `--agent claude\|codex` overrides config. Shared checks include Docker, state dir, host binaries, image freshness, clipboard, sidecar drift, and user-wide config. Claude checks host Claude credentials and auth-refresh state; Codex checks sanitized `$CODEX_HOME/auth.json` without printing secrets. |
+| `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch plus `--agent`; Codex inspect adds sanitized Codex config/auth/session state and warnings without printing secrets. See §"Hook policy". |
 | `init` | Materialize the bundled `Dockerfile`, `entrypoint.sh`, and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if any of the three target files exist; `--force` overwrites all three. Intended for users who want to customize the container image without forking the repo. See §"Container image customization". |
 | `install-completion [<shell>]` | Install shell tab-completion for ccairgap. Writes one `source` line into `~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish` (shell picked by arg or prompt). Backed by `@pnpm/tabtab`. Shell completion script offers static subcommand + flag names plus dynamic candidates: session ids for `recover` / `discard`, custom titles for `--resume` / `-r`, shell names for `install-completion`. See §"Shell completion". |
 | `uninstall-completion` | Remove the ccairgap `source` line from every supported shell rc. Idempotent — no-op when not installed. |
@@ -1199,31 +1199,33 @@ On every normal `ccairgap` startup, orphaned sessions are detected and a warning
 
 ## Attach
 
-Advanced subcommand. Runs a second interactive `claude` inside an already-running session container. Intended for power users who understand the implications below; not meant to be ergonomic for casual use.
+Advanced subcommand. Runs a second interactive selected agent inside an already-running session container. Intended for power users who understand the implications below; not meant to be ergonomic for casual use.
 
 ```
-ccairgap attach <id>
+ccairgap attach [--agent claude|codex] <id> -- <selected-agent-args>
 ```
 
-No flags, no `--` passthrough, no selected-agent arg surface. The denylist machinery from §"Selected-agent arg passthrough" applies only to the launch flow; attach offers nothing to filter.
+By default, attach uses the agent recorded in `$SESSION/manifest.json`; older manifests without `agent` default to Claude. `CCAIRGAP_AGENT` from the running container wins over the manifest when present. `--agent claude|codex` overrides both, but Codex attach is rejected if the running container does not expose `CODEX_HOME`.
+
+Attach is the only subcommand with a selected-agent passthrough tail. Claude attach uses the same Claude denylist as launch. Codex attach uses the interactive Codex allowlist from §"Codex launch semantics"; unsafe or unknown Codex flags fail before `docker exec`.
 
 **Mechanism.**
 
 1. Probe `docker inspect ccairgap-<id>`. Abort with a clear error if the container is missing or not in `State.Running == true`. (Authoritative single-shot check; `runningContainerNames()` set-membership is too coarse for the attach error message.)
 2. Read `CCAIRGAP_CWD` from `Config.Env` off the inspect output (the launch flow sets this env var so the entrypoint can `cd` to the workspace at startup; `Config.WorkingDir` is unset because the CLI does not pass `docker run -w`). `<id>` itself comes from argv.
 3. Generate a 4-hex random suffix via `crypto.randomBytes(2).toString("hex")`. Final attached label is `<id>#<rand4>` for TUI disambiguation. Stateless; no slot tracking, no IPC.
-4. Exec `docker exec -it --user $(id -u):$(id -g) -w <workdir-from-CCAIRGAP_CWD> -e CCAIRGAP_NAME="<id>#<rand4>" ccairgap-<id> claude --dangerously-skip-permissions`. Stdio inherited. CLI exit code mirrors the `docker exec` exit code so shell composition (`ccairgap attach foo && …`) works.
+4. Exec `docker exec -it --user $(id -u):$(id -g) -w <workdir-from-CCAIRGAP_CWD> -e CCAIRGAP_NAME="<id>#<rand4>" ccairgap-<id> ...`. Claude runs as `claude --dangerously-skip-permissions`; Codex runs as `codex --dangerously-bypass-approvals-and-sandbox --cd <workdir-from-CCAIRGAP_CWD>`. Stdio inherited. CLI exit code mirrors the `docker exec` exit code so shell composition (`ccairgap attach foo && …`) works.
 
-**Workdir is inherited from PID 1.** In a multi-repo session, that means the attached claude lands in the primary `--repo` workspace just like the original. No `--repo` selector flag — the user `cd`s manually if they need a different repo. Single-repo policy: attach exposes the same one repo PID 1 sees, no more.
+**Workdir is inherited from PID 1.** In a multi-repo session, that means the attached agent lands in the primary `--repo` workspace just like the original. No `--repo` selector flag — the user `cd`s manually if they need a different repo. Single-repo policy: attach exposes the same one repo PID 1 sees, no more.
 
 **Lifecycle.**
 
-- Container lifecycle is bound to PID 1 only. Exiting the attached claude (normal exit, Ctrl-C, SIGKILL of the `docker exec` subprocess) does **not** terminate the container; PID 1's claude keeps running.
-- Conversely, exiting PID 1 terminates the container, which kills every attached claude immediately. Same for SIGKILL of PID 1.
-- **Handoff fires only on PID-1 exit.** Attached claudes' transcripts are written under the same in-container `~/.claude/projects/<encoded>/<uuid>.jsonl` tree as PID 1's, so when PID 1 finally exits the existing transcript-copy step in §"Handoff routine" picks them all up — no per-attach tracking required.
-- An attached claude crashing or being killed leaves no host-side residue. There is no per-attach session dir, no per-attach branch, no per-attach manifest entry.
+- Container lifecycle is bound to PID 1 only. Exiting the attached agent (normal exit, Ctrl-C, SIGKILL of the `docker exec` subprocess) does **not** terminate the container; PID 1's agent keeps running.
+- Conversely, exiting PID 1 terminates the container, which kills every attached agent immediately. Same for SIGKILL of PID 1.
+- **Handoff fires only on PID-1 exit.** Attached agents write into the same session-local state as PID 1, so the existing handoff step picks up the artifacts for that selected agent — no per-attach tracking required.
+- An attached agent crashing or being killed leaves no host-side residue. There is no per-attach session dir, no per-attach branch, no per-attach manifest entry.
 
-**Authentication.** Both claudes share the same in-container `~/.claude/` (rsync-materialized from the RO `/host-claude` mount at PID-1 entry). The bind-mounted `/host-claude-creds-dir/.credentials.json` is shared too. Lock-coordinated refresh via `proper-lockfile` (see §"Authentication flow") already serializes concurrent refreshers, so nothing extra is needed for attach.
+**Authentication.** Attached Claude shares the same in-container `~/.claude/` and bind-mounted `/host-claude-creds-dir/.credentials.json` as PID 1. Lock-coordinated refresh via `proper-lockfile` (see §"Authentication flow") already serializes concurrent refreshers. Attached Codex shares the session-local `CODEX_HOME=/home/claude/.codex`; auth is copied in only at launch and is never copied back.
 
 **Security posture is unchanged.** `docker exec` inherits the run-time security flags applied at `docker run` (`--cap-drop=ALL`, `--security-opt=no-new-privileges`, the user's `--docker-run-arg` set). Attach does not add capabilities, mounts, or env vars beyond `CCAIRGAP_NAME`. No new host write paths.
 
@@ -1253,11 +1255,14 @@ Backed by [`@pnpm/tabtab`](https://www.npmjs.com/package/@pnpm/tabtab) — the s
 
 | When `prev` is… | Candidates |
 |---|---|
+| `attach` | `--agent` plus session ids. |
 | `recover`, `discard` | Session ids — directory names under `$XDG_STATE_HOME/ccairgap/sessions/`, filtered to those whose container is not currently running. Reuses `scanOrphans`. |
 | `-r`, `--resume` | Custom titles of transcripts under `~/.claude/projects/<encoded-workspace-cwd>/*.jsonl`. Reuses `listProjectSessions` from `resumeResolver.ts` (head+tail 64 KiB scan per transcript). Requires a workspace repo (cwd-as-repo or previously-passed `--repo`); absent → no candidates. |
-| `--agent` | `claude`, `codex`. `codex` completes because the selection surface exists, even though runtime launch remains disabled in this staged build. |
+| `--agent` | `claude`, `codex`. |
 | `install-completion` | `bash`, `zsh`, `fish`. |
 | any other flag | No dynamic completion — tabtab falls back to filesystem completion where appropriate. |
+
+The static set also includes `codex-args` so config-key-oriented shells can surface the selected Codex passthrough key alongside the launch flags.
 
 **Failure mode.** Any scan error inside the callback is swallowed — completion emits nothing rather than a stacktrace. Exit code is always 0 so the shell completion function doesn't render shell-level errors during tab-press.
 
