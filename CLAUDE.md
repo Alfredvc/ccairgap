@@ -29,10 +29,11 @@ npm run test:watch
 
 ```
 src/
+  agent.ts       selected-agent types/defaulting/parsing (`claude` default, `codex` staged)
   cli.ts          commander entry; arg parse, config merge, dispatch
-  cliSplit.ts     pre-split process.argv at first bare `--` for claude-args passthrough; rejects on subcommand
+  cliSplit.ts     pre-split process.argv at first bare `--` for selected-agent passthrough; rejects on subcommand; keeps splitClaudeArgs wrapper
   claudeArgs.ts   denylist + tokenizer for `claude` passthrough (CLI `--` tail + config `claude-args:`)
-  config.ts       YAML config load + CLI-vs-config merge (CLI > config > defaults); exposes KEY_ALIASES
+  config.ts       YAML config load + CLI-vs-config merge (CLI > config > defaults); exposes KEY_ALIASES; parses `agent` / `codex-args`
   configLayered.ts layered merge across user-wide-integrations / user-wide-config / project / CLI; mergeLayers / loadAllLayers
   userConfig.ts   user-wide dir resolution (resolveUserWideDir), integrations load (loadIntegrationsDir), user-wide config.yaml load (loadUserWideConfig)
   launch.ts       main launch pipeline: clone, mounts, docker run, exit trap

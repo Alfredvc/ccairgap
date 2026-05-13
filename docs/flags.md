@@ -4,6 +4,7 @@
 |------|---------|------------|-------------|
 | `--config <path>` | `<git-root>/.ccairgap/config.yaml` (fallback: `<git-root>/.config/ccairgap/config.yaml`) | no | YAML config file. See [config.md](config.md). |
 | `--profile <name>` | — | no | Named config under the canonical dir: `default` = `config.yaml`, any other `<name>` = `<name>.config.yaml`. Missing profile file is a hard error. Mutually exclusive with `--config`. |
+| `--agent <claude\|codex>` | `claude` | no | Select the agent provider. `claude` is the default. `codex` is accepted by the CLI/config surface but launch is rejected before side effects until Codex runtime support lands. |
 | `--repo <path>` | cwd (if git repo) | no | Host repo exposed as the workspace (container cwd). Cloned `--shared`; branch `ccairgap/<id>` created on exit. |
 | `--extra-repo <path>` | — | yes | Additional repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | — | yes | Extra read-only bind mount. |
@@ -28,7 +29,7 @@
 | `--no-clipboard` | — | no | Disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See [SPEC.md](SPEC.md) §"Bare mode". |
 | `--no-user-config` | off | no | Skip the user-wide layer (`~/.config/ccairgap/` config.yaml + integrations/ + CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations that want a hermetic launch without going full `--bare`. See [config.md](config.md) §"User-wide config". |
-| `-- <claude-args…>` | — | no | Tokens after `--` are forwarded verbatim to `claude` inside the container. See [claude-args.md](claude-args.md). |
+| `-- <selected-agent-args…>` | — | no | Tokens after `--` are the selected-agent passthrough tail. In this build they are forwarded to Claude when `--agent claude`; with `--agent codex`, launch is still rejected before runtime. See [claude-args.md](claude-args.md). |
 
 ## Notes on `--name`
 

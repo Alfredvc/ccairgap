@@ -243,6 +243,44 @@ mount:
     );
   });
 
+  it("parses agent (kebab/camel invariant) and codex-args aliases", () => {
+    const kebab = parseConfig(
+      "agent: codex\ncodex-args:\n  - --model\n  - gpt-5\n",
+      SRC,
+    );
+    const camel = parseConfig(
+      "agent: claude\ncodexArgs:\n  - --search\n",
+      SRC,
+    );
+
+    expect(kebab).toEqual({
+      agent: "codex",
+      codexArgs: ["--model", "gpt-5"],
+    });
+    expect(camel).toEqual({
+      agent: "claude",
+      codexArgs: ["--search"],
+    });
+  });
+
+  it("rejects wrong types for agent and codex-args", () => {
+    expect(() => parseConfig("agent: 42\n", SRC)).toThrow(
+      /config\.agent: expected string/,
+    );
+    expect(() => parseConfig("codex-args: --model gpt-5\n", SRC)).toThrow(
+      /config\.codex-args: expected array of strings/,
+    );
+    expect(() => parseConfig("codex-args:\n  - 1\n", SRC)).toThrow(
+      /config\.codex-args: expected string/,
+    );
+  });
+
+  it("rejects invalid agent values", () => {
+    expect(() => parseConfig("agent: cursor\n", SRC)).toThrow(
+      /config\.agent: invalid agent 'cursor' \(allowed: claude, codex\)/,
+    );
+  });
+
   it("parses no-auto-memory: true as noAutoMemory = true", () => {
     const cfg = parseConfig("no-auto-memory: true\n", "<test>");
     expect(cfg.noAutoMemory).toBe(true);
@@ -320,6 +358,11 @@ describe("resolveConfigPaths", () => {
 
   it("leaves scalars and absent fields untouched", () => {
     const cfg = { base: "main", rebuild: true };
+    expect(resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml")).toEqual(cfg);
+  });
+
+  it("leaves agent and codexArgs untouched", () => {
+    const cfg = { agent: "codex" as const, codexArgs: ["--model", "gpt-5"] };
     expect(resolveConfigPaths(cfg, "/repo/.ccairgap/config.yaml")).toEqual(cfg);
   });
 

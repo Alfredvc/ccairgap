@@ -1,10 +1,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentKind } from "./agent.js";
 
 export const MANIFEST_VERSION = 1 as const;
 
 export interface ManifestV1 {
   version: 1;
+  agent?: AgentKind;
   cli_version: string;
   image_tag: string;
   created_at: string;
@@ -33,6 +35,9 @@ export interface ManifestV1 {
    * Additive field (optional): pre-existing v1 sessions without it recover fine.
    */
   sync?: Array<{ src_host: string; session_src: string }>;
+  codex?: {
+    host_home?: string;
+  };
   claude_code: {
     host_version?: string;
     image_version?: string;
@@ -68,4 +73,8 @@ export function readManifest(sessionDirPath: string, cliVersion: string): Manife
     throw new UnknownManifestVersionError(parsed.version, cliVersion);
   }
   return parsed as Manifest;
+}
+
+export function readManifestAgent(manifest: Manifest): AgentKind {
+  return manifest.agent ?? "claude";
 }

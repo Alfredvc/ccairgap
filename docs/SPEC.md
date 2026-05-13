@@ -98,6 +98,7 @@ Default (no subcommand): start a new session.
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
+| `--agent <claude\|codex>` | no | Select the agent provider. Default is `claude`. In the current staged build, `codex` is accepted by CLI/config parsing but launch is rejected before session, auth, image, Docker, or handoff side effects. |
 | `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `ccairgap/<id>` created. If omitted, defaults to the current working directory (must be a git repo). |
 | `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `ccairgap/<id>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
@@ -117,9 +118,9 @@ Default (no subcommand): start a new session.
 | `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
 | `--no-auto-memory` | no | Kill switch for the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var. When set, ccairgap does not surface the host auto-memory directory into the container; Claude Code falls back to its in-container default path under `~/.claude/projects/<sanitized>/memory/` which only exists for the current session (discarded on exit). Config key: `no-auto-memory: true`. |
 | `--bare` | no | Launch a "naked" container: no config-file loading, no workspace-repo inference from cwd. User mounts whatever they need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. All Claude config flow is unchanged (`~/.claude` RO mount, credentials, plugins cache, etc.). See §"Bare mode". |
-| `-- <claude-args…>` | no | Tokens after `--` are forwarded verbatim to the in-container `claude` invocation, subject to a small denylist (see §"Claude arg passthrough"). Example: `ccairgap --repo . -- --model opus --effort high`. Config equivalent: `claude-args: [<token>, …]`. Config and CLI tails are concatenated (config first, CLI appended); claude's last-wins arg parser handles duplicates. |
+| `-- <selected-agent-args…>` | no | Tokens after `--` are the selected-agent passthrough tail. With `--agent claude`, they are forwarded verbatim to the in-container `claude` invocation, subject to the Claude denylist (see §"Selected-agent arg passthrough"). With `--agent codex`, they are reserved for Codex passthrough, but launch is still rejected before runtime in this build. |
 
-No `--auth` or `--profile` flags. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
+No `--auth` flag. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
 **Subcommands:**
 
@@ -204,8 +205,8 @@ YAML file that mirrors launch flags. Default locations (checked in order): `<git
 
 - **Load:** the CLI walks up from `cwd` to find the git root; it checks `<git-root>/.ccairgap/config.yaml` first, then `<git-root>/.config/ccairgap/config.yaml`; the first one found is loaded. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
 - **Profiles:** `--profile <name>` loads `<git-root>/.ccairgap/<name>.config.yaml` (fallback `<git-root>/.config/ccairgap/<name>.config.yaml`) instead of the default `config.yaml`. `--profile default` is equivalent to no flag (loads `config.yaml`). Missing profile file is a hard error (unlike the silent walk-fallback for the default). Profile names must match `[A-Za-z0-9._-]+`. `--config` and `--profile` are mutually exclusive. Relative-path anchoring (see §"Relative path resolution") treats profile files identically to `config.yaml` — same canonical-dir detection, so `repo: .` in `web.config.yaml` still means the git root. Profiles are a filename lookup only: no inheritance, no merge between profiles.
-- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth.
-- **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
+- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth. `agent: codex` and `codex-args` are accepted as staged surfaces, but Codex launch is disabled before side effects until the runtime chunks land.
+- **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`, `codex-args`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
 - **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
 
 ### Relative path resolution
@@ -226,6 +227,7 @@ Implementation: `src/config.ts` `resolveConfigPaths` handles `repo`/`extra-repo`
 # <git-root>/.ccairgap/config.yaml  (or .config/ccairgap/config.yaml)
 
 # Workspace-space (anchored on git root)
+agent: claude             # default; `codex` is parsed but runtime-disabled in this build
 repo: .                 # optional; defaults to git root anyway
 extra-repo:
   - ../sibling          # sibling of git root
@@ -252,12 +254,18 @@ hooks:
     - "python3 *"
 
 # Forwarded verbatim to the in-container `claude` (subject to the denylist
-# in §"Claude arg passthrough"). Concatenated with the CLI `--` tail.
+# in §"Selected-agent arg passthrough"). Concatenated with the CLI `--` tail.
 claude-args:
   - --model
   - opus
   - --effort
   - high
+
+# Reserved for future Codex runtime passthrough. Parsed and layered now;
+# launch still rejects agent: codex before side effects in this build.
+codex-args:
+  - --model
+  - gpt-5
 ```
 
 ### `.ccairgap/` scope Claude config
@@ -637,7 +645,7 @@ Runs at container start. Steps:
 11. Build the final `claude` args: always `--dangerously-skip-permissions`; then label, resume, passthrough, and (optionally) print:
    - **Label (`-n`):** `CCAIRGAP_NAME` carries the session id (always set by the CLI). Use `-n "ccairgap $CCAIRGAP_NAME"`. Fallback to `-n "ccairgap"` only when `CCAIRGAP_NAME` is unset (i.e. the entrypoint was launched directly without the CLI env).
    - **Resume (`-r`):** if `CCAIRGAP_RESUME` is set, append `-r "$CCAIRGAP_RESUME"`.
-   - **Passthrough (`"$@"`):** the CLI appends filtered claude-args as positional args to `docker run`; they arrive at the entrypoint as `"$@"` and are spliced verbatim. Filtered host-side; the entrypoint does not re-validate. See §"Claude arg passthrough".
+   - **Passthrough (`"$@"`):** the CLI appends filtered claude-args as positional args to `docker run`; they arrive at the entrypoint as `"$@"` and are spliced verbatim. Filtered host-side; the entrypoint does not re-validate. See §"Selected-agent arg passthrough".
    - The `-n` value (`"ccairgap <id>"`) is intentionally **not** the same as the UserPromptSubmit hook's `sessionTitle` output (`"[ccairgap] <id>"`): Claude Code's hook layer dedups against the current title, so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire.
    - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`. `-p` stays the final positional so claude treats `$CCAIRGAP_PRINT` as the prompt argument (claude's prompt-positional convention).
 
@@ -830,14 +838,17 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 - Raw args that add RW mounts (`-v <host>:<ctr>:rw`, `--mount type=bind,source=<host>,...`) expand the writable-paths set beyond what the CLI can see. §"Host writable paths" item 6 records this formally.
 - Users who only want per-path host RW should prefer `--mount <path>` — it's narrower in semantics and stays within the structured flag surface.
 
-## Claude arg passthrough
+## Selected-agent arg passthrough
 
-ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
+ccairgap treats tokens after CLI `--` as the selected-agent passthrough tail. Claude remains the default and is the only runtime-enabled agent in this build. With `agent=claude`, ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
+
+`agent=codex` and config `codex-args:` are accepted and layered now, but Codex launch is rejected before session, auth, image, Docker, or handoff side effects. A later chunk defines Codex passthrough validation before runtime is enabled.
 
 **Sources:**
 
 - **CLI:** tokens after a bare `--` are the passthrough tail. Example: `ccairgap --repo . -- --model opus --effort high`. The pre-split runs in `src/cliSplit.ts` before commander parses, so the existing unknown-positional guard still catches typos like `ccairgap lsit`. `--` passthrough on a known subcommand (`list`, `recover`, `discard`, `doctor`, `inspect`, `init`) errors with "`--` passthrough is only valid on the default launch command".
 - **Config:** `claude-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Same shape as the CLI tail: a list of literal tokens. No map form — `claude-args: {model: opus}` is rejected by `assertStringArray`.
+- **Codex config:** `codex-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Parsed and layered now; validation and runtime use are added later.
 - **Merge:** config tokens come first, CLI tokens append. Claude's last-wins arg parser handles duplicates; users can rely on that to override config values from the CLI (config sets `--model opus`, CLI passes `-- --model sonnet` → claude keeps the last).
 
 **Plumbing:** the merged + filtered list is appended as positional args to `docker run`. Docker forwards them to the entrypoint as `"$@"` (execve-style — no shell parsing, no JSON layer). The entrypoint splices `"$@"` between `RESUME_ARGS` and `-p` in the `exec claude` line. Argv (not env-var JSON) avoids serialization layers and the per-env-var size cap; values with spaces, quotes, or newlines round-trip unchanged.
@@ -1163,7 +1174,7 @@ Advanced subcommand. Runs a second interactive `claude` inside an already-runnin
 ccairgap attach <id>
 ```
 
-No flags, no `--` passthrough, no claude-arg surface. The denylist machinery from §"Claude arg passthrough" applies only to the launch flow; attach offers nothing to filter.
+No flags, no `--` passthrough, no selected-agent arg surface. The denylist machinery from §"Selected-agent arg passthrough" applies only to the launch flow; attach offers nothing to filter.
 
 **Mechanism.**
 
@@ -1191,9 +1202,11 @@ No flags, no `--` passthrough, no claude-arg surface. The denylist machinery fro
 
 `$SESSION/manifest.json` carries a top-level `"version": 1` field plus a `repos` array with one entry per cloned repo. Fields consumed by the handoff routine, `recover`, and orphan-scan include:
 
+- `agent` (`"claude"` or `"codex"`, optional, additive v1): selected agent for the session. Omitted in older manifests; consumers MUST treat absence as `"claude"`.
 - `repos[].basename` (string, required): the raw basename of the host repo path.
 - `repos[].host_path` (string, required): the absolute host path of the real repo.
 - `repos[].alternates_name` (string, optional, additive v1): unique per-repo scratch segment `<basename>-<sha256(host_path)[:8]>`. Handoff/recover/orphan-scan use this to locate `$SESSION/repos/<alternates_name>` on disk. Omitted in sessions written by older CLI builds; consumers MUST fall back to `basename` when absent.
+- `codex.host_home` (string, optional until Codex state materialization lands): authoritative launch-time host Codex home when Codex state has been prepared for the session.
 
 ## Shell completion
 
@@ -1211,6 +1224,7 @@ Backed by [`@pnpm/tabtab`](https://www.npmjs.com/package/@pnpm/tabtab) — the s
 |---|---|
 | `recover`, `discard` | Session ids — directory names under `$XDG_STATE_HOME/ccairgap/sessions/`, filtered to those whose container is not currently running. Reuses `scanOrphans`. |
 | `-r`, `--resume` | Custom titles of transcripts under `~/.claude/projects/<encoded-workspace-cwd>/*.jsonl`. Reuses `listProjectSessions` from `resumeResolver.ts` (head+tail 64 KiB scan per transcript). Requires a workspace repo (cwd-as-repo or previously-passed `--repo`); absent → no candidates. |
+| `--agent` | `claude`, `codex`. `codex` completes because the selection surface exists, even though runtime launch remains disabled in this staged build. |
 | `install-completion` | `bash`, `zsh`, `fish`. |
 | any other flag | No dynamic completion — tabtab falls back to filesystem completion where appropriate. |
 

@@ -6,7 +6,8 @@ import { launch } from "./launch.js";
 import { attach, doctor, discard, initCmd, inspectCmd, listOrphans, recover } from "./subcommands.js";
 import { type ConfigFile } from "./config.js";
 import { loadAllLayers } from "./configLayered.js";
-import { splitClaudeArgs } from "./cliSplit.js";
+import { splitSelectedAgentArgs } from "./cliSplit.js";
+import { parseAgentKind, resolveAgentSelection, type AgentKind } from "./agent.js";
 import {
   completionServer,
   installCompletion,
@@ -37,6 +38,7 @@ function collect(value: string, previous: string[]): string[] {
 
 /** Merge CLI > config. Scalars: CLI wins. Arrays concat (config first, then CLI). Maps merge (CLI wins per-key). */
 function mergeRun(cli: {
+  agent?: AgentKind;
   repo?: string;
   extraRepo: string[];
   ro: string[];
@@ -57,11 +59,18 @@ function mergeRun(cli: {
   resume?: string;
   clipboard?: boolean;
   noPreserveDirty?: boolean;
-  claudeArgs: string[];
+  selectedAgentArgs: string[];
   noAutoMemory?: boolean;
   refreshBelowTtl?: number;
 }, cfg: ConfigFile) {
+  const agentSelection = resolveAgentSelection({
+    configAgent: cfg.agent,
+    cliAgent: cli.agent,
+    print: cli.print ?? cfg.print,
+    resume: cli.resume ?? cfg.resume,
+  });
   return {
+    agent: agentSelection.kind,
     repo: cli.repo ?? cfg.repo,
     extraRepos: [...(cfg.extraRepo ?? []), ...cli.extraRepo],
     ros: [...(cfg.ro ?? []), ...cli.ro],
@@ -82,14 +91,21 @@ function mergeRun(cli: {
     resume: cli.resume ?? cfg.resume,
     clipboard: cli.clipboard ?? cfg.clipboard ?? true,
     noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
-    claudeArgs: [...(cfg.claudeArgs ?? []), ...cli.claudeArgs],
+    claudeArgs: [
+      ...(cfg.claudeArgs ?? []),
+      ...(agentSelection.kind === "claude" ? cli.selectedAgentArgs : []),
+    ],
+    codexArgs: [
+      ...(cfg.codexArgs ?? []),
+      ...(agentSelection.kind === "codex" ? cli.selectedAgentArgs : []),
+    ],
     noAutoMemory: cli.noAutoMemory ?? cfg.noAutoMemory ?? false,
     refreshBelowTtl: cli.refreshBelowTtl ?? cfg.refreshBelowTtl ?? 120,
   };
 }
 
 async function main() {
-  const { argvForCommander, cliClaudeArgs } = splitClaudeArgs(process.argv);
+  const { argvForCommander, cliSelectedAgentArgs } = splitSelectedAgentArgs(process.argv);
 
   const program = new Command();
 
@@ -123,6 +139,7 @@ async function main() {
         "(e.g. --profile web → <git-root>/.ccairgap/web.config.yaml). " +
         "Missing profile file is a hard error. Mutually exclusive with --config.",
     )
+    .option("--agent <claude|codex>", "selected agent. Claude is the default; Codex launch is staged and disabled in this build.")
     .option("--repo <path>", "host repo to expose as workspace (cloned --shared). Defaults to cwd if it's a git repo.")
     .option("--extra-repo <path>", "additional host repo exposed alongside --repo (cloned --shared). Repeatable.", collect, [])
     .option("--ro <path>", "additional read-only bind mount. Repeatable.", collect, [])
@@ -281,6 +298,7 @@ async function main() {
       const merged = mergeRun(
         {
           repo: opts.repo as string | undefined,
+          agent: opts.agent !== undefined ? parseAgentKind(opts.agent, "--agent") : undefined,
           extraRepo: opts.extraRepo as string[],
           ro: opts.ro as string[],
           cp: opts.cp as string[],
@@ -300,7 +318,7 @@ async function main() {
           resume: opts.resume as string | undefined,
           clipboard: cliClipboard,
           noPreserveDirty: cliNoPreserveDirty,
-          claudeArgs: cliClaudeArgs,
+          selectedAgentArgs: cliSelectedAgentArgs,
           noAutoMemory: cliNoAutoMemory,
           refreshBelowTtl: opts.refreshBelowTtl as number | undefined,
         },
@@ -366,6 +384,7 @@ async function main() {
       }
 
       const result = await launch({
+        agent: merged.agent,
         repos,
         ros,
         cp: merged.cp,
@@ -387,6 +406,7 @@ async function main() {
         resume: merged.resume,
         noPreserveDirty: merged.noPreserveDirty,
         claudeArgs: merged.claudeArgs,
+        codexArgs: merged.codexArgs,
         noAutoMemory: merged.noAutoMemory,
         refreshBelowTtlMinutes: merged.refreshBelowTtl,
         // --bare suppresses launch-config (config.yaml + integrations) but keeps

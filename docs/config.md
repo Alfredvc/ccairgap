@@ -2,7 +2,7 @@
 
 Any launch flag can live in a YAML file. Default load path: `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap prints a warning to stderr and uses the primary). Override with `--config <path>` or `--profile <name>`.
 
-Precedence: **CLI > project config > user-wide config (`config.yaml` > `integrations/`) > built-in defaults.** Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`): concat, config first, CLI appended (no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins.
+Precedence: **CLI > project config > user-wide config (`config.yaml` > `integrations/`) > built-in defaults.** Scalars: CLI wins. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`, `codex-args`): concat, config first, CLI appended (no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins.
 
 Both kebab-case (matches CLI flag names) and camelCase keys are accepted — kebab is preferred because it mirrors the flags. Unknown keys or wrong types abort launch with a clear error. The CLI validator in `src/config.ts` is source of truth; this page mirrors it.
 
@@ -10,6 +10,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 
 | YAML key | Type | Equivalent flag | Notes |
 |----------|------|-----------------|-------|
+| `agent` | `claude` or `codex` | `--agent` | Default `claude`. `codex` is accepted by config and CLI, but launch is rejected before side effects until Codex runtime support lands. |
 | `repo` | string | `--repo` | Workspace repo. Single path. **Optional** — defaults to the git root containing the config. Relative → resolved against the **workspace anchor**. |
 | `extra-repo` | `[string]` | `--extra-repo` (repeat) | Additional repos mounted + cloned. Same anchor as `repo`. Not the workspace. |
 | `ro` | `[string]` | `--ro` (repeat) | RO bind mounts. Any path. Same anchor as `repo`. |
@@ -28,6 +29,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `docker-run-arg` | `[string]` | `--docker-run-arg` (repeat) | Raw docker tokens, shell-split. See [docker-run-args.md](docker-run-args.md). |
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |
 | `claude-args` | `[string]` | `-- <token> …` (tail) | Tokens forwarded verbatim to `claude` inside the container, subject to the denylist. Config first, CLI `--` tail appended. |
+| `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens reserved for Codex passthrough. They are parsed and layered now, but Codex launch is still disabled before runtime in this build. |
 | `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
 | `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |

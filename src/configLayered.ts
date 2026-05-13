@@ -41,12 +41,12 @@ export interface LayeredResult {
 }
 
 const SCALAR_KEYS = [
-  "repo", "base", "keepContainer", "dockerfile", "rebuild", "print",
+  "agent", "repo", "base", "keepContainer", "dockerfile", "rebuild", "print",
   "name", "warnDockerArgs", "resume", "clipboard", "noPreserveDirty",
   "noAutoMemory", "refreshBelowTtl",
 ] as const;
 const ARRAY_KEYS = [
-  "extraRepo", "ro", "cp", "sync", "mount", "dockerRunArg", "claudeArgs",
+  "extraRepo", "ro", "cp", "sync", "mount", "dockerRunArg", "claudeArgs", "codexArgs",
 ] as const;
 const SPECIAL_KEYS = ["hooks", "mcp", "dockerBuildArg"] as const;
 

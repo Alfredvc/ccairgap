@@ -534,3 +534,140 @@ exit 0
     expect(run).toContain(`-v ${real}:/host-ca-certs/real-ca.pem:ro`);
   });
 });
+
+describe("launch agent=codex staging guard", () => {
+  let root: string;
+  let ccairgapHome: string;
+  let fakeHome: string;
+  let repoDir: string;
+  let savedEnv: Record<string, string | undefined>;
+  let exitSpy: MockInstance<(code?: string | number | null | undefined) => never>;
+  let stderrSpy: MockInstance<(...args: unknown[]) => void>;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "airgap-codex-disabled-")));
+    ccairgapHome = join(root, "state");
+    fakeHome = join(root, "home");
+    repoDir = join(root, "repo");
+    mkdirSync(ccairgapHome, { recursive: true });
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    execaSync("git", ["init", "-q"], { cwd: repoDir });
+
+    savedEnv = {
+      CCAIRGAP_HOME: process.env.CCAIRGAP_HOME,
+      HOME: process.env.HOME,
+    };
+    process.env.CCAIRGAP_HOME = ccairgapHome;
+    process.env.HOME = fakeHome;
+
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+    stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    stderrSpy.mockRestore();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.doUnmock("./binaries.js");
+    vi.doUnmock("./sessionId.js");
+    vi.doUnmock("./credentials.js");
+    vi.doUnmock("./orphans.js");
+    vi.doUnmock("./image.js");
+    vi.doUnmock("execa");
+    vi.doUnmock("./handoff.js");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("exits with the staged disabled message before side effects", async () => {
+    await vi.resetModules();
+    const generateId = vi.fn(async () => {
+      throw new Error("generateId should not be reached for agent=codex");
+    });
+    const resolveCredentials = vi.fn(async () => {
+      throw new Error("resolveCredentials should not be reached for agent=codex");
+    });
+    const scanOrphans = vi.fn(async () => {
+      throw new Error("scanOrphans should not be reached for agent=codex");
+    });
+    const ensureImage = vi.fn(async () => {
+      throw new Error("ensureImage should not be reached for agent=codex");
+    });
+    const dockerRun = vi.fn(async () => {
+      throw new Error("docker run should not be reached for agent=codex");
+    });
+    const handoffSpy = vi.fn(async () => {
+      throw new Error("handoff should not be reached for agent=codex");
+    });
+
+    vi.doMock("./binaries.js", () => ({
+      requireHostBinaries: vi.fn(async () => {}),
+    }));
+    vi.doMock("./sessionId.js", () => ({
+      generateId,
+      listAllContainerNames: vi.fn(async () => []),
+    }));
+    vi.doMock("./credentials.js", () => ({
+      CredentialsDeadError: class CredentialsDeadError extends Error {
+        finalTtlMs = 0;
+      },
+      readHostCredsJson: vi.fn(),
+      resolveCredentials,
+    }));
+    vi.doMock("./orphans.js", () => ({ scanOrphans }));
+    vi.doMock("./image.js", () => ({
+      defaultDockerfile: vi.fn(() => "/unused/Dockerfile"),
+      ensureImage,
+      hostClaudeVersion: vi.fn(async () => "1.0.0"),
+    }));
+    vi.doMock("execa", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("execa")>()),
+      execa: dockerRun,
+    }));
+    vi.doMock("./handoff.js", () => ({ handoff: handoffSpy }));
+
+    const { launch: isolatedLaunch } = await import("./launch.js");
+
+    await expect(
+      isolatedLaunch({
+        agent: "codex",
+        repos: [repoDir],
+        ros: [],
+        cp: [],
+        sync: [],
+        mount: [],
+        keepContainer: false,
+        dockerBuildArgs: {},
+        rebuild: false,
+        hookEnable: [],
+        mcpEnable: [],
+        dockerRunArgs: [],
+        warnDockerArgs: false,
+        bare: false,
+        clipboard: false,
+        noPreserveDirty: false,
+        claudeArgs: [],
+        codexArgs: [],
+        noAutoMemory: false,
+        refreshBelowTtlMinutes: 0,
+      }),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines).toContain(
+      "ccairgap: agent=codex is accepted but runtime launch is disabled in this build",
+    );
+    expect(generateId).not.toHaveBeenCalled();
+    expect(resolveCredentials).not.toHaveBeenCalled();
+    expect(scanOrphans).not.toHaveBeenCalled();
+    expect(ensureImage).not.toHaveBeenCalled();
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(handoffSpy).not.toHaveBeenCalled();
+    expect(existsSync(join(ccairgapHome, "sessions"))).toBe(false);
+  });
+});

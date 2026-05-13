@@ -16,6 +16,7 @@ function makeProgram(): Command {
   p.name("ccairgap")
     .option("--repo <path>", "repo")
     .option("--ro <path>", "ro")
+    .option("--agent <claude|codex>", "agent")
     .option("-r, --resume <id>", "resume");
   p.command("list").description("list").action(() => {});
   p.command("recover [id]").description("recover").action(() => {});
@@ -27,7 +28,9 @@ describe("completion — static candidates", () => {
   const program = makeProgram();
 
   it("launchFlags returns long-form option names", () => {
-    expect(launchFlags(program)).toEqual(expect.arrayContaining(["--repo", "--ro", "--resume"]));
+    expect(launchFlags(program)).toEqual(
+      expect.arrayContaining(["--repo", "--ro", "--agent", "--resume"]),
+    );
   });
 
   it("subcommandNames excludes the hidden completion-server callback", () => {
@@ -85,9 +88,15 @@ describe("completion — candidatesFor routing", () => {
     expect(await candidatesFor("install-completion", program)).toEqual(["bash", "zsh", "fish"]);
   });
 
+  it("prev=--agent → supported agent names", async () => {
+    expect(await candidatesFor("--agent", program)).toEqual(["claude", "codex"]);
+  });
+
   it("prev is an unrelated flag → subcommand + flag list", async () => {
     const out = await candidatesFor("--unknown", program);
-    expect(out).toEqual(expect.arrayContaining(["list", "recover", "--repo", "--ro", "--resume"]));
+    expect(out).toEqual(
+      expect.arrayContaining(["list", "recover", "--repo", "--ro", "--agent", "--resume"]),
+    );
   });
 
   it("prev=recover and no sessions dir → []", async () => {

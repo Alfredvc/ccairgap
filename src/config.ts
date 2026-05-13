@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execaSync } from "execa";
 import { parse as parseYaml } from "yaml";
+import { parseAgentKind, type AgentKind } from "./agent.js";
 
 /** Default config file paths relative to git repo root (checked in order). */
 export const DEFAULT_CONFIG_REL = ".ccairgap/config.yaml";
@@ -31,6 +32,7 @@ function assertProfileName(profile: string): void {
  * Undefined = unset (not "use default").
  */
 export interface ConfigFile {
+  agent?: AgentKind;
   repo?: string;
   extraRepo?: string[];
   ro?: string[];
@@ -53,6 +55,8 @@ export interface ConfigFile {
   noPreserveDirty?: boolean;
   /** Tokens forwarded verbatim to `claude` (subject to denylist). */
   claudeArgs?: string[];
+  /** Tokens forwarded verbatim to `codex` once Codex launch is enabled. */
+  codexArgs?: string[];
   noAutoMemory?: boolean;
   /** Minutes. Host token ttl below this triggers pre-launch `claude auth login`. */
   refreshBelowTtl?: number;
@@ -60,6 +64,7 @@ export interface ConfigFile {
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
 const KEY_ALIASES: Record<string, keyof ConfigFile> = {
+  "agent": "agent",
   "repo": "repo",
   "extra-repo": "extraRepo",
   "extraRepo": "extraRepo",
@@ -88,6 +93,8 @@ const KEY_ALIASES: Record<string, keyof ConfigFile> = {
   "noPreserveDirty": "noPreserveDirty",
   "claude-args": "claudeArgs",
   "claudeArgs": "claudeArgs",
+  "codex-args": "codexArgs",
+  "codexArgs": "codexArgs",
   "no-auto-memory": "noAutoMemory",
   "noAutoMemory": "noAutoMemory",
   "refresh-below-ttl": "refreshBelowTtl",
@@ -289,6 +296,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
       );
     }
     switch (normKey) {
+      case "agent":
+        cfg.agent = parseAgentKind(assertString(val, "agent"), "config.agent");
+        break;
       case "repo":
         if (Array.isArray(val)) {
           throw new Error(
@@ -356,6 +366,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "claudeArgs":
         cfg.claudeArgs = assertStringArray(val, "claude-args");
+        break;
+      case "codexArgs":
+        cfg.codexArgs = assertStringArray(val, "codex-args");
         break;
       case "noAutoMemory":
         cfg.noAutoMemory = assertBool(val, "no-auto-memory");

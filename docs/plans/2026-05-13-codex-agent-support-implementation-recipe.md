@@ -1,7 +1,7 @@
 # Codex Agent Support Implementation Recipe
 
 **Parent plan:** `docs/plans/2026-05-13-codex-agent-support.md`
-**Current chunk:** Chunk 1
+**Current chunk:** Chunk 2
 
 Use this recipe for each implementation iteration. At the end of every iteration, update **Current chunk** to the next chunk number before committing, so the next session can continue without rediscovering state.
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { splitClaudeArgs } from "./cliSplit.js";
+import { splitClaudeArgs, splitSelectedAgentArgs } from "./cliSplit.js";
 
 describe("splitClaudeArgs", () => {
   let exitSpy: MockInstance;
@@ -113,5 +113,42 @@ describe("splitClaudeArgs", () => {
     const r = splitClaudeArgs(["node", "ccairgap", "--config", "/tmp/x.yaml", "--", "--model", "opus"]);
     expect(r.argvForCommander).toEqual(["node", "ccairgap", "--config", "/tmp/x.yaml"]);
     expect(r.cliClaudeArgs).toEqual(["--model", "opus"]);
+  });
+});
+
+describe("splitSelectedAgentArgs", () => {
+  it("preserves launch passthrough after `--` as a raw ordered selected-agent tail", () => {
+    const r = splitSelectedAgentArgs([
+      "node",
+      "ccairgap",
+      "--agent",
+      "codex",
+      "--repo",
+      ".",
+      "--",
+      "--model",
+      "gpt-5",
+      "initial prompt",
+    ]);
+
+    expect(r.argvForCommander).toEqual([
+      "node",
+      "ccairgap",
+      "--agent",
+      "codex",
+      "--repo",
+      ".",
+    ]);
+    expect(r.cliSelectedAgentArgs).toEqual(["--model", "gpt-5", "initial prompt"]);
+  });
+
+  it("keeps the backwards-compatible splitClaudeArgs wrapper", () => {
+    const selected = splitSelectedAgentArgs(["node", "ccairgap", "--", "--model", "opus"]);
+    const claude = splitClaudeArgs(["node", "ccairgap", "--", "--model", "opus"]);
+
+    expect(claude).toEqual({
+      argvForCommander: selected.argvForCommander,
+      cliClaudeArgs: selected.cliSelectedAgentArgs,
+    });
   });
 });

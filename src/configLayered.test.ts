@@ -69,6 +69,28 @@ describe("mergeLayers", () => {
     expect(r.provenance.claudeArgs).toEqual(["user-wide", "project", "project"]);
   });
 
+  it("agent: scalar precedence uses project over user-wide over integration", () => {
+    const r = mergeLayers({
+      integrations: [{ filename: "agent.yaml", config: { agent: "claude" } }],
+      userWide: { agent: "codex" },
+      project: { agent: "claude" },
+    });
+
+    expect(r.merged.agent).toBe("claude");
+    expect(r.provenance.agent).toBe("project");
+  });
+
+  it("codexArgs: concatenate user-wide then project order with per-element provenance", () => {
+    const r = mergeLayers({
+      integrations: [],
+      userWide: { codexArgs: ["--model", "gpt-5"] },
+      project: { codexArgs: ["--search"] },
+    });
+
+    expect(r.merged.codexArgs).toEqual(["--model", "gpt-5", "--search"]);
+    expect(r.provenance.codexArgs).toEqual(["user-wide", "user-wide", "project"]);
+  });
+
   it("hooks.enable: concat across layers", () => {
     const r = mergeLayers({
       integrations: [

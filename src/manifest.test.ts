@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   manifestPath,
+  readManifestAgent,
   readManifest,
   UnknownManifestVersionError,
   writeManifest,
@@ -75,6 +76,40 @@ describe("manifest v1", () => {
     writeFileSync(manifestPath(sessionDir), `${JSON.stringify(manifest, null, 2)}\n`);
 
     expect(readManifest(sessionDir, "1.2.3")).toEqual(manifest);
+  });
+
+  it("writes and reads optional agent and codex fields without bumping v1", () => {
+    const sessionDir = makeSessionDir();
+    const manifest: Manifest = {
+      version: 1,
+      agent: "codex",
+      cli_version: "1.2.3",
+      image_tag: "ccairgap:1.2.3",
+      created_at: "2026-05-13T00:00:00.000Z",
+      repos: [],
+      codex: {
+        host_home: "/Users/example/.codex",
+      },
+      claude_code: {},
+    };
+
+    writeManifest(sessionDir, manifest);
+
+    expect(readManifest(sessionDir, "1.2.3")).toEqual(manifest);
+    expect(readManifestAgent(manifest)).toBe("codex");
+  });
+
+  it("treats absent manifest agent as Claude", () => {
+    const manifest: Manifest = {
+      version: 1,
+      cli_version: "1.2.3",
+      image_tag: "ccairgap:1.2.3",
+      created_at: "2026-05-13T00:00:00.000Z",
+      repos: [],
+      claude_code: {},
+    };
+
+    expect(readManifestAgent(manifest)).toBe("claude");
   });
 
   it("throws UnknownManifestVersionError for unsupported manifest versions", () => {

@@ -28,6 +28,7 @@ Removes the source line from every supported rc and deletes the tabtab scripts w
 | `ccairgap <TAB>` | Every subcommand + every long-form launch flag. |
 | `ccairgap recover <TAB>` / `ccairgap discard <TAB>` | Session ids — directory names under `$XDG_STATE_HOME/ccairgap/sessions/`. |
 | `ccairgap -r <TAB>` / `ccairgap --resume <TAB>` | Custom titles of transcripts under `~/.claude/projects/<encoded-workspace-cwd>/*.jsonl`. Requires the current working directory to be a git repo — that's what ccairgap treats as the workspace for resume resolution. |
+| `ccairgap --agent <TAB>` | `claude`, `codex`. Codex is listed because the config/CLI surface exists; launch remains disabled before runtime in this build. |
 | `ccairgap install-completion <TAB>` | `bash`, `zsh`, `fish`. |
 
 Static candidates are introspected from the same commander `program` instance that parses real invocations, so they never drift from the CLI surface.

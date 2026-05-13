@@ -15,6 +15,7 @@ import { encodeCwd, hostClaudeDir, realpath, sessionsDir } from "./paths.js";
 import { listProjectSessions } from "./resumeResolver.js";
 
 const PROGRAM_NAME = "ccairgap";
+const AGENT_COMPLETION_CANDIDATES = ["claude", "codex"];
 
 // Matches @pnpm/tabtab's COMPLETION_DIR + completionFileName(name, shell) layout.
 // Kept local so we don't reach into tabtab internals. Extend if tabtab adds a shell.
@@ -123,6 +124,9 @@ export async function completionServer(program: Command): Promise<void> {
 }
 
 export async function candidatesFor(prev: string, program: Command): Promise<string[]> {
+  if (prev === "--agent") {
+    return AGENT_COMPLETION_CANDIDATES;
+  }
   if (prev === "recover" || prev === "discard") {
     return sessionIdCandidates();
   }

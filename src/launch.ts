@@ -48,8 +48,10 @@ import { findCanonicalRepoRoot, resolveAutoMemoryHostDir } from "./autoMemory.js
 import { resolveManagedPolicyDir } from "./managedPolicy.js";
 import { resolveCcairgapDir } from "./config.js";
 import { buildClaudeSymlinkOverlay } from "./claudeSymlinkOverlay.js";
+import type { AgentKind } from "./agent.js";
 
 export interface LaunchOptions {
+  agent?: AgentKind;
   repos: string[];
   ros: string[];
   cp: string[];
@@ -124,6 +126,7 @@ export interface LaunchOptions {
    * in `src/claudeArgs.ts`; hard denials abort launch before side effects.
    */
   claudeArgs: string[];
+  codexArgs?: string[];
   /**
    * Skip the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`
    * env-var forwarding. Use if Claude Code's EROFS handling becomes noisy
@@ -242,6 +245,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     validateRepoRoOverlap(opts.repos, opts.ros, realpath);
   } catch (e) {
     die((e as Error).message);
+  }
+
+  const selectedAgent: AgentKind = opts.agent ?? "claude";
+  if (selectedAgent === "codex") {
+    die("agent=codex is accepted but runtime launch is disabled in this build");
   }
 
   // claude-args passthrough: filter against the denylist before any side

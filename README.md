@@ -47,6 +47,8 @@ npm i -g ccairgap
 
 **Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Full reference: [docs/completion.md](docs/completion.md).
 
+**Agent selection:** Claude is the default. `--agent codex` and `agent: codex` are accepted as staged configuration, but Codex runtime launch is still rejected before side effects until the Codex support migration is complete.
+
 ## Quick start
 
 Run inside any git repo:
