@@ -12,6 +12,7 @@ describe.skipIf(!(await dockerAvailable()))("entrypoint selected-agent dry-run",
     expect(out).toContain("ccairgap-entrypoint-dry-run");
     expect(out).toContain("branch=claude");
     expect(out).toContain("CCAIRGAP_AGENT=claude");
+    expect(out).toContain("CCAIRGAP_ENTRYPOINT_MODE=agent");
     expect(out).toContain("cwd=/workspace/repo with spaces");
     expect(out).toContain("CODEX_HOME=/home/claude/.codex");
     expect(out).toContain("claude_home_ready=1");
@@ -30,6 +31,7 @@ describe.skipIf(!(await dockerAvailable()))("entrypoint selected-agent dry-run",
 
     expect(out).toContain("branch=codex");
     expect(out).toContain("CCAIRGAP_AGENT=codex");
+    expect(out).toContain("CCAIRGAP_ENTRYPOINT_MODE=agent");
     expect(out).not.toContain("CCAIRGAP_PRINT=");
     expect(out).toContain(
       "command=codex --dangerously-bypass-approvals-and-sandbox --cd /workspace/repo\\ with\\ spaces --model gpt-5.5 inspect\\ this",
@@ -48,5 +50,22 @@ describe.skipIf(!(await dockerAvailable()))("entrypoint selected-agent dry-run",
     expect(out).toContain(
       "command=codex exec --dangerously-bypass-approvals-and-sandbox --cd /workspace/repo\\ with\\ spaces --json summarize\\ status",
     );
+  });
+
+  it("reports exec mode with the selected agent and exact command argv", async () => {
+    const out = await runEntrypointDryRun({
+      agent: "codex",
+      entrypointMode: "exec",
+      argv: ["aharness", "recipe-driven-design.fsm.ts"],
+    });
+
+    expect(out).toContain("branch=exec");
+    expect(out).toContain("CCAIRGAP_AGENT=codex");
+    expect(out).toContain("CCAIRGAP_ENTRYPOINT_MODE=exec");
+    expect(out).toContain("cwd=/workspace/repo with spaces");
+    expect(out).toContain("claude_home_ready=1");
+    expect(out).toContain("codex_home_ready=1");
+    expect(out).toContain("codex_sessions_ready=1");
+    expect(out).toContain("command=aharness recipe-driven-design.fsm.ts");
   });
 });

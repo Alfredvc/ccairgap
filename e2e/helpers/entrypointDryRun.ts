@@ -7,6 +7,7 @@ const FAKE_DOCKERFILE = "e2e/fixtures/fake.Dockerfile";
 
 export interface EntrypointDryRunOptions {
   agent: "claude" | "codex";
+  entrypointMode?: "agent" | "exec";
   print?: string;
   cwd?: string;
   argv?: string[];
@@ -37,6 +38,9 @@ export async function runEntrypointDryRun(
   ];
   if (options.print !== undefined) {
     dockerArgs.push("-e", `CCAIRGAP_PRINT=${options.print}`);
+  }
+  if (options.entrypointMode !== undefined) {
+    dockerArgs.push("-e", `CCAIRGAP_ENTRYPOINT_MODE=${options.entrypointMode}`);
   }
   dockerArgs.push(tag, ...(options.argv ?? []));
 

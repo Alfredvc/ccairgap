@@ -146,6 +146,12 @@ export interface LaunchOptions {
   claudeArgs: string[];
   codexArgs?: string[];
   /**
+   * Arbitrary command argv for entrypoint exec mode. When set, launch prepares
+   * the selected agent environment but forwards these tokens as "$@" instead of
+   * selected-agent passthrough argv.
+   */
+  execCommand?: string[];
+  /**
    * Skip the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`
    * env-var forwarding. Use if Claude Code's EROFS handling becomes noisy
    * or if the user wants a clean-slate sandbox. Matches `--no-clipboard`
@@ -283,6 +289,19 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const home = env.HOME ?? homedir();
 
   // ---- Validation phase: no side effects ----
+  const execCommand = opts.execCommand;
+  const isExecMode = execCommand !== undefined;
+  if (isExecMode) {
+    if (execCommand.length === 0) {
+      die("exec requires a command after --");
+    }
+    if (opts.print !== undefined) {
+      die("exec does not support --print");
+    }
+    if (opts.resume !== undefined) {
+      die("exec does not support --resume");
+    }
+  }
 
   // Host-binary preflight. Runs before any mkdir / clone / docker call so a
   // missing binary surfaces as a clean error instead of a mid-pipeline
@@ -317,13 +336,17 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       );
     }
     try {
-      const visible = deriveCodexVisiblePaths(opts);
-      selectedArgv = validateCodexArgs({
-        mode: { agent: "codex", print: opts.print },
-        argv: opts.codexArgs ?? [],
-        visibleRoots: visible.visibleRoots,
-        visiblePaths: visible.visiblePaths,
-      });
+      if (isExecMode) {
+        selectedArgv = [];
+      } else {
+        const visible = deriveCodexVisiblePaths(opts);
+        selectedArgv = validateCodexArgs({
+          mode: { agent: "codex", print: opts.print },
+          argv: opts.codexArgs ?? [],
+          visibleRoots: visible.visibleRoots,
+          visiblePaths: visible.visiblePaths,
+        });
+      }
       const expectedCodexVersion = opts.dockerBuildArgs.CODEX_VERSION;
       if (expectedCodexVersion !== undefined) {
         const versionValidation = validateExpectedCodexVersion(expectedCodexVersion);
@@ -348,26 +371,36 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       die((e as Error).message);
     }
   } else {
-    // claude-args passthrough: filter against the denylist before any side
-    // effects so hard-denied flags exit 1 with no $SESSION on disk. The merged
-    // list mixes config (first) and CLI (appended); source attribution per
-    // entry is not preserved here — error messages hint that config may be the
-    // source via the prefix.
-    const claudeArgsValidation = validateClaudeArgs(opts.claudeArgs, "merged");
-    if (claudeArgsValidation.hardDenied.length > 0) {
-      for (const h of claudeArgsValidation.hardDenied) console.error(h.message);
-      process.exit(1);
+    if (isExecMode) {
+      selectedArgv = [];
+    } else {
+      // claude-args passthrough: filter against the denylist before any side
+      // effects so hard-denied flags exit 1 with no $SESSION on disk. The merged
+      // list mixes config (first) and CLI (appended); source attribution per
+      // entry is not preserved here — error messages hint that config may be the
+      // source via the prefix.
+      const claudeArgsValidation = validateClaudeArgs(opts.claudeArgs, "merged");
+      if (claudeArgsValidation.hardDenied.length > 0) {
+        for (const h of claudeArgsValidation.hardDenied) console.error(h.message);
+        process.exit(1);
+      }
+      for (const s of claudeArgsValidation.softDropped) console.error(s.reason);
+      selectedArgv = claudeArgsValidation.filtered;
     }
-    for (const s of claudeArgsValidation.softDropped) console.error(s.reason);
-    selectedArgv = claudeArgsValidation.filtered;
   }
 
-  const commandPlan: AgentCommandPlan = agentCommandPlan(
-    selectedAgent === "claude"
-      ? { agent: "claude", print: opts.print, resume: opts.resume }
-      : { agent: "codex", print: opts.print },
-    validatedAgentArgv(selectedArgv),
-  );
+  const commandPlan: AgentCommandPlan | undefined = isExecMode
+    ? undefined
+    : agentCommandPlan(
+        selectedAgent === "claude"
+          ? { agent: "claude", print: opts.print, resume: opts.resume }
+          : { agent: "codex", print: opts.print },
+        validatedAgentArgv(selectedArgv),
+      );
+  const commandEnv: Record<string, string> = {
+    ...(commandPlan?.env ?? { CCAIRGAP_AGENT: selectedAgent }),
+    CCAIRGAP_ENTRYPOINT_MODE: isExecMode ? "exec" : "agent",
+  };
 
   // Resume requires a workspace repo: the source transcript lives under
   // ~/.claude/projects/<encoded-cwd>/ and the cwd is the workspace.
@@ -949,7 +982,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   dockerArgs.push("-e", `CCAIRGAP_TRUSTED_CWDS=${trustedCwds}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_NAME=${gitUserName}`);
   dockerArgs.push("-e", `CCAIRGAP_GIT_USER_EMAIL=${gitUserEmail}`);
-  for (const [k, v] of Object.entries(commandPlan.env)) {
+  for (const [k, v] of Object.entries(commandEnv)) {
     dockerArgs.push("-e", `${k}=${v}`);
   }
   if (selectedAgent === "codex") {
@@ -1008,11 +1041,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   dockerArgs.push(image.tag);
 
-  // selected-agent passthrough: appended as positional argv to `docker run`.
-  // Docker forwards them to the entrypoint as "$@", and entrypoint branches on
-  // CCAIRGAP_AGENT. argv (not env-var JSON) avoids serialization layers and
-  // the per-env-var size cap.
-  dockerArgs.push(...commandPlan.argv);
+  // Entrypoint argv is appended as positional argv to `docker run`. Docker
+  // forwards it to the entrypoint as "$@"; agent mode receives validated
+  // selected-agent passthrough, while exec mode receives exact arbitrary argv.
+  dockerArgs.push(...(isExecMode ? execCommand : commandPlan!.argv));
 
   // Step 11: exec docker run with exit-trap handoff
   let exitCode = 0;

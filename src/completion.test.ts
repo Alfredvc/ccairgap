@@ -21,6 +21,7 @@ function makeProgram(): Command {
   p.command("list").description("list").action(() => {});
   p.command("recover [id]").description("recover").action(() => {});
   p.command("attach <id>").option("--agent <claude|codex>", "agent").action(() => {});
+  p.command("exec").description("exec").action(() => {});
   p.command("completion-server", { hidden: true }).action(() => {});
   return p;
 }
@@ -38,6 +39,7 @@ describe("completion — static candidates", () => {
     const names = subcommandNames(program);
     expect(names).toContain("list");
     expect(names).toContain("recover");
+    expect(names).toContain("exec");
     expect(names).not.toContain("completion-server");
   });
 });
@@ -105,6 +107,7 @@ describe("completion — candidatesFor routing", () => {
         "list",
         "recover",
         "attach",
+        "exec",
         "--repo",
         "--ro",
         "--agent",

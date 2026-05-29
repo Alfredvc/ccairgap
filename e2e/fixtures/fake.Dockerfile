@@ -39,15 +39,20 @@ RUN printf '%s\n' \
     'mkdir -p "$CWD" && cd "$CWD"' \
     'if [ -n "${CCAIRGAP_TEST_CMD:-}" ]; then exec sh -c "$CCAIRGAP_TEST_CMD"; fi' \
     'ENTRYPOINT_AGENT="${CCAIRGAP_AGENT:-claude}"' \
+    'ENTRYPOINT_MODE="${CCAIRGAP_ENTRYPOINT_MODE:-agent}"' \
     'print_command() { local first=1; for token in "$@"; do if [ "$first" -eq 0 ]; then printf " "; fi; printf "%q" "$token"; first=0; done; printf "\n"; }' \
-    'dry_run() { local branch="$1"; shift; printf "ccairgap-entrypoint-dry-run\n"; printf "branch=%s\n" "$branch"; printf "cwd=%s\n" "$CWD"; printf "CCAIRGAP_AGENT=%s\n" "$ENTRYPOINT_AGENT"; if [ -n "${CCAIRGAP_PRINT:-}" ]; then printf "CCAIRGAP_PRINT=%s\n" "$CCAIRGAP_PRINT"; fi; printf "CODEX_HOME=%s\n" "$CODEX_HOME"; [ -d "$CLAUDE_DIR" ] && printf "claude_home_ready=1\n" || printf "claude_home_ready=0\n"; [ -d "$CODEX_HOME" ] && printf "codex_home_ready=1\n" || printf "codex_home_ready=0\n"; [ -d "$CODEX_HOME/sessions" ] && printf "codex_sessions_ready=1\n" || printf "codex_sessions_ready=0\n"; printf "command="; print_command "$@"; }' \
-    'case "$ENTRYPOINT_AGENT" in' \
-    '  claude) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(claude --dangerously-skip-permissions "$@" -p "$CCAIRGAP_PRINT"); else FINAL_CMD=(claude --dangerously-skip-permissions "$@"); fi ;;' \
-    '  codex) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT"); else FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@"); fi ;;' \
-    '  *) echo "ccairgap: unsupported CCAIRGAP_AGENT: $ENTRYPOINT_AGENT" >&2; exit 2 ;;' \
+    'dry_run() { local branch="$1"; shift; printf "ccairgap-entrypoint-dry-run\n"; printf "branch=%s\n" "$branch"; printf "cwd=%s\n" "$CWD"; printf "CCAIRGAP_AGENT=%s\n" "$ENTRYPOINT_AGENT"; printf "CCAIRGAP_ENTRYPOINT_MODE=%s\n" "$ENTRYPOINT_MODE"; if [ -n "${CCAIRGAP_PRINT:-}" ]; then printf "CCAIRGAP_PRINT=%s\n" "$CCAIRGAP_PRINT"; fi; printf "CODEX_HOME=%s\n" "$CODEX_HOME"; [ -d "$CLAUDE_DIR" ] && printf "claude_home_ready=1\n" || printf "claude_home_ready=0\n"; [ -d "$CODEX_HOME" ] && printf "codex_home_ready=1\n" || printf "codex_home_ready=0\n"; [ -d "$CODEX_HOME/sessions" ] && printf "codex_sessions_ready=1\n" || printf "codex_sessions_ready=0\n"; printf "command="; print_command "$@"; }' \
+    'case "$ENTRYPOINT_MODE" in' \
+    '  agent) case "$ENTRYPOINT_AGENT" in' \
+    '    claude) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(claude --dangerously-skip-permissions "$@" -p "$CCAIRGAP_PRINT"); else FINAL_CMD=(claude --dangerously-skip-permissions "$@"); fi ;;' \
+    '    codex) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT"); else FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@"); fi ;;' \
+    '    *) echo "ccairgap: unsupported CCAIRGAP_AGENT: $ENTRYPOINT_AGENT" >&2; exit 2 ;;' \
+    '  esac; DRY_RUN_BRANCH="$ENTRYPOINT_AGENT" ;;' \
+    '  exec) if [ "$#" -eq 0 ]; then echo "ccairgap: CCAIRGAP_ENTRYPOINT_MODE=exec requires a command" >&2; exit 2; fi; FINAL_CMD=("$@"); DRY_RUN_BRANCH="exec" ;;' \
+    '  *) echo "ccairgap: unsupported CCAIRGAP_ENTRYPOINT_MODE: $ENTRYPOINT_MODE" >&2; exit 2 ;;' \
     'esac' \
-    'if [ "${CCAIRGAP_ENTRYPOINT_DRY_RUN:-}" = "1" ]; then dry_run "$ENTRYPOINT_AGENT" "${FINAL_CMD[@]}"; exit 0; fi' \
-    'exec "${FINAL_CMD[@]}"' \
+    'if [ "${CCAIRGAP_ENTRYPOINT_DRY_RUN:-}" = "1" ]; then dry_run "$DRY_RUN_BRANCH" "${FINAL_CMD[@]}"; exit 0; fi' \
+    'exec -- "${FINAL_CMD[@]}"' \
     > /entrypoint.sh \
  && chmod +x /entrypoint.sh
 USER claude

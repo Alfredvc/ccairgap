@@ -51,6 +51,8 @@ npm i -g ccairgap
 
 **Agent selection:** Claude is the default. `--agent codex` and `agent: codex` opt into Codex CLI inside the same ccairgap sandbox. Codex launches require a workspace repo and use sanitized session-local Codex state. Full details: [docs/codex.md](docs/codex.md).
 
+**Command mode:** `ccairgap exec -- <command...>` prepares the same sandbox and runs an exact command argv instead of starting the selected agent. Use `--agent` to select which environment is prepared, not which binary runs.
+
 ## Quick start
 
 Run inside any git repo:
@@ -90,6 +92,10 @@ ccairgap -p "add login flow"
 
 # Use Codex instead of Claude
 ccairgap --agent codex --repo .
+
+# Run a command in the prepared sandbox
+ccairgap exec -- aharness recipe-driven-design.fsm.ts
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
 
 # Resume a Claude session — UUID or the session name claude prints on exit
 ccairgap -r 01234567-89ab-cdef-0123-456789abcdef
@@ -191,6 +197,8 @@ For Codex, ccairgap resolves `$CODEX_HOME`, filters config, sanitizes auth, over
 Hooks and MCP servers are disabled by default, because most of them reach for host binaries the container doesn't ship. Opt them in by glob — and if a binary is missing, extend the provided Dockerfile. Your real settings are never edited; the filter runs on copies.
 
 On exit, if the selected agent committed, you get a branch. If it committed to a side branch or left uncommitted work behind, ccairgap preserves the session dir so you can recover it. If it did nothing, nothing changes.
+
+For command-mode automation, `ccairgap exec -- <command...>` uses the same container preparation and handoff path but runs the exact argv after `--` with no shell parsing. `--print` and `--resume` are not supported in command mode.
 
 Clipboard passthrough — paste images from your host into Claude inside the sandbox — is on by default on macOS, Linux, and WSL2.
 

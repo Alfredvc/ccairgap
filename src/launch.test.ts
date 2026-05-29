@@ -543,6 +543,7 @@ describe("launch agent=codex runtime enablement", () => {
   let roDir: string;
   let fakeBinDir: string;
   let dockerLog: string;
+  let dockerArgvLog: string;
   let savedEnv: Record<string, string | undefined>;
   let exitSpy: MockInstance<(code?: string | number | null | undefined) => never>;
   let stderrSpy: MockInstance<(...args: unknown[]) => void>;
@@ -555,6 +556,7 @@ describe("launch agent=codex runtime enablement", () => {
     roDir = join(root, "readonly");
     fakeBinDir = join(root, "bin");
     dockerLog = join(root, "docker.log");
+    dockerArgvLog = join(root, "docker-argv.log");
     mkdirSync(ccairgapHome, { recursive: true });
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
     mkdirSync(join(fakeHome, ".codex"), { recursive: true });
@@ -572,6 +574,11 @@ describe("launch agent=codex runtime enablement", () => {
       dockerStub,
       `#!/bin/sh
 printf '%s\\n' "$*" >> "${dockerLog}"
+printf '__argv__\\n' >> "${dockerArgvLog}"
+for arg in "$@"; do
+  printf '%s\\n' "$arg" >> "${dockerArgvLog}"
+done
+printf '__end__\\n' >> "${dockerArgvLog}"
 exit 0
 `,
     );
@@ -646,8 +653,10 @@ exit 0
     startRuntimeAuthRefresh?: ReturnType<typeof vi.fn>;
     ensureImage?: ReturnType<typeof vi.fn>;
     inspectImageContract?: ReturnType<typeof vi.fn>;
+    requireHostBinaries?: ReturnType<typeof vi.fn>;
   } = {}) {
     await vi.resetModules();
+    const requireHostBinaries = options.requireHostBinaries ?? vi.fn(async () => {});
     const generateId = options.generateId ?? vi.fn(async () => ({ id: "codex-0001" }));
     const resolveCredentials = options.resolveCredentials ?? vi.fn(async () => {
       throw new Error("selected Codex should not refresh Claude credentials");
@@ -668,7 +677,7 @@ exit 0
       options.inspectImageContract ?? vi.fn(async () => ({ ok: true, findings: [] }));
 
     vi.doMock("./binaries.js", () => ({
-      requireHostBinaries: vi.fn(async () => {}),
+      requireHostBinaries,
     }));
     vi.doMock("./sessionId.js", async (importOriginal) => ({
       ...(await importOriginal<typeof import("./sessionId.js")>()),
@@ -702,6 +711,7 @@ exit 0
       startRuntimeAuthRefresh,
       ensureImage,
       inspectImageContract,
+      requireHostBinaries,
     };
   }
 
@@ -715,6 +725,16 @@ exit 0
     const run = lines.find((line) => line.startsWith("run "));
     if (run === undefined) throw new Error(`no docker run recorded:\n${lines.join("\n")}`);
     return run;
+  }
+
+  function dockerRunArgv(): string[] {
+    const lines = readFileSync(dockerArgvLog, "utf8").split("\n");
+    const start = lines.indexOf("__argv__");
+    const end = lines.indexOf("__end__", start + 1);
+    if (start === -1 || end === -1) {
+      throw new Error(`no boundary-preserving docker argv recorded:\n${lines.join("\n")}`);
+    }
+    return lines.slice(start + 1, end);
   }
 
   it("rejects invalid Codex args before session materialization", async () => {
@@ -735,6 +755,31 @@ exit 0
     expect(resolveCredentials).not.toHaveBeenCalled();
     expect(ensureImage).not.toHaveBeenCalled();
     expect(startRuntimeAuthRefresh).not.toHaveBeenCalled();
+    expect(sessionEntries()).toEqual([]);
+  });
+
+  it.each([
+    ["missing command", { execCommand: [] }, /exec requires a command after --/],
+    ["print mode", { execCommand: ["aharness"], print: "x" }, /exec does not support --print/],
+    [
+      "resume mode",
+      { execCommand: ["aharness"], resume: "00000000-0000-0000-0000-000000000000" },
+      /exec does not support --resume/,
+    ],
+  ])("rejects exec %s before host-binary preflight", async (_name, overrides, message) => {
+    const requireHostBinaries = vi.fn(async () => {
+      throw new Error("host-binary preflight should not run for invalid exec options");
+    });
+    const { launch: isolatedLaunch, generateId, ensureImage } =
+      await importLaunchWithMocks({ requireHostBinaries });
+
+    await expect(isolatedLaunch(baseOptions(overrides))).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines.some((line) => message.test(line))).toBe(true);
+    expect(requireHostBinaries).not.toHaveBeenCalled();
+    expect(generateId).not.toHaveBeenCalled();
+    expect(ensureImage).not.toHaveBeenCalled();
     expect(sessionEntries()).toEqual([]);
   });
 
@@ -868,6 +913,65 @@ exit 0
     };
     expect(manifest.agent).toBe("codex");
     expect(manifest.codex?.host_home).toBe(join(fakeHome, ".codex"));
+  });
+
+  it("runs exec mode with Codex environment and exact command argv", async () => {
+    const { launch: isolatedLaunch, resolveCredentials, startRuntimeAuthRefresh, inspectImageContract } =
+      await importLaunchWithMocks();
+
+    await isolatedLaunch(
+      baseOptions({
+        codexArgs: ["exec"],
+        execCommand: ["exec", "two words", "--flag=value"],
+      }),
+    );
+
+    const run = dockerRunLine();
+    expect(run).toContain("-e CCAIRGAP_AGENT=codex");
+    expect(run).toContain("-e CCAIRGAP_ENTRYPOINT_MODE=exec");
+    expect(run).toContain("-e CODEX_HOME=/home/claude/.codex");
+    expect(run).toContain("/codex-home:/home/claude/.codex:rw");
+    expect(resolveCredentials).not.toHaveBeenCalled();
+    expect(startRuntimeAuthRefresh).not.toHaveBeenCalled();
+    expect(inspectImageContract).toHaveBeenCalledWith("ccairgap:test");
+
+    const argv = dockerRunArgv();
+    const imageIndex = argv.indexOf("ccairgap:test");
+    expect(imageIndex).toBeGreaterThan(-1);
+    expect(argv.slice(imageIndex + 1)).toEqual(["exec", "two words", "--flag=value"]);
+    expect(argv.slice(imageIndex + 1)).not.toContain("codex");
+    expect(argv.slice(imageIndex + 1)).not.toContain("claude");
+  });
+
+  it("runs exec mode with Claude environment and skips Claude passthrough validation", async () => {
+    const resolveCredentials = vi.fn(async () => ({
+      hostPath: join(root, "creds", ".credentials.json"),
+      origin: "file",
+      refreshResult: { ok: true, action: "fresh", finalJson: "{}", finalTtlMs: Number.NaN },
+      finalTtlMs: Number.NaN,
+    }));
+    const { launch: isolatedLaunch, startRuntimeAuthRefresh } =
+      await importLaunchWithMocks({ resolveCredentials });
+
+    await isolatedLaunch(
+      baseOptions({
+        agent: "claude",
+        claudeArgs: ["--add-dir", "/host-only"],
+        execCommand: ["run-me", "literal arg"],
+      }),
+    );
+
+    const run = dockerRunLine();
+    expect(run).toContain("-e CCAIRGAP_AGENT=claude");
+    expect(run).toContain("-e CCAIRGAP_ENTRYPOINT_MODE=exec");
+    expect(run).not.toContain("CCAIRGAP_PRINT");
+    expect(resolveCredentials).toHaveBeenCalled();
+    expect(startRuntimeAuthRefresh).toHaveBeenCalled();
+
+    const argv = dockerRunArgv();
+    const imageIndex = argv.indexOf("ccairgap:test");
+    expect(imageIndex).toBeGreaterThan(-1);
+    expect(argv.slice(imageIndex + 1)).toEqual(["run-me", "literal arg"]);
   });
 
   it("allows Codex bare mode when a workspace repo is explicit", async () => {

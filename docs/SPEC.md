@@ -90,6 +90,7 @@ This list covers paths ccairgap itself writes. When pre-launch auth refresh runs
 
 ```
 ccairgap [SUBCOMMAND] [OPTIONS]
+ccairgap exec [OPTIONS] -- <command...>
 ```
 
 Default (no subcommand): start a new session.
@@ -98,7 +99,7 @@ Default (no subcommand): start a new session.
 
 | Flag | Repeatable | Description |
 |------|------------|-------------|
-| `--agent <claude\|codex>` | no | Select the agent provider. Default is `claude`. `codex` runs Codex CLI inside the ccairgap container with selected-agent validation, sanitized session-local Codex state, selected-only auth behavior, and image contract inspection. |
+| `--agent <claude\|codex>` | no | Select the agent provider. Default is `claude`. `codex` runs Codex CLI inside the ccairgap container with selected-agent validation, sanitized session-local Codex state, selected-only auth behavior, and image contract inspection. For `exec`, this selects the prepared environment, not the final command binary. |
 | `--repo <host-path>` | no | Host repo exposed as the workspace (container cwd). Cloned with `--shared`, new branch `ccairgap/<id>` created. If omitted, defaults to the current working directory (must be a git repo). |
 | `--extra-repo <host-path>` | yes | Additional host repo mounted alongside `--repo`. Same `--shared` clone + `ccairgap/<id>` branch, but not the workspace. Use for sibling repos Claude reads but does not work in as its primary target. |
 | `--ro <host-path>` | yes | Additional read-only bind mount. Path can be anything — a git repo, a docs dir, any reference material. `--ro` never creates a sandbox branch; Claude gets read-only visibility. |
@@ -110,15 +111,15 @@ Default (no subcommand): start a new session.
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
 | `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code or `CODEX_VERSION=0.130.0` to pin Codex. Exact unsupported Codex versions fail before image pull/build; non-exact values still require post-resolution image contract inspection. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
-| `-p, --print <prompt>` | no | Run the selected agent in non-interactive print mode: Claude uses `claude -p "<prompt>"`; Codex uses `codex exec`. For selected Codex, host `CODEX_API_KEY` is forwarded only in print mode and can satisfy selected auth for that launch. |
-| `-r, --resume <id-or-name>` | no | Resume an existing Claude session inside the sandbox. Accepts **either** a session UUID **or** the session's custom title (what `claude` prints on exit). Titles are matched case-insensitively and must be exact; 0 or >1 matches abort launch with a candidate list. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` (plus the optional `<uuid>/` subagents dir) into `$SESSION/transcripts/` before `docker run`. Inside the container, `claude -r "$CCAIRGAP_RESUME"` always uses the resolved UUID (not the raw name). Requires a workspace repo; errors under `--bare` / ro-only. Works with both host-born and ccairgap-born sessions — no separate UX per origin. Config key: `resume: <id-or-name>` (scalar). |
+| `-p, --print <prompt>` | no | Run the selected agent in non-interactive print mode: Claude uses `claude -p "<prompt>"`; Codex uses `codex exec`. For selected Codex, host `CODEX_API_KEY` is forwarded only in print mode and can satisfy selected auth for that launch. Not supported for `exec`, including config-sourced `print`. |
+| `-r, --resume <id-or-name>` | no | Resume an existing Claude session inside the sandbox. Accepts **either** a session UUID **or** the session's custom title (what `claude` prints on exit). Titles are matched case-insensitively and must be exact; 0 or >1 matches abort launch with a candidate list. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` (plus the optional `<uuid>/` subagents dir) into `$SESSION/transcripts/` before `docker run`. Inside the container, `claude -r "$CCAIRGAP_RESUME"` always uses the resolved UUID (not the raw name). Requires a workspace repo; errors under `--bare` / ro-only. Works with both host-born and ccairgap-born sessions — no separate UX per origin. Config key: `resume: <id-or-name>` (scalar). Not supported for `exec`, including config-sourced `resume`. |
 | `-n, --name <name>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix, so the final `<id>` is `<name>-<4hex>`. Drives the sandbox branch (`ccairgap/<id>`), docker container (`ccairgap-<id>`), session dir, and Claude's session label (`-n "<name>"`, rewritten to `[ccairgap] <name>` by the UserPromptSubmit hook on first prompt; see §"Container entrypoint" for the full precedence). Validated once via `git check-ref-format refs/heads/ccairgap/<id>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref. On collision with an existing session dir, container (running or stopped), or branch in the workspace repo (`--repo`), the hex suffix is re-rolled up to 8 times before aborting. `--extra-repo` branches are not pre-checked, so a stale branch in one of them surfaces at fetch time on exit. Omitted, a random `<adj>-<noun>` prefix is generated — see §"Session identifier". |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
 | `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--network`, `--cap-drop`, etc.). Repeatable. See §"Raw docker run args". |
 | `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
 | `--no-auto-memory` | no | Kill switch for the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var. When set, ccairgap does not surface the host auto-memory directory into the container; Claude Code falls back to its in-container default path under `~/.claude/projects/<sanitized>/memory/` which only exists for the current session (discarded on exit). Config key: `no-auto-memory: true`. |
 | `--bare` | no | Launch a "naked" container: no config-file loading, no workspace-repo inference from cwd. User mounts whatever they need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. All Claude config flow is unchanged (`~/.claude` RO mount, credentials, plugins cache, etc.). See §"Bare mode". |
-| `-- <selected-agent-args…>` | no | Tokens after `--` are the selected-agent passthrough tail. With `--agent claude`, they are forwarded verbatim to the in-container `claude` invocation, subject to the Claude denylist (see §"Selected-agent arg passthrough"). With `--agent codex`, they are forwarded to Codex after fail-closed allowlist validation and container-visible `--image` checks. |
+| `-- <selected-agent-args…>` | no | Tokens after `--` are the selected-agent passthrough tail for the default launch command. With `--agent claude`, they are forwarded verbatim to the in-container `claude` invocation, subject to the Claude denylist (see §"Selected-agent arg passthrough"). With `--agent codex`, they are forwarded to Codex after fail-closed allowlist validation and container-visible `--image` checks. For `ccairgap exec -- <command...>`, the tail is instead the exact command argv. |
 
 No `--auth` flag. Credentials are inherited from the host's `~/.claude/` via RO mount. If you are not logged in on the host, run `claude` on the host first.
 
@@ -135,6 +136,8 @@ Claude remains the default selected agent. When `--agent codex` or `agent: codex
 
 At Docker execution, ccairgap passes `CCAIRGAP_AGENT=codex`, `CODEX_HOME=/home/claude/.codex`, and the validated Codex argv tail. The entrypoint runs `codex` for interactive mode and `codex exec` for print mode.
 
+For `ccairgap exec --agent codex -- <command...>`, Codex still controls the prepared environment and selected auth/config policy, but the final argv is the user command after `--`, not `codex`.
+
 **Subcommands:**
 
 | Subcommand | Description |
@@ -143,10 +146,11 @@ At Docker execution, ccairgap passes `CCAIRGAP_AGENT=codex`, `CODEX_HOME=/home/c
 | `recover [<id>]` | Run the handoff routine against `$SESSION/<id>/`. Idempotent. With no `<id>` argument, equivalent to `list`. |
 | `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
 | `attach <id>` | Spawn a second selected agent inside the running container `ccairgap-<id>` via `docker exec`. Advanced. Defaults to the session manifest agent, with absent `agent` in old manifests treated as `claude`; `--agent claude\|codex` can override when that agent's in-container state exists. `attach` is the only subcommand that accepts a selected-agent `--` passthrough tail. See §"Attach". |
+| `exec -- <command...>` | Prepare the selected-agent environment and run an arbitrary command as exact argv. `--` is required before the command; no shell parsing is performed. `--agent` selects the prepared environment, not the final binary. `--print` and `--resume` are rejected, including config-sourced values. Config `claude-args` / `codex-args` are ignored with a warning in exec mode. Canonical usage: `ccairgap exec -- aharness recipe-driven-design.fsm.ts` or `ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts`. |
 | `doctor` | Agent-aware preflight checks. Defaults to config `agent`, then `claude`; `--agent claude\|codex` overrides config. Shared checks include Docker, state dir, host binaries, image freshness, clipboard, sidecar drift, and user-wide config. Claude checks host Claude credentials and auth-refresh state; Codex checks sanitized `$CODEX_HOME/auth.json` without printing secrets. |
 | `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch plus `--agent`; Codex inspect adds sanitized Codex config/auth/session state and warnings without printing secrets. See §"Hook policy". |
-| `init` | Materialize an extension `Dockerfile` (`FROM ghcr.io/alfredvc/ccairgap:<cli-version>-<hash8>`) and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if either target file exists; `--force` overwrites both. Intended for users who want to customize the container image without forking the repo or copying the raw bundled Dockerfile. See §"Container image customization". |
-| `install-completion [<shell>]` | Install shell tab-completion for ccairgap. Writes one `source` line into `~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish` (shell picked by arg or prompt). Backed by `@pnpm/tabtab`. Shell completion script offers static subcommand + flag names plus dynamic candidates: session ids for `recover` / `discard`, custom titles for `--resume` / `-r`, shell names for `install-completion`. See §"Shell completion". |
+| `init` | Materialize an extension `Dockerfile` (`FROM ghcr.io/alfredvc/ccairgap:<version>`) and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if either target file exists; `--force` overwrites both. Intended for users who want to customize the container image without forking the repo or copying the raw bundled Dockerfile. See §"Container image customization". |
+| `install-completion [<shell>]` | Install shell tab-completion for ccairgap. Writes one `source` line into `~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish` (shell picked by arg or prompt). Backed by `@pnpm/tabtab`. Shell completion script offers static subcommand names including `exec`, flag names, plus dynamic candidates: session ids for `recover` / `discard`, custom titles for `--resume` / `-r`, shell names for `install-completion`. See §"Shell completion". |
 | `uninstall-completion` | Remove the ccairgap `source` line from every supported shell rc. Idempotent — no-op when not installed. |
 | `completion-server` | Internal tabtab callback entry. Invoked by the shell completion function with tabtab's `COMP_*` env vars; emits newline-separated candidates to stdout. Not listed in `--help`; users never call it directly. |
 
@@ -168,6 +172,10 @@ ccairgap recover 20260417T143022Z
 
 # Force image rebuild with a pinned Claude Code version
 ccairgap --rebuild --docker-build-arg CLAUDE_CODE_VERSION=1.2.3 --repo ~/src/foo
+
+# Run a command in the prepared sandbox
+ccairgap exec -- aharness recipe-driven-design.fsm.ts
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
 ```
 
 ## CLI responsibilities
@@ -182,7 +190,7 @@ In order:
    - Otherwise: if `--repo` is still unset and `--ro` is empty, error: "not in a git repo and no --repo / --ro passed."
    - The full repo set is `[--repo, ...--extra-repo]` in that order; the workspace / container cwd is the first entry.
    - Error if the same resolved path appears in more than one of `--repo` / `--extra-repo` / `--ro`.
-2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `doctor`, `inspect`, `init`, `install-completion`, `uninstall-completion`, or `completion-server`, run that handler per §Recovery / §Doctor / §"Container image customization" / §"Hook policy" / §"Shell completion" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are only consumed by the default (no-subcommand) invocation.
+2. Subcommand dispatch: if the first positional is `list`, `recover`, `discard`, `exec`, `doctor`, `inspect`, `init`, `install-completion`, `uninstall-completion`, or `completion-server`, run that handler per §Recovery / §Doctor / §"Container image customization" / §"Hook policy" / §"Shell completion" / §"Exec command mode" and exit. Any other first positional errors with `unknown command '<x>'` and exit 1 — this prevents typos like `ccairgap lsit` from silently falling through to the launch flow. Launch flags are consumed by the default launch invocation and by `exec` environment preparation.
 3. Host-binary preflight: verify `docker`, `git`, `rsync`, and `cp` are all resolvable via PATH (POSIX `command -v`). On failure, error with the list of missing binaries and exit 1 before any session-dir side effects. This catches the ENOENT-during-launch failure mode; `ccairgap doctor` performs the same check plus a `docker version` probe for the daemon.
 4. Scan `$XDG_STATE_HOME/ccairgap/sessions/` for orphaned session dirs (dirs without a running container named `ccairgap-<id>`, checked via `docker ps`). If any exist, print a warning banner listing them with suggested `ccairgap recover <id>` / `ccairgap discard <id>` commands. Do not auto-recover; continue to new session setup.
 5. Resolve host credentials (see §"Authentication flow"):
@@ -212,13 +220,30 @@ In order:
 13. Install exit trap: run §"Handoff routine" against `$SESSION/<id>/`.
 14. Exec the `docker run` command.
 
+## Exec command mode
+
+`ccairgap exec -- <command...>` is production command-mode plumbing for automation that needs the ccairgap container environment without starting an interactive agent:
+
+```bash
+ccairgap exec -- aharness recipe-driven-design.fsm.ts
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
+```
+
+The `--` separator is required. Every token after it becomes the final command argv exactly; ccairgap does no shell parsing and does not run the selected-agent passthrough validators. The command is appended after the Docker image in `docker run` argv and reaches `entrypoint.sh` as `"$@"`.
+
+`--agent` still matters: it chooses which environment is prepared before the command runs. `claude` prepares the Claude-oriented home, credentials, hooks/MCP policy, and overlays. `codex` prepares the Codex home/auth/config/session state in addition to the shared container setup. It does **not** choose the final binary; `ccairgap exec --agent codex -- aharness ...` runs `aharness`, not `codex aharness`.
+
+`--print` and `--resume` are rejected for `exec`, including values loaded from config. Config `claude-args` and `codex-args` are selected-agent passthrough settings, so exec mode ignores them with a warning instead of mixing them into the command argv. There is no `config.yaml` key that persists an exec command tail in this slice.
+
+At Docker runtime, the CLI sets `CCAIRGAP_ENTRYPOINT_MODE=exec`. Missing mode defaults to `agent` for backward compatibility and for direct image runs. Valid values are `agent` and `exec`. `CCAIRGAP_TEST_CMD` remains test-only and is not part of production command mode.
+
 ## Config file
 
 YAML file that mirrors launch flags. Default locations (checked in order): `<git-root>/.ccairgap/config.yaml`, then `<git-root>/.config/ccairgap/config.yaml`. Override: `--config <path>` or `--profile <name>`.
 
 - **Load:** the CLI walks up from `cwd` to find the git root; it checks `<git-root>/.ccairgap/config.yaml` first, then `<git-root>/.config/ccairgap/config.yaml`; the first one found is loaded. If both exist, `.ccairgap/config.yaml` takes precedence and a warning is printed to stderr. `--config <path>` skips the walk and loads the given file (absolute or `cwd`-relative); missing file is a hard error.
 - **Profiles:** `--profile <name>` loads `<git-root>/.ccairgap/<name>.config.yaml` (fallback `<git-root>/.config/ccairgap/<name>.config.yaml`) instead of the default `config.yaml`. `--profile default` is equivalent to no flag (loads `config.yaml`). Missing profile file is a hard error (unlike the silent walk-fallback for the default). Profile names must match `[A-Za-z0-9._-]+`. `--config` and `--profile` are mutually exclusive. Relative-path anchoring (see §"Relative path resolution") treats profile files identically to `config.yaml` — same canonical-dir detection, so `repo: .` in `web.config.yaml` still means the git root. Profiles are a filename lookup only: no inheritance, no merge between profiles.
-- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth. `agent: codex` selects Codex runtime and `codex-args` supplies Codex passthrough tokens.
+- **Key surface:** every launch flag has a config-file key (kebab-case and camelCase both accepted). Unknown keys and wrong types abort launch with a clear error. `src/config.ts` is source of truth. `agent: codex` selects Codex runtime and `codex-args` supplies Codex passthrough tokens. For `exec`, config `agent` applies, config `print` / `resume` reject the invocation, and config `claude-args` / `codex-args` are ignored with a warning.
 - **Precedence:** CLI > config > built-in defaults. Scalars: CLI wins if passed. Arrays (`extra-repo`, `ro`, `cp`, `sync`, `mount`, `docker-run-arg`, `hooks.enable`, `mcp.enable`, `claude-args`, `codex-args`): concat (config first, CLI appended; no dedup). Maps (`docker-build-arg`): per-key merge, CLI wins on overlap.
 - **`repo` is optional.** If absent, it defaults to the git root that contains the config file (or `cwd` if no config is loaded). Most canonical setups need not set it.
 
@@ -266,8 +291,9 @@ hooks:
   enable:
     - "python3 *"
 
-# Forwarded verbatim to the in-container `claude` (subject to the denylist
-# in §"Selected-agent arg passthrough"). Concatenated with the CLI `--` tail.
+# Forwarded verbatim to the in-container `claude` for agent launch mode
+# (subject to the denylist in §"Selected-agent arg passthrough").
+# Concatenated with the CLI `--` tail. Ignored for `ccairgap exec`.
 claude-args:
   - --model
   - opus
@@ -275,6 +301,7 @@ claude-args:
   - high
 
 # Forwarded to Codex when `agent: codex`, after fail-closed validation.
+# Ignored for `ccairgap exec`.
 codex-args:
   - --model
   - gpt-5
@@ -630,7 +657,7 @@ Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the cur
 Two supported paths to change what's inside the image:
 
 1. **`--docker-build-arg KEY=VAL`** — the bundled Dockerfile exposes `CLAUDE_CODE_VERSION` and `CODEX_VERSION`. Pin either agent without touching the Dockerfile.
-2. **Sidecar Dockerfile via `ccairgap init`** — materialize a small Dockerfile that starts with `FROM ghcr.io/alfredvc/ccairgap:<cli-version>-<hash8>` into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place by adding only project-specific packages or files below the `FROM` line. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo or copy the raw bundled Dockerfile.
+2. **Sidecar Dockerfile via `ccairgap init`** — materialize a small Dockerfile that starts with `FROM ghcr.io/alfredvc/ccairgap:<version>` into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place by adding only project-specific packages or files below the `FROM` line. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo or copy the raw bundled Dockerfile.
 
 `ccairgap init` writes two files: `Dockerfile` and `config.yaml`. If either exists, `init` aborts with an error listing it; `--force` overwrites both unconditionally (no merge — any prior edits to `config.yaml` are lost). Legacy `entrypoint.sh` sidecars from older versions are ignored by the generated Dockerfile unless the user edits the Dockerfile to reference them.
 
@@ -638,7 +665,7 @@ Two supported paths to change what's inside the image:
 
 ## Entrypoint
 
-Runs at container start. Claude remains the default selected branch. When `CCAIRGAP_AGENT=codex`, the entrypoint launches Codex in interactive mode or `codex exec` in print mode after the same home and policy preparation steps.
+Runs at container start. `CCAIRGAP_ENTRYPOINT_MODE` selects the final branch: missing or `agent` launches the selected agent, and `exec` runs the command argv exactly as supplied after `ccairgap exec --`. Claude remains the default selected-agent branch. When `CCAIRGAP_AGENT=codex`, the entrypoint launches Codex in interactive mode or `codex exec` in print mode after the same home and policy preparation steps; in exec mode it prepares Codex state but still runs the supplied command argv.
 
 Steps:
 
@@ -665,7 +692,8 @@ Steps:
 8. Apply the `.ccairgap/` scope overlay — see §"`.ccairgap/` scope Claude config" for the full contract. `.ccairgap/CLAUDE.md` is appended to `~/.claude/CLAUDE.md`, `.ccairgap/settings.json` is deep-merged into `~/.claude/settings.json`, `.ccairgap/mcp.json` `mcpServers` are merged into `~/.claude.json`, and `.ccairgap/skills/` is rsynced into `~/.claude/skills/`. Overlay steps run after the hook-/MCP-policy passes so ccairgap-scope entries bypass `--hook-enable` / `--mcp-enable` by design.
 9. Append a baked-in bypass-immune-paths warning to `~/.claude/CLAUDE.md`. Informs the in-session model that Claude Code's upstream safety gate (`src/utils/permissions/permissions.ts` step 1g + `checkPathSafetyForAutoEdit` in `src/utils/permissions/filesystem.ts`) ignores `--dangerously-skip-permissions` for `.git/`, `.vscode/`, `.idea/`, `.claude/`, shell rc files, `.mcp.json`, `.claude.json`, and `.claude/{settings.json,settings.local.json}` — Edit/Write to any of those triggers an interactive prompt the sandbox cannot answer. The message is advisory (states the consequence, does not forbid the action). Appended after the `.ccairgap/` overlay so it is always the last block in `~/.claude/CLAUDE.md` regardless of user-supplied content. Mirrors the DANGEROUS_DIRECTORIES / DANGEROUS_FILES sets upstream — grow the warning when those lists change.
 10. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-11. Build the final selected-agent args:
+11. If `CCAIRGAP_ENTRYPOINT_MODE=exec`, set the final command to `"$@"` after setup. This is the production command-mode path. The CLI requires at least one command token and passes the command argv unchanged; the entrypoint performs no shell parsing. Missing mode defaults to `agent`; unknown mode exits with an error.
+12. Build the final selected-agent args:
    - **Claude branch:** always `claude --dangerously-skip-permissions`; then label, resume, passthrough, and optionally print.
    - **Label (`-n`):** `CCAIRGAP_NAME` carries the session id (always set by the CLI). Use `-n "ccairgap $CCAIRGAP_NAME"`. Fallback to `-n "ccairgap"` only when `CCAIRGAP_NAME` is unset (i.e. the entrypoint was launched directly without the CLI env).
    - **Resume (`-r`):** if `CCAIRGAP_RESUME` is set, append `-r "$CCAIRGAP_RESUME"`.
@@ -674,7 +702,7 @@ Steps:
    - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`. `-p` stays the final positional so claude treats `$CCAIRGAP_PRINT` as the prompt argument (claude's prompt-positional convention).
    - **Codex interactive branch:** `codex --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@"`.
    - **Codex print branch:** `codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@" "$CCAIRGAP_PRINT"`.
-12. If `CCAIRGAP_ENTRYPOINT_DRY_RUN=1`, print the selected branch, cwd, `CCAIRGAP_AGENT`, optional `CCAIRGAP_PRINT`, `CODEX_HOME`, home readiness, and final shell-quoted command, then exit before `exec`. This is test-only and differs from `CCAIRGAP_TEST_CMD`, which exits before branch selection.
+13. If `CCAIRGAP_ENTRYPOINT_DRY_RUN=1`, print the selected branch, cwd, `CCAIRGAP_ENTRYPOINT_MODE`, `CCAIRGAP_AGENT`, optional `CCAIRGAP_PRINT`, `CODEX_HOME`, home readiness, and final shell-quoted command, then exit before `exec`. This is test-only and differs from `CCAIRGAP_TEST_CMD`, which exits before branch selection.
 
 ## Auto-memory
 
@@ -868,13 +896,13 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 
 ## Selected-agent arg passthrough
 
-ccairgap treats tokens after CLI `--` as the selected-agent passthrough tail. Claude remains the default selected agent. With `agent=claude`, ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
+For the default launch command and `attach`, ccairgap treats tokens after CLI `--` as the selected-agent passthrough tail. Claude remains the default selected agent. With `agent=claude`, ccairgap forwards `claude` launch flags it does not own from CLI `--` and config `claude-args:` to the in-container `claude` invocation. Forward-compatible: any flag not on the denylist below passes through verbatim, so new Claude Code flags work the day they ship without a ccairgap release.
 
 With `agent=codex`, ccairgap merges config `codex-args:` and the CLI `--` tail, validates them with the Codex mode-aware allowlist, verifies container-visible `--image` paths, and forwards the filtered argv to the in-container Codex invocation.
 
 **Sources:**
 
-- **CLI:** tokens after a bare `--` are the passthrough tail. Example: `ccairgap --repo . -- --model opus --effort high`. The pre-split runs in `src/cliSplit.ts` before commander parses, so the existing unknown-positional guard still catches typos like `ccairgap lsit`. `--` passthrough on a known subcommand (`list`, `recover`, `discard`, `doctor`, `inspect`, `init`) errors with "`--` passthrough is only valid on the default launch command".
+- **CLI:** tokens after a bare `--` are the passthrough tail for default launch and `attach`. Example: `ccairgap --repo . -- --model opus --effort high`. The pre-split runs in `src/cliSplit.ts` before commander parses, so the existing unknown-positional guard still catches typos like `ccairgap lsit`. `exec` uses the same separator for exact command argv instead of selected-agent passthrough. `--` passthrough on other known subcommands (`list`, `recover`, `discard`, `doctor`, `inspect`, `init`, completion commands) errors.
 - **Config:** `claude-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Same shape as the CLI tail: a list of literal tokens. No map form — `claude-args: {model: opus}` is rejected by `assertStringArray`.
 - **Codex config:** `codex-args: [<token>, …]` in YAML (kebab and camelCase aliases both accepted). Used when `agent=codex`; config tokens come before the CLI tail and are validated with the Codex passthrough allowlist before launch.
 - **Merge:** config tokens come first, CLI tokens append. Claude's last-wins arg parser handles duplicates; users can rely on that to override config values from the CLI (config sets `--model opus`, CLI passes `-- --model sonnet` → claude keeps the last).
@@ -1093,9 +1121,10 @@ Post-processing in the CLI:
 
 ## Run mode
 
-Entrypoint ends with `exec claude --dangerously-skip-permissions`. Immediately before this, the entrypoint checks `CCAIRGAP_TEST_CMD`: if set, it `exec sh -c "$CCAIRGAP_TEST_CMD"` instead. This is a test-only hook; the CLI never sets it.
+Entrypoint dispatches through `CCAIRGAP_ENTRYPOINT_MODE`: missing or `agent` launches the selected agent, and `exec` runs the exact command argv supplied after `ccairgap exec --`. The entrypoint checks `CCAIRGAP_TEST_CMD` before production branch selection; if set, it `exec sh -c "$CCAIRGAP_TEST_CMD"` instead. This is a test-only hook; the CLI never sets it.
 
 - `ccairgap` drops directly into Claude's REPL.
+- `ccairgap exec -- aharness recipe-driven-design.fsm.ts` prepares the sandbox and runs that exact argv.
 - For walk-away use, user wraps in tmux on the host: `tmux new -s work 'ccairgap ...'`.
 - No in-container tmux; the Dockerfile does not install it.
 
@@ -1125,6 +1154,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 |---------|--------|---------|
 | `CCAIRGAP_CWD` | `--repo[0]` (or `/workspace`) | Container cwd for `cd` in entrypoint. |
 | `CCAIRGAP_TRUSTED_CWDS` | All repo paths | Trust-dialog bypass in `.claude.json`. |
+| `CCAIRGAP_ENTRYPOINT_MODE` | Launch mode | `agent` for selected-agent launch, `exec` for exact command argv mode. Missing defaults to `agent`. |
 | `CCAIRGAP_PRINT` | `--print` | Non-interactive prompt. |
 | `CCAIRGAP_NAME` | session id | Always set. Carries `<prefix>-<4hex>` from the CLI. Entrypoint uses it for `-n "ccairgap $CCAIRGAP_NAME"` (label) and the UserPromptSubmit rename hook emits `[ccairgap] $CCAIRGAP_NAME`. Resume flows use the same slug — the prior session's display name is not preserved. |
 | `CCAIRGAP_RESUME` | `--resume <uuid>` | Set when `--resume` is passed. Entrypoint appends `-r "$CCAIRGAP_RESUME"` to the claude exec. |
@@ -1249,9 +1279,9 @@ Backed by [`@pnpm/tabtab`](https://www.npmjs.com/package/@pnpm/tabtab) — the s
 
 **Uninstall.** `ccairgap uninstall-completion` calls `tabtab.uninstall({ name: "ccairgap" })`, which removes the source line from every rc it finds and deletes the tabtab-managed scripts when no other program is using them. Idempotent.
 
-**Callback.** `ccairgap completion-server` is the handler the shell function invokes at completion time. It reads tabtab's `COMP_*` env vars via `parseEnv(process.env)`, decides what candidates apply to the current word, and emits them to stdout via `tabtab.log(candidates, shell, console.log)`. The subcommand is hidden from `--help` but is a real commander subcommand (so `splitClaudeArgs`'s known-subcommand guard recognizes it and rejects `-- <claude-args>` passthrough cleanly).
+**Callback.** `ccairgap completion-server` is the handler the shell function invokes at completion time. It reads tabtab's `COMP_*` env vars via `parseEnv(process.env)`, decides what candidates apply to the current word, and emits them to stdout via `tabtab.log(candidates, shell, console.log)`. The subcommand is hidden from `--help` but is a real commander subcommand, so the pre-split guard recognizes it and drops tabtab's callback tail cleanly.
 
-**Candidates.** Static set = commander subcommand names + long-form flag names of the default launch command, introspected from the same `program` instance that parses real invocations (so the two never drift). Dynamic candidates extend the static set by `prev` word:
+**Candidates.** Static set = commander subcommand names (including `exec`) + long-form flag names of the default launch command, introspected from the same `program` instance that parses real invocations (so the two never drift). Dynamic candidates extend the static set by `prev` word:
 
 | When `prev` is… | Candidates |
 |---|---|
@@ -1263,6 +1293,8 @@ Backed by [`@pnpm/tabtab`](https://www.npmjs.com/package/@pnpm/tabtab) — the s
 | any other flag | No dynamic completion — tabtab falls back to filesystem completion where appropriate. |
 
 The static set also includes `codex-args` so config-key-oriented shells can surface the selected Codex passthrough key alongside the launch flags.
+
+Completion currently receives previous-token context only. It intentionally does not parse a full command line for deeper command-aware completion after `ccairgap exec -- ...`.
 
 **Failure mode.** Any scan error inside the callback is swallowed — completion emits nothing rather than a stacktrace. Exit code is always 0 so the shell completion function doesn't render shell-level errors during tab-press.
 

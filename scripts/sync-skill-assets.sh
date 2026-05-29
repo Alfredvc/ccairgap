@@ -53,15 +53,11 @@ generated_header_dockerfile() {
 EOF
 }
 
-default_image_ref() {
+published_version_ref() {
     node -e '
 const fs = require("fs");
-const crypto = require("crypto");
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-const h = crypto.createHash("sha256");
-h.update(fs.readFileSync("docker/Dockerfile"));
-h.update(fs.readFileSync("docker/entrypoint.sh"));
-console.log(`ghcr.io/alfredvc/ccairgap:${pkg.version}-${h.digest("hex").slice(0, 8)}`);
+console.log(`ghcr.io/alfredvc/ccairgap:${pkg.version}`);
 '
 }
 
@@ -87,10 +83,10 @@ sync_dockerfile_template() {
     fi
     mkdir -p "$(dirname "$dst")"
     {
-        generated_header_dockerfile "published image tag from docker/Dockerfile + docker/entrypoint.sh"
-        printf 'FROM %s\n' "$(default_image_ref)"
+        generated_header_dockerfile "published version image tag from package.json"
+        printf 'FROM %s\n' "$(published_version_ref)"
     } > "$dst"
-    echo "  published image Dockerfile template -> $dst"
+    echo "  published version Dockerfile template -> $dst"
 }
 
 echo "Syncing skill assets…"

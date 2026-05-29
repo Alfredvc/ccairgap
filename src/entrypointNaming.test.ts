@@ -32,14 +32,28 @@ describe("entrypoint.sh claude-args passthrough", () => {
     expect(entrypoint).toContain(
       'FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT")',
     );
-    expect(entrypoint).toContain('exec "${FINAL_CMD[@]}"');
+    expect(entrypoint).toContain('exec -- "${FINAL_CMD[@]}"');
   });
 
   it('splices "$@" after RESUME_ARGS in the interactive branch', () => {
     expect(entrypoint).toContain(
       'FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@")',
     );
-    expect(entrypoint).toContain('exec "${FINAL_CMD[@]}"');
+    expect(entrypoint).toContain('exec -- "${FINAL_CMD[@]}"');
+  });
+});
+
+describe("entrypoint.sh entrypoint mode dispatch", () => {
+  it("defaults to agent mode and exposes the mode in dry-run output", () => {
+    expect(entrypoint).toContain('ENTRYPOINT_MODE="${CCAIRGAP_ENTRYPOINT_MODE:-agent}"');
+    expect(entrypoint).toContain("printf 'CCAIRGAP_ENTRYPOINT_MODE=%s\\n' \"$ENTRYPOINT_MODE\"");
+  });
+
+  it('uses exact argv as FINAL_CMD in exec mode and rejects an empty "$@" tail', () => {
+    expect(entrypoint).toContain('if [ "$#" -eq 0 ]; then');
+    expect(entrypoint).toContain('FINAL_CMD=("$@")');
+    expect(entrypoint).toContain('DRY_RUN_BRANCH="exec"');
+    expect(entrypoint).toContain('dry_run "$DRY_RUN_BRANCH" "${FINAL_CMD[@]}"');
   });
 });
 

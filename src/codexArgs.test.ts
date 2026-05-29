@@ -105,6 +105,10 @@ describe("validateCodexArgs print allowlist", () => {
 });
 
 describe("validateCodexArgs denies top-level subcommands", () => {
+  it("rejects exec as normal selected-agent passthrough", () => {
+    expectDenied(["exec", "two words"], /exec/);
+  });
+
   it("denies known top-level subcommands and aliases", () => {
     for (const token of [
       "exec",

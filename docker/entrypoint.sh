@@ -382,6 +382,7 @@ if [ -n "${CCAIRGAP_TEST_CMD:-}" ]; then
 fi
 
 ENTRYPOINT_AGENT="${CCAIRGAP_AGENT:-claude}"
+ENTRYPOINT_MODE="${CCAIRGAP_ENTRYPOINT_MODE:-agent}"
 
 print_command() {
     local first=1
@@ -402,6 +403,7 @@ dry_run() {
     printf 'branch=%s\n' "$branch"
     printf 'cwd=%s\n' "$CWD"
     printf 'CCAIRGAP_AGENT=%s\n' "$ENTRYPOINT_AGENT"
+    printf 'CCAIRGAP_ENTRYPOINT_MODE=%s\n' "$ENTRYPOINT_MODE"
     if [ -n "${CCAIRGAP_PRINT:-}" ]; then
         printf 'CCAIRGAP_PRINT=%s\n' "$CCAIRGAP_PRINT"
     fi
@@ -425,34 +427,51 @@ dry_run() {
     print_command "$@"
 }
 
-case "$ENTRYPOINT_AGENT" in
-    claude)
-        # Passthrough: tokens forwarded by ccairgap from CLI `--` tail and config
-        # `claude-args:`. CLI already filtered against the denylist; entrypoint trusts
-        # the input. Spliced between RESUME_ARGS and -p so that -p (when set) stays
-        # the final positional, matching claude's prompt-positional convention.
-        if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-            FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT")
-        else
-            FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@")
-        fi
+case "$ENTRYPOINT_MODE" in
+    agent)
+        case "$ENTRYPOINT_AGENT" in
+            claude)
+                # Passthrough: tokens forwarded by ccairgap from CLI `--` tail and config
+                # `claude-args:`. CLI already filtered against the denylist; entrypoint trusts
+                # the input. Spliced between RESUME_ARGS and -p so that -p (when set) stays
+                # the final positional, matching claude's prompt-positional convention.
+                if [ -n "${CCAIRGAP_PRINT:-}" ]; then
+                    FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@" -p "$CCAIRGAP_PRINT")
+                else
+                    FINAL_CMD=(claude --dangerously-skip-permissions "${NAME_ARGS[@]}" "${RESUME_ARGS[@]}" "$@")
+                fi
+                ;;
+            codex)
+                if [ -n "${CCAIRGAP_PRINT:-}" ]; then
+                    FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT")
+                else
+                    FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@")
+                fi
+                ;;
+            *)
+                echo "ccairgap: unsupported CCAIRGAP_AGENT: $ENTRYPOINT_AGENT" >&2
+                exit 2
+                ;;
+        esac
+        DRY_RUN_BRANCH="$ENTRYPOINT_AGENT"
         ;;
-    codex)
-        if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-            FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT")
-        else
-            FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@")
+    exec)
+        if [ "$#" -eq 0 ]; then
+            echo "ccairgap: CCAIRGAP_ENTRYPOINT_MODE=exec requires a command" >&2
+            exit 2
         fi
+        FINAL_CMD=("$@")
+        DRY_RUN_BRANCH="exec"
         ;;
     *)
-        echo "ccairgap: unsupported CCAIRGAP_AGENT: $ENTRYPOINT_AGENT" >&2
+        echo "ccairgap: unsupported CCAIRGAP_ENTRYPOINT_MODE: $ENTRYPOINT_MODE" >&2
         exit 2
         ;;
 esac
 
 if [ "${CCAIRGAP_ENTRYPOINT_DRY_RUN:-}" = "1" ]; then
-    dry_run "$ENTRYPOINT_AGENT" "${FINAL_CMD[@]}"
+    dry_run "$DRY_RUN_BRANCH" "${FINAL_CMD[@]}"
     exit 0
 fi
 
-exec "${FINAL_CMD[@]}"
+exec -- "${FINAL_CMD[@]}"

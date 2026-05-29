@@ -26,6 +26,13 @@ Config and CLI are concatenated (config first, CLI appended); claude's last-wins
 
 When `--agent codex` or `agent: codex` is selected, the CLI `--` tail and config `codex-args` are merged in config-then-CLI order, validated with the Codex mode-aware allowlist, and forwarded to the in-container Codex invocation. See [codex.md](codex.md) for allowed Codex flags, denied surfaces, and `--image` visibility rules.
 
+`ccairgap exec -- <command...>` uses `--` differently. The tail is the exact command argv to run in the prepared container, not selected-agent passthrough. Config `claude-args` and `codex-args` are ignored with a warning in `exec` mode, and `--agent` only selects which environment is staged:
+
+```bash
+ccairgap exec -- aharness recipe-driven-design.fsm.ts
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
+```
+
 ## Denylist
 
 A small denylist blocks:

@@ -68,6 +68,16 @@ ccairgap sets `CCAIRGAP_AGENT=codex` and `CODEX_HOME=/home/claude/.codex` for th
 
 Before Docker execution, ccairgap inspects the resolved image for both agent binaries, supported Codex version, and required Codex mount targets. Exact unsupported `CODEX_VERSION` build args fail even earlier, before pull or build.
 
+## `exec` command mode
+
+`ccairgap exec --agent codex -- <command...>` prepares the Codex environment but runs the exact command after `--` instead of launching `codex`:
+
+```bash
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
+```
+
+Here `--agent codex` selects the staged environment and auth/config policy; it does not select the final command binary. The `--` separator is required, every following token is argv exactly, and ccairgap does no shell parsing. `--print` and `--resume` are rejected for `exec`; config `codex-args` is ignored with a warning because selected-agent passthrough is not used in command mode.
+
 ## Agent-aware subcommands
 
 `ccairgap attach <id>` defaults to the agent recorded in the session manifest. Old manifests without `agent` default to Claude. `ccairgap attach --agent codex <id>` is allowed only when the running container exposes Codex state (`CODEX_HOME`), and its `--` tail is validated with the same interactive Codex passthrough allowlist documented above.

@@ -14,6 +14,8 @@ A user-wide layer (`~/.config/ccairgap/`, scaffolded via `ccairgap init --user`)
 
 There is a third surface — `--docker-run-arg` — but it is an escape hatch, not a recommendation you should reach for. See "When `docker-run-arg` is *not* the answer" below. **Do not propose it unless the user has explicitly described a need it addresses.**
 
+`ccairgap exec -- <command...>` is command mode, not a config-file key. It prepares the configured sandbox and runs the exact argv after `--` instead of launching the selected agent. Use it when the user wants automation inside the prepared ccairgap environment. `--agent` selects which environment is prepared; it does not select the final binary. Do not add a persistent exec-command key to `config.yaml`.
+
 Your core job is narrow:
 
 1. **Find binary dependencies** the workflow needs inside the container → add to a custom Dockerfile.
@@ -222,7 +224,7 @@ Use this decision tree; full matrix in `references/artifact-decision.md`.
 Use these as starting points, don't copy them verbatim. Strip every key the user doesn't need; keep comments that justify what's left.
 
 - `assets/config.yaml.template` — annotated skeleton. Everything beyond `repo` is commented out; uncomment only the keys you're actually using.
-- `assets/Dockerfile.template` — minimal `FROM ghcr.io/alfredvc/ccairgap:<tag>` skeleton. Add only the project-specific `RUN`/`COPY` lines the user needs.
+- `assets/Dockerfile.template` — minimal `FROM ghcr.io/alfredvc/ccairgap:<version>` skeleton. Add only the project-specific `RUN`/`COPY` lines the user needs.
 
 ## Reference files
 
@@ -244,7 +246,7 @@ Read only what you need.
 - **Don't put host-absolute paths in committed `config.yaml`.** Use relative paths. Three anchors: `repo`/`extra-repo`/`ro` resolve against the **git root** (parent of the config dir — works for both `.ccairgap/` and `.config/ccairgap/`). `dockerfile` resolves against the **config file's directory** (sidecar, so `dockerfile: Dockerfile` finds the Dockerfile next to the config). `cp`/`sync`/`mount` resolve against the **workspace repo root** at launch. Absolute paths work but don't transfer between teammates.
 - **Don't recommend `--privileged`, `--cap-add`, `--pid=host`, `--network=host`, or `docker.sock` mounts to "make it work".** Those defeat the sandbox. Diagnose the root cause; if the honest answer is "this workflow can't run sandboxed", say so.
 - **Don't default to RW mounts for artifact dirs.** `node_modules`, `.venv`, `target/` get no config entry unless the user asks to cache them. First-run cost is not an escalation trigger.
-- **Don't replace the published base image unless you need to.** Inheriting from `ghcr.io/alfredvc/ccairgap:<tag>` preserves UID portability, entrypoint behavior, agent CLIs, and mount targets. Replacement Dockerfiles must reimplement those invariants.
+- **Don't replace the published base image unless you need to.** Inheriting from `ghcr.io/alfredvc/ccairgap:<version>` preserves UID portability, entrypoint behavior, agent CLIs, and mount targets. Replacement Dockerfiles must reimplement those invariants.
 - **Don't mount `~/.claude/` RW.** It's RO by design — session mutations die with the container. Users asking to persist these are usually asking the wrong question; talk them through it.
 - **Don't confuse `--cp` with Docker's `COPY`.** `--cp` is a pre-launch rsync from host to session scratch; container sees it RW at the same absolute path; changes discarded on exit.
 - **Don't add config keys that don't exist in SPEC.** The validator rejects unknown keys. If the user asks for a new behavior not in `docs/SPEC.md`, tell them — adding flags is a SPEC change, not a config-file workaround.

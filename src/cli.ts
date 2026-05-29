@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { cliVersion } from "./version.js";
-import { launch } from "./launch.js";
+import { launch, type LaunchOptions } from "./launch.js";
 import {
   attach,
   doctor,
@@ -45,9 +45,10 @@ function collect(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
-/** Merge CLI > config. Scalars: CLI wins. Arrays concat (config first, then CLI). Maps merge (CLI wins per-key). */
-function mergeRun(cli: {
-  agent?: AgentKind;
+type LaunchCliOptions = {
+  config?: string;
+  profile?: string;
+  agent?: string;
   repo?: string;
   extraRepo: string[];
   ro: string[];
@@ -67,72 +68,15 @@ function mergeRun(cli: {
   warnDockerArgs?: boolean;
   resume?: string;
   clipboard?: boolean;
-  noPreserveDirty?: boolean;
-  selectedAgentArgs: string[];
-  noAutoMemory?: boolean;
+  preserveDirty?: boolean;
+  autoMemory?: boolean;
   refreshBelowTtl?: number;
-}, cfg: ConfigFile) {
-  const agentSelection = resolveAgentSelection({
-    configAgent: cfg.agent,
-    cliAgent: cli.agent,
-    print: cli.print ?? cfg.print,
-    resume: cli.resume ?? cfg.resume,
-  });
-  return {
-    agent: agentSelection.kind,
-    repo: cli.repo ?? cfg.repo,
-    extraRepos: [...(cfg.extraRepo ?? []), ...cli.extraRepo],
-    ros: [...(cfg.ro ?? []), ...cli.ro],
-    cp: [...(cfg.cp ?? []), ...cli.cp],
-    sync: [...(cfg.sync ?? []), ...cli.sync],
-    mount: [...(cfg.mount ?? []), ...cli.mount],
-    base: cli.base ?? cfg.base,
-    keepContainer: cli.keepContainer ?? cfg.keepContainer ?? false,
-    dockerfile: cli.dockerfile ?? cfg.dockerfile,
-    dockerBuildArgs: { ...(cfg.dockerBuildArg ?? {}), ...(cli.dockerBuildArg ?? {}) },
-    rebuild: cli.rebuild ?? cfg.rebuild ?? false,
-    print: cli.print ?? cfg.print,
-    name: cli.name ?? cfg.name,
-    hookEnable: [...(cfg.hooks?.enable ?? []), ...cli.hookEnable],
-    mcpEnable: [...(cfg.mcp?.enable ?? []), ...cli.mcpEnable],
-    dockerRunArg: [...(cfg.dockerRunArg ?? []), ...cli.dockerRunArg],
-    warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
-    resume: cli.resume ?? cfg.resume,
-    clipboard: cli.clipboard ?? cfg.clipboard ?? true,
-    noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
-    claudeArgs: [
-      ...(cfg.claudeArgs ?? []),
-      ...(agentSelection.kind === "claude" ? cli.selectedAgentArgs : []),
-    ],
-    codexArgs: [
-      ...(cfg.codexArgs ?? []),
-      ...(agentSelection.kind === "codex" ? cli.selectedAgentArgs : []),
-    ],
-    noAutoMemory: cli.noAutoMemory ?? cfg.noAutoMemory ?? false,
-    refreshBelowTtl: cli.refreshBelowTtl ?? cfg.refreshBelowTtl ?? 120,
-  };
-}
+  bare?: boolean;
+  userConfig?: boolean;
+};
 
-async function main() {
-  const { argvForCommander, cliSelectedAgentArgs } = splitSelectedAgentArgs(process.argv);
-
-  const program = new Command();
-
-  program
-    .name("ccairgap")
-    .description("Run Claude Code with --dangerously-skip-permissions in a Docker container.")
-    .version(cliVersion(), "-v, --version");
-
-  // Reject unknown positionals on the root command (e.g. `ccairgap lsit`).
-  // Commander's unknownCommand path is gated on the root having no .action(), so
-  // without this hook typos fall through to the launch flow as ignored excess args.
-  program.hook("preAction", (thisCommand, actionCommand) => {
-    if (actionCommand !== thisCommand) return;
-    const first = thisCommand.args[0];
-    if (first !== undefined) program.error(`unknown command '${first}'`);
-  });
-
-  program
+function addLaunchEnvironmentOptions(command: Command): Command {
+  return command
     .option(
       "--config <path>",
       "path to yaml config file (default: <git-root>/.ccairgap/config.yaml, " +
@@ -256,178 +200,316 @@ async function main() {
       "skip the user-wide layer (~/.config/ccairgap/ config.yaml + integrations/ + " +
         "CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations " +
         "that want a hermetic launch without going full --bare.",
-    )
-    .action(async (opts, cmd) => {
-      const bare = Boolean(opts.bare);
-      // commander auto-inverts `--no-X` boolean flags into the positive key. So
-      // `--no-user-config` produces opts.userConfig === false; default is true.
-      const userConfigEnabled = opts.userConfig !== false;
+    );
+}
 
-      if (opts.config && opts.profile) {
-        console.error("ccairgap: --config and --profile are mutually exclusive");
-        process.exit(1);
-      }
+function getCliOptionSource(cmd: Command, key: string): string | undefined {
+  return cmd.getOptionValueSourceWithGlobals(key);
+}
 
-      // Load all config layers (user-wide integrations → user-wide config.yaml →
-      // project config.yaml). Under --bare without explicit --config/--profile the
-      // project layer is skipped; with --no-user-config the user-wide layer is
-      // skipped entirely (both config.yaml and integrations/).
-      const { layered, userWideDir } = loadAllLayers({
-        configPath: opts.config,
-        profile: opts.profile,
-        bare,
-        userConfigEnabled,
-      });
-      const fileCfg: ConfigFile = layered.merged;
+/** Merge CLI > config. Scalars: CLI wins. Arrays concat (config first, then CLI). Maps merge (CLI wins per-key). */
+function mergeRun(cli: {
+  agent?: AgentKind;
+  repo?: string;
+  extraRepo: string[];
+  ro: string[];
+  cp: string[];
+  sync: string[];
+  mount: string[];
+  base?: string;
+  keepContainer?: boolean;
+  dockerfile?: string;
+  dockerBuildArg?: Record<string, string>;
+  rebuild?: boolean;
+  print?: string;
+  name?: string;
+  hookEnable: string[];
+  mcpEnable: string[];
+  dockerRunArg: string[];
+  warnDockerArgs?: boolean;
+  resume?: string;
+  clipboard?: boolean;
+  noPreserveDirty?: boolean;
+  selectedAgentArgs: string[];
+  noAutoMemory?: boolean;
+  refreshBelowTtl?: number;
+}, cfg: ConfigFile) {
+  const agentSelection = resolveAgentSelection({
+    configAgent: cfg.agent,
+    cliAgent: cli.agent,
+    print: cli.print ?? cfg.print,
+    resume: cli.resume ?? cfg.resume,
+  });
+  return {
+    agent: agentSelection.kind,
+    repo: cli.repo ?? cfg.repo,
+    extraRepos: [...(cfg.extraRepo ?? []), ...cli.extraRepo],
+    ros: [...(cfg.ro ?? []), ...cli.ro],
+    cp: [...(cfg.cp ?? []), ...cli.cp],
+    sync: [...(cfg.sync ?? []), ...cli.sync],
+    mount: [...(cfg.mount ?? []), ...cli.mount],
+    base: cli.base ?? cfg.base,
+    keepContainer: cli.keepContainer ?? cfg.keepContainer ?? false,
+    dockerfile: cli.dockerfile ?? cfg.dockerfile,
+    dockerBuildArgs: { ...(cfg.dockerBuildArg ?? {}), ...(cli.dockerBuildArg ?? {}) },
+    rebuild: cli.rebuild ?? cfg.rebuild ?? false,
+    print: cli.print ?? cfg.print,
+    name: cli.name ?? cfg.name,
+    hookEnable: [...(cfg.hooks?.enable ?? []), ...cli.hookEnable],
+    mcpEnable: [...(cfg.mcp?.enable ?? []), ...cli.mcpEnable],
+    dockerRunArg: [...(cfg.dockerRunArg ?? []), ...cli.dockerRunArg],
+    warnDockerArgs: cli.warnDockerArgs ?? cfg.warnDockerArgs ?? true,
+    resume: cli.resume ?? cfg.resume,
+    clipboard: cli.clipboard ?? cfg.clipboard ?? true,
+    noPreserveDirty: cli.noPreserveDirty ?? cfg.noPreserveDirty ?? false,
+    claudeArgs: [
+      ...(cfg.claudeArgs ?? []),
+      ...(agentSelection.kind === "claude" ? cli.selectedAgentArgs : []),
+    ],
+    codexArgs: [
+      ...(cfg.codexArgs ?? []),
+      ...(agentSelection.kind === "codex" ? cli.selectedAgentArgs : []),
+    ],
+    noAutoMemory: cli.noAutoMemory ?? cfg.noAutoMemory ?? false,
+    refreshBelowTtl: cli.refreshBelowTtl ?? cfg.refreshBelowTtl ?? 120,
+  };
+}
 
-      // dockerBuildArg only counts as "set via CLI" if non-empty (commander default is {}).
-      const cliBuildArg: Record<string, string> | undefined =
-        opts.dockerBuildArg && Object.keys(opts.dockerBuildArg).length > 0
-          ? opts.dockerBuildArg
-          : undefined;
+async function runLaunchCommand(
+  cmd: Command,
+  cliSelectedAgentArgs: string[],
+  opts: { execCommand?: string[] } = {},
+): Promise<void> {
+  const cliOpts = cmd.optsWithGlobals() as LaunchCliOptions;
+  const bare = Boolean(cliOpts.bare);
+  // commander auto-inverts `--no-X` boolean flags into the positive key. So
+  // `--no-user-config` produces opts.userConfig === false; default is true.
+  const userConfigEnabled = cliOpts.userConfig !== false;
+  const execCommand = opts.execCommand;
 
-      // warnDockerArgs default is `true`; only treat as "set via CLI" when the
-      // user actually passed --no-warn-docker-args (or --warn-docker-args).
-      const warnDockerArgsSource = cmd.getOptionValueSource("warnDockerArgs");
-      const cliWarnDockerArgs: boolean | undefined =
-        warnDockerArgsSource === "cli" ? (opts.warnDockerArgs as boolean) : undefined;
+  if (cliOpts.config && cliOpts.profile) {
+    console.error("ccairgap: --config and --profile are mutually exclusive");
+    process.exit(1);
+  }
+  if (execCommand !== undefined && execCommand.length === 0) {
+    console.error("ccairgap: exec requires a command after --");
+    process.exit(1);
+  }
 
-      const clipboardSource = cmd.getOptionValueSource("clipboard");
-      const cliClipboard: boolean | undefined =
-        clipboardSource === "cli" ? (opts.clipboard as boolean) : undefined;
+  // Load all config layers (user-wide integrations → user-wide config.yaml →
+  // project config.yaml). Under --bare without explicit --config/--profile the
+  // project layer is skipped; with --no-user-config the user-wide layer is
+  // skipped entirely (both config.yaml and integrations/).
+  const { layered, userWideDir } = loadAllLayers({
+    configPath: cliOpts.config,
+    profile: cliOpts.profile,
+    bare,
+    userConfigEnabled,
+  });
+  const fileCfg: ConfigFile = layered.merged;
 
-      const preserveDirtySource = cmd.getOptionValueSource("preserveDirty");
-      const cliNoPreserveDirty: boolean | undefined =
-        preserveDirtySource === "cli" ? !(opts.preserveDirty as boolean) : undefined;
+  // dockerBuildArg only counts as "set via CLI" if non-empty (commander default is {}).
+  const cliBuildArg: Record<string, string> | undefined =
+    cliOpts.dockerBuildArg && Object.keys(cliOpts.dockerBuildArg).length > 0
+      ? cliOpts.dockerBuildArg
+      : undefined;
 
-      const autoMemorySource = cmd.getOptionValueSource("autoMemory");
-      const cliNoAutoMemory: boolean | undefined =
-        autoMemorySource === "cli" ? !(opts.autoMemory as boolean) : undefined;
+  // warnDockerArgs default is `true`; only treat as "set via CLI" when the
+  // user actually passed --no-warn-docker-args (or --warn-docker-args).
+  const warnDockerArgsSource = getCliOptionSource(cmd, "warnDockerArgs");
+  const cliWarnDockerArgs: boolean | undefined =
+    warnDockerArgsSource === "cli" ? (cliOpts.warnDockerArgs as boolean) : undefined;
 
-      const merged = mergeRun(
-        {
-          repo: opts.repo as string | undefined,
-          agent: opts.agent !== undefined ? parseAgentKind(opts.agent, "--agent") : undefined,
-          extraRepo: opts.extraRepo as string[],
-          ro: opts.ro as string[],
-          cp: opts.cp as string[],
-          sync: opts.sync as string[],
-          mount: opts.mount as string[],
-          base: opts.base,
-          keepContainer: opts.keepContainer,
-          dockerfile: opts.dockerfile,
-          dockerBuildArg: cliBuildArg,
-          rebuild: opts.rebuild,
-          print: opts.print,
-          name: opts.name,
-          hookEnable: opts.hookEnable as string[],
-          mcpEnable: opts.mcpEnable as string[],
-          dockerRunArg: opts.dockerRunArg as string[],
-          warnDockerArgs: cliWarnDockerArgs,
-          resume: opts.resume as string | undefined,
-          clipboard: cliClipboard,
-          noPreserveDirty: cliNoPreserveDirty,
-          selectedAgentArgs: cliSelectedAgentArgs,
-          noAutoMemory: cliNoAutoMemory,
-          refreshBelowTtl: opts.refreshBelowTtl as number | undefined,
-        },
-        fileCfg,
+  const clipboardSource = getCliOptionSource(cmd, "clipboard");
+  const cliClipboard: boolean | undefined =
+    clipboardSource === "cli" ? (cliOpts.clipboard as boolean) : undefined;
+
+  const preserveDirtySource = getCliOptionSource(cmd, "preserveDirty");
+  const cliNoPreserveDirty: boolean | undefined =
+    preserveDirtySource === "cli" ? !(cliOpts.preserveDirty as boolean) : undefined;
+
+  const autoMemorySource = getCliOptionSource(cmd, "autoMemory");
+  const cliNoAutoMemory: boolean | undefined =
+    autoMemorySource === "cli" ? !(cliOpts.autoMemory as boolean) : undefined;
+
+  const merged = mergeRun(
+    {
+      repo: cliOpts.repo as string | undefined,
+      agent: cliOpts.agent !== undefined ? parseAgentKind(cliOpts.agent, "--agent") : undefined,
+      extraRepo: (cliOpts.extraRepo as string[] | undefined) ?? [],
+      ro: (cliOpts.ro as string[] | undefined) ?? [],
+      cp: (cliOpts.cp as string[] | undefined) ?? [],
+      sync: (cliOpts.sync as string[] | undefined) ?? [],
+      mount: (cliOpts.mount as string[] | undefined) ?? [],
+      base: cliOpts.base,
+      keepContainer: cliOpts.keepContainer,
+      dockerfile: cliOpts.dockerfile,
+      dockerBuildArg: cliBuildArg,
+      rebuild: cliOpts.rebuild,
+      print: cliOpts.print,
+      name: cliOpts.name,
+      hookEnable: (cliOpts.hookEnable as string[] | undefined) ?? [],
+      mcpEnable: (cliOpts.mcpEnable as string[] | undefined) ?? [],
+      dockerRunArg: (cliOpts.dockerRunArg as string[] | undefined) ?? [],
+      warnDockerArgs: cliWarnDockerArgs,
+      resume: cliOpts.resume as string | undefined,
+      clipboard: cliClipboard,
+      noPreserveDirty: cliNoPreserveDirty,
+      selectedAgentArgs: cliSelectedAgentArgs,
+      noAutoMemory: cliNoAutoMemory,
+      refreshBelowTtl: cliOpts.refreshBelowTtl as number | undefined,
+    },
+    fileCfg,
+  );
+
+  const execMode = execCommand !== undefined;
+  let claudeArgs = merged.claudeArgs;
+  let codexArgs = merged.codexArgs;
+  if (execMode && (claudeArgs.length > 0 || codexArgs.length > 0)) {
+    console.error(
+      "ccairgap: warning: ignoring config claude-args/codex-args in exec mode",
+    );
+    claudeArgs = [];
+    codexArgs = [];
+  }
+  if (execMode && merged.print !== undefined) {
+    console.error("ccairgap: exec does not support --print");
+    process.exit(1);
+  }
+  if (execMode && merged.resume !== undefined) {
+    console.error("ccairgap: exec does not support --resume");
+    process.exit(1);
+  }
+
+  let workspaceRepo = merged.repo;
+  const extraRepos = merged.extraRepos;
+  const ros = merged.ros;
+
+  // Default --repo to cwd if it is a git repo, otherwise allow ro-only, otherwise error.
+  // Under --bare: skip all inference; still reject --extra-repo without --repo so the
+  // workspace contract stays explicit.
+  if (bare) {
+    if (!workspaceRepo && extraRepos.length > 0) {
+      console.error(
+        "ccairgap: --extra-repo requires --repo <path> (workspace). " +
+          "Pass --repo <path>.",
       );
+      process.exit(1);
+    }
+  } else if (!workspaceRepo) {
+    const cwd = process.cwd();
+    if (isGitRepo(cwd)) {
+      workspaceRepo = cwd;
+    } else if (extraRepos.length > 0) {
+      console.error(
+        "ccairgap: --extra-repo requires --repo <path> (workspace). " +
+          "Pass --repo <path> or cd into a repo.",
+      );
+      process.exit(1);
+    } else if (ros.length === 0) {
+      console.error(
+        "ccairgap: not in a git repo and no --repo / --ro passed. " +
+          "Pass --repo <path> or cd into a repo.",
+      );
+      process.exit(1);
+    }
+  }
 
-      let workspaceRepo = merged.repo;
-      const extraRepos = merged.extraRepos;
-      const ros = merged.ros;
+  const repos: string[] = workspaceRepo ? [workspaceRepo, ...extraRepos] : [...extraRepos];
 
-      // Default --repo to cwd if it is a git repo, otherwise allow ro-only, otherwise error.
-      // Under --bare: skip all inference; still reject --extra-repo without --repo so the
-      // workspace contract stays explicit.
-      if (bare) {
-        if (!workspaceRepo && extraRepos.length > 0) {
-          console.error(
-            "ccairgap: --extra-repo requires --repo <path> (workspace). " +
-              "Pass --repo <path>.",
-          );
-          process.exit(1);
-        }
-      } else if (!workspaceRepo) {
-        const cwd = process.cwd();
-        if (isGitRepo(cwd)) {
-          workspaceRepo = cwd;
-        } else if (extraRepos.length > 0) {
-          console.error(
-            "ccairgap: --extra-repo requires --repo <path> (workspace). " +
-              "Pass --repo <path> or cd into a repo.",
-          );
-          process.exit(1);
-        } else if (ros.length === 0) {
-          console.error(
-            "ccairgap: not in a git repo and no --repo / --ro passed. " +
-              "Pass --repo <path> or cd into a repo.",
-          );
-          process.exit(1);
-        }
-      }
+  for (const r of repos) {
+    if (!existsSync(r) || !statSync(r).isDirectory()) {
+      console.error(`ccairgap: repo path not a directory: ${r}`);
+      process.exit(1);
+    }
+  }
+  for (const r of ros) {
+    if (!existsSync(r)) {
+      console.error(`ccairgap: --ro path does not exist: ${r}`);
+      process.exit(1);
+    }
+  }
 
-      const repos: string[] = workspaceRepo ? [workspaceRepo, ...extraRepos] : [...extraRepos];
+  // CCAIRGAP_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
+  const buildArgs: Record<string, string> = { ...merged.dockerBuildArgs };
+  if (
+    process.env.CCAIRGAP_CC_VERSION &&
+    !buildArgs.CLAUDE_CODE_VERSION
+  ) {
+    buildArgs.CLAUDE_CODE_VERSION = process.env.CCAIRGAP_CC_VERSION;
+  }
 
-      for (const r of repos) {
-        if (!existsSync(r) || !statSync(r).isDirectory()) {
-          console.error(`ccairgap: repo path not a directory: ${r}`);
-          process.exit(1);
-        }
-      }
-      for (const r of ros) {
-        if (!existsSync(r)) {
-          console.error(`ccairgap: --ro path does not exist: ${r}`);
-          process.exit(1);
-        }
-      }
+  const launchOpts: LaunchOptions = {
+    agent: merged.agent,
+    repos,
+    ros,
+    cp: merged.cp,
+    sync: merged.sync,
+    mount: merged.mount,
+    base: merged.base,
+    keepContainer: merged.keepContainer,
+    dockerfile: merged.dockerfile,
+    dockerBuildArgs: buildArgs,
+    rebuild: merged.rebuild,
+    print: merged.print,
+    name: merged.name,
+    hookEnable: merged.hookEnable,
+    mcpEnable: merged.mcpEnable,
+    dockerRunArgs: merged.dockerRunArg,
+    warnDockerArgs: merged.warnDockerArgs,
+    clipboard: merged.clipboard,
+    bare,
+    resume: merged.resume,
+    noPreserveDirty: merged.noPreserveDirty,
+    claudeArgs,
+    codexArgs,
+    execCommand,
+    noAutoMemory: merged.noAutoMemory,
+    refreshBelowTtlMinutes: merged.refreshBelowTtl,
+    // --bare suppresses launch-config (config.yaml + integrations) but keeps
+    // the user-wide overlay mount active so user-wide CLAUDE.md / settings.json /
+    // mcp.json / skills/ continue to inject (session-environment, not launch-config).
+    // --no-user-config is the full kill switch — skips both layers.
+    // Existence gate lives in mounts.ts (buildMounts skips the mount when the dir
+    // is absent); loadAllLayers always returns the resolved path even when absent.
+    userWideDir: userConfigEnabled ? userWideDir : undefined,
+  };
+  const result = await launch(launchOpts);
+  process.exit(result.exitCode);
+}
 
-      // CCAIRGAP_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
-      const buildArgs: Record<string, string> = { ...merged.dockerBuildArgs };
-      if (
-        process.env.CCAIRGAP_CC_VERSION &&
-        !buildArgs.CLAUDE_CODE_VERSION
-      ) {
-        buildArgs.CLAUDE_CODE_VERSION = process.env.CCAIRGAP_CC_VERSION;
-      }
+async function main() {
+  const { argvForCommander, cliSelectedAgentArgs } = splitSelectedAgentArgs(process.argv);
 
-      const result = await launch({
-        agent: merged.agent,
-        repos,
-        ros,
-        cp: merged.cp,
-        sync: merged.sync,
-        mount: merged.mount,
-        base: merged.base,
-        keepContainer: merged.keepContainer,
-        dockerfile: merged.dockerfile,
-        dockerBuildArgs: buildArgs,
-        rebuild: merged.rebuild,
-        print: merged.print,
-        name: merged.name,
-        hookEnable: merged.hookEnable,
-        mcpEnable: merged.mcpEnable,
-        dockerRunArgs: merged.dockerRunArg,
-        warnDockerArgs: merged.warnDockerArgs,
-        clipboard: merged.clipboard,
-        bare,
-        resume: merged.resume,
-        noPreserveDirty: merged.noPreserveDirty,
-        claudeArgs: merged.claudeArgs,
-        codexArgs: merged.codexArgs,
-        noAutoMemory: merged.noAutoMemory,
-        refreshBelowTtlMinutes: merged.refreshBelowTtl,
-        // --bare suppresses launch-config (config.yaml + integrations) but keeps
-        // the user-wide overlay mount active so user-wide CLAUDE.md / settings.json /
-        // mcp.json / skills/ continue to inject (session-environment, not launch-config).
-        // --no-user-config is the full kill switch — skips both layers.
-        // Existence gate lives in mounts.ts (buildMounts skips the mount when the dir
-        // is absent); loadAllLayers always returns the resolved path even when absent.
-        userWideDir: userConfigEnabled ? userWideDir : undefined,
-      });
-      process.exit(result.exitCode);
-    });
+  const program = new Command();
+
+  program
+    .name("ccairgap")
+    .description("Run Claude Code with --dangerously-skip-permissions in a Docker container.")
+    .version(cliVersion(), "-v, --version");
+
+  // Reject unknown positionals on the root command (e.g. `ccairgap lsit`).
+  // Commander's unknownCommand path is gated on the root having no .action(), so
+  // without this hook typos fall through to the launch flow as ignored excess args.
+  program.hook("preAction", (thisCommand, actionCommand) => {
+    if (actionCommand !== thisCommand) return;
+    const first = thisCommand.args[0];
+    if (first !== undefined) program.error(`unknown command '${first}'`);
+  });
+
+  addLaunchEnvironmentOptions(program).action(async (_opts, cmd) => {
+    await runLaunchCommand(cmd, cliSelectedAgentArgs);
+  });
+
+  addLaunchEnvironmentOptions(
+    program
+      .command("exec")
+      .description(
+        "prepare the selected-agent environment and run an arbitrary command after --",
+      ),
+  ).action(async (_opts, cmd) => {
+    await runLaunchCommand(cmd, [], { execCommand: cliSelectedAgentArgs });
+  });
 
   program
     .command("list")

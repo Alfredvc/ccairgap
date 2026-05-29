@@ -4,7 +4,7 @@
 |------|---------|------------|-------------|
 | `--config <path>` | `<git-root>/.ccairgap/config.yaml` (fallback: `<git-root>/.config/ccairgap/config.yaml`) | no | YAML config file. See [config.md](config.md). |
 | `--profile <name>` | — | no | Named config under the canonical dir: `default` = `config.yaml`, any other `<name>` = `<name>.config.yaml`. Missing profile file is a hard error. Mutually exclusive with `--config`. |
-| `--agent <claude\|codex>` | `claude` | no | Select the agent provider. `claude` is the default. `codex` runs Codex CLI with sanitized session-local Codex state and selected-only auth handling. See [codex.md](codex.md). |
+| `--agent <claude\|codex>` | `claude` | no | Select the agent provider. `claude` is the default. `codex` runs Codex CLI with sanitized session-local Codex state and selected-only auth handling. For `exec`, this selects the prepared environment, not the final command binary. See [codex.md](codex.md). |
 | `--repo <path>` | cwd (if git repo) | no | Host repo exposed as the workspace (container cwd). Cloned `--shared`; branch `ccairgap/<id>` created on exit. |
 | `--extra-repo <path>` | — | yes | Additional repo mounted alongside `--repo`. Same clone/branch treatment, but not the workspace. |
 | `--ro <path>` | — | yes | Extra read-only bind mount. |
@@ -30,6 +30,17 @@
 | `--bare` | off | no | Skip config-file discovery and cwd-as-workspace inference. See [SPEC.md](SPEC.md) §"Bare mode". |
 | `--no-user-config` | off | no | Skip the user-wide layer (`~/.config/ccairgap/` config.yaml + integrations/ + CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations that want a hermetic launch without going full `--bare`. See [config.md](config.md) §"User-wide config". |
 | `-- <selected-agent-args…>` | — | no | Tokens after `--` are the selected-agent passthrough tail. Claude uses denylist validation; Codex uses a fail-closed allowlist and validates `--image` paths against container-visible inputs before session creation. See [claude-args.md](claude-args.md) and [codex.md](codex.md). |
+
+## `exec` command mode
+
+`ccairgap exec -- <command...>` uses the launch flags above to prepare the container, then runs the exact command argv after `--` instead of launching the selected agent:
+
+```bash
+ccairgap exec -- aharness recipe-driven-design.fsm.ts
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
+```
+
+The `--` separator is required. Tokens after it are passed as argv exactly, with no shell parsing or selected-agent passthrough validation. `--agent` still selects which environment is prepared (`claude` or `codex`); it does not choose the final command binary. `--print` and `--resume` are not supported for `exec`, including values loaded from config.
 
 ## Notes on `--name`
 

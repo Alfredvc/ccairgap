@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 import { writeManifest, type Manifest } from "./manifest.js";
 import { resolveUserWideDir } from "./userConfig.js";
-import { computeTag, defaultDockerfile, registryRef } from "./image.js";
+import { cliVersion } from "./version.js";
 
 let root: string;
 let fakeBinDir: string;
@@ -602,10 +602,7 @@ describe("doctor: sidecar drift", () => {
   }
 
   function expectedExtensionDockerfile(): string {
-    const defaultTag = computeTag(defaultDockerfile(), defaultDockerfile());
-    const ref = registryRef(defaultTag);
-    if (ref === undefined) throw new Error("default image registry ref unavailable");
-    return `FROM ${ref}\n`;
+    return `FROM ghcr.io/alfredvc/ccairgap:${cliVersion()}\n`;
   }
 
   it("treats the current generated extension Dockerfile as up to date", async () => {

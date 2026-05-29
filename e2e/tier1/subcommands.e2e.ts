@@ -22,6 +22,84 @@ describe("subcommands e2e", () => {
     await cleanup();
   });
 
+  async function sessionEntries(): Promise<string[]> {
+    try {
+      return await fs.readdir(path.join(ccairgapHome, "sessions"));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw e;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // exec
+  // ---------------------------------------------------------------------------
+
+  it("exec --help is registered and shows launch-environment flags", async () => {
+    const result = await runCli(["exec", "--help"], {
+      env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: ccairgap exec [options]");
+    expect(result.stdout).toContain("--agent <claude|codex>");
+    expect(result.stdout).toContain("--repo <path>");
+  });
+
+  it("exec without a command tail exits before creating a session", async () => {
+    const result = await runCli(["exec", "--bare"], {
+      env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/exec requires a command after --/);
+    expect(await sessionEntries()).toEqual([]);
+  });
+
+  it("exec with an empty -- command tail exits before creating a session", async () => {
+    const result = await runCli(["exec", "--bare", "--"], {
+      env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/exec requires a command after --/);
+    expect(await sessionEntries()).toEqual([]);
+  });
+
+  it("exec rejects CLI print/resume modes before creating a session", async () => {
+    for (const args of [
+      ["exec", "--bare", "--print", "x", "--", "aharness"],
+      ["exec", "--bare", "--resume", "00000000-0000-0000-0000-000000000000", "--", "aharness"],
+    ]) {
+      const result = await runCli(args, {
+        env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/exec does not support --(?:print|resume)/);
+      expect(await sessionEntries()).toEqual([]);
+    }
+  });
+
+  it("exec rejects config print/resume modes before creating a session", async () => {
+    for (const [name, body, message] of [
+      ["print", "print: x\n", /exec does not support --print/],
+      ["resume", "resume: 00000000-0000-0000-0000-000000000000\n", /exec does not support --resume/],
+    ] as const) {
+      const configPath = path.join(home, `${name}.config.yaml`);
+      await fs.writeFile(configPath, body);
+
+      const result = await runCli(
+        ["exec", "--bare", "--config", configPath, "--", "aharness"],
+        { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome } },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(message);
+      expect(await sessionEntries()).toEqual([]);
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // init
   // ---------------------------------------------------------------------------

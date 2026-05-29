@@ -1,8 +1,8 @@
 # GENERATED FILE — do not edit.
-# Source: published image tag from docker/Dockerfile + docker/entrypoint.sh
+# Source: published version image tag from package.json
 # Regenerate with: scripts/sync-skill-assets.sh
 #
 # To customize for your project, copy this file to <git-root>/.ccairgap/Dockerfile.
 # Add only project-specific image changes below the FROM line.
 
-FROM ghcr.io/alfredvc/ccairgap:0.6.0-ee680ee3
+FROM ghcr.io/alfredvc/ccairgap:0.6.0

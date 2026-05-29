@@ -17,16 +17,57 @@ const SUBCOMMANDS = new Set([
   "inspect",
   "init",
   "attach",
+  "exec",
   "install-completion",
   "uninstall-completion",
   "completion-server",
 ]);
 
+const ROOT_OPTIONS_WITH_VALUE = new Set([
+  "--config",
+  "--profile",
+  "--agent",
+  "--repo",
+  "--extra-repo",
+  "--ro",
+  "--cp",
+  "--sync",
+  "--mount",
+  "--base",
+  "--dockerfile",
+  "--docker-build-arg",
+  "--print",
+  "--name",
+  "--hook-enable",
+  "--mcp-enable",
+  "--docker-run-arg",
+  "--refresh-below-ttl",
+  "--resume",
+  "-p",
+  "-n",
+  "-r",
+]);
+
+function firstRootPositional(tokens: string[]): string | undefined {
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i]!;
+    if (!tok.startsWith("-")) return tok;
+    if (tok.startsWith("--")) {
+      const eq = tok.indexOf("=");
+      const optionName = eq >= 0 ? tok.slice(0, eq) : tok;
+      if (eq < 0 && ROOT_OPTIONS_WITH_VALUE.has(optionName)) i += 1;
+      continue;
+    }
+    if (ROOT_OPTIONS_WITH_VALUE.has(tok)) i += 1;
+  }
+  return undefined;
+}
+
 export function splitSelectedAgentArgs(argv: string[]): { argvForCommander: string[]; cliSelectedAgentArgs: string[] } {
   const sep = argv.indexOf("--", 2);
   if (sep < 0) return { argvForCommander: argv, cliSelectedAgentArgs: [] };
   const before = argv.slice(2, sep);
-  const firstPositional = before.find((tok) => !tok.startsWith("-"));
+  const firstPositional = firstRootPositional(before);
   // tabtab's generated zsh/bash/fish completer invokes
   // `ccairgap completion-server -- "${words[@]}"`. The callback reads
   // COMP_LINE/COMP_CWORD/COMP_POINT from env, not argv, so drop the tail
@@ -35,6 +76,12 @@ export function splitSelectedAgentArgs(argv: string[]): { argvForCommander: stri
     return { argvForCommander: argv.slice(0, sep), cliSelectedAgentArgs: [] };
   }
   if (firstPositional === "attach") {
+    return {
+      argvForCommander: argv.slice(0, sep),
+      cliSelectedAgentArgs: argv.slice(sep + 1),
+    };
+  }
+  if (firstPositional === "exec") {
     return {
       argvForCommander: argv.slice(0, sep),
       cliSelectedAgentArgs: argv.slice(sep + 1),

@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initCmd, resolveInitTarget } from "./subcommands.js";
-import { computeTag, defaultDockerfile, registryRef } from "./image.js";
+import { cliVersion } from "./version.js";
 
 let root: string;
 
@@ -95,10 +95,7 @@ describe("resolveInitTarget", () => {
 
 describe("initCmd", () => {
   function expectedExtensionDockerfile(): string {
-    const defaultTag = computeTag(defaultDockerfile(), defaultDockerfile());
-    const ref = registryRef(defaultTag);
-    if (ref === undefined) throw new Error("default image registry ref unavailable");
-    return `FROM ${ref}\n`;
+    return `FROM ghcr.io/alfredvc/ccairgap:${cliVersion()}\n`;
   }
 
   it("writes an extension Dockerfile and config.yaml into target dir", () => {

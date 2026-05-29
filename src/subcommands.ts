@@ -29,7 +29,6 @@ import {
   defaultEntrypoint,
   computeTag,
   imageExistsLocally,
-  registryRef,
 } from "./image.js";
 import { probeCredentials } from "./credentials.js";
 import { checkHostBinary } from "./binaries.js";
@@ -743,7 +742,7 @@ function escapeRegExp(value: string): string {
 }
 
 function isCurrentExtensionDockerfile(content: string): boolean {
-  const tag = computeTag(defaultDockerfile(), defaultDockerfile()).slice("ccairgap:".length);
+  const tag = cliVersion();
   return new RegExp(`^(?:\\s*#.*\\n|\\s*\\n)*FROM \\S+:${escapeRegExp(tag)}\\s*$`).test(
     content,
   );
@@ -751,9 +750,9 @@ function isCurrentExtensionDockerfile(content: string): boolean {
 
 /**
  * Check sidecar Dockerfile / entrypoint.sh under <git-root>/.ccairgap/.
- * The generated extension Dockerfile is current when it points at this CLI's
- * default published image tag; other sidecars are hash-compared against the
- * bundled copies. Returns undefined when the sidecar dir does not exist.
+ * The generated extension Dockerfile is current when it inherits from this
+ * CLI's plain release tag; other sidecars are hash-compared against the bundled
+ * copies. Returns undefined when the sidecar dir does not exist.
  */
 function checkSidecarDrift(): DoctorCheck | undefined {
   let gitRoot: string | undefined;
@@ -886,11 +885,8 @@ function defaultInitConfigYaml(): string {
 
 /** Minimal Dockerfile written by `ccairgap init` for image extension. */
 function defaultInitDockerfile(): string {
-  const ref = registryRef(computeTag(defaultDockerfile(), defaultDockerfile()));
-  if (ref === undefined) {
-    throw new Error("could not resolve default ccairgap registry image ref");
-  }
-  return `FROM ${ref}\n`;
+  const repo = process.env.CCAIRGAP_REGISTRY ?? "ghcr.io/alfredvc/ccairgap";
+  return `FROM ${repo}:${cliVersion()}\n`;
 }
 
 export interface InitOptions {

@@ -10,7 +10,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 
 | YAML key | Type | Equivalent flag | Notes |
 |----------|------|-----------------|-------|
-| `agent` | `claude` or `codex` | `--agent` | Default `claude`. `codex` opts into Codex CLI runtime with pre-side-effect workspace, arg, image-version, and auth validation. |
+| `agent` | `claude` or `codex` | `--agent` | Default `claude`. `codex` opts into Codex CLI runtime with pre-side-effect workspace, arg, image-version, and auth validation. Applies to `ccairgap exec` as the prepared environment selector. |
 | `repo` | string | `--repo` | Workspace repo. Single path. **Optional** — defaults to the git root containing the config. Relative → resolved against the **workspace anchor**. |
 | `extra-repo` | `[string]` | `--extra-repo` (repeat) | Additional repos mounted + cloned. Same anchor as `repo`. Not the workspace. |
 | `ro` | `[string]` | `--ro` (repeat) | RO bind mounts. Any path. Same anchor as `repo`. |
@@ -22,18 +22,30 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `dockerfile` | string | `--dockerfile` | Custom Dockerfile path. Relative → resolved against the **config file's directory** (sidecar convention). |
 | `docker-build-arg` | `{KEY: "VAL"}` | `--docker-build-arg` (repeat) | Map. Most common key: `CLAUDE_CODE_VERSION`. |
 | `rebuild` | bool | `--rebuild` | Force image rebuild. |
-| `print` | string | `-p` / `--print` | Non-interactive prompt. |
+| `print` | string | `-p` / `--print` | Non-interactive prompt. Rejected for `ccairgap exec`. |
 | `name` | string | `-n` / `--name` | Session id prefix; final id is `<name>-<4hex>`. Branch becomes `ccairgap/<id>`. |
+| `resume` | string | `-r` / `--resume` | Resume a Claude session by UUID or exact custom title. Rejected for `ccairgap exec`. |
 | `hooks.enable` | `[string]` | `--hook-enable` (repeat) | Glob against hook `command` string. See [hooks.md](hooks.md). |
 | `mcp.enable` | `[string]` | `--mcp-enable` (repeat) | Glob against MCP server `name`. Project-scope `<repo>/.mcp.json` additionally requires host approval. See [mcp.md](mcp.md). |
 | `docker-run-arg` | `[string]` | `--docker-run-arg` (repeat) | Raw docker tokens, shell-split. See [docker-run-args.md](docker-run-args.md). |
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |
-| `claude-args` | `[string]` | `-- <token> …` (tail) | Tokens forwarded verbatim to `claude` inside the container, subject to the denylist. Config first, CLI `--` tail appended. |
-| `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens forwarded to Codex inside the container after fail-closed allowlist validation. Config first, CLI `--` tail appended. |
+| `claude-args` | `[string]` | `-- <token> …` (tail) | Tokens forwarded verbatim to `claude` inside the container, subject to the denylist. Config first, CLI `--` tail appended. Ignored with a warning for `ccairgap exec`. |
+| `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens forwarded to Codex inside the container after fail-closed allowlist validation. Config first, CLI `--` tail appended. Ignored with a warning for `ccairgap exec`. |
 | `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
 | `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |
 | `refresh-below-ttl` | number (minutes) | `--refresh-below-ttl` | Host token ttl threshold for pre-launch auth refresh. Default 120. `0` disables the refresh; cold-start-dead refusal still fires. See [auth-refresh.md](auth-refresh.md). |
+
+## `exec` command interaction
+
+`ccairgap exec -- <command...>` loads config like a normal launch. Config `agent` applies and selects which environment is staged:
+
+```bash
+ccairgap exec -- aharness recipe-driven-design.fsm.ts
+ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts
+```
+
+The command tail after `--` is not persisted in config and has no `config.yaml` key. The separator is required; every following token is the exact command argv, with no shell parsing. Config `print` and `resume` reject `exec`. Config `claude-args` and `codex-args` are selected-agent passthrough settings, so they are ignored with a warning in `exec` mode.
 
 ## Profiles
 
