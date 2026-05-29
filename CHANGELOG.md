@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.6.2](https://github.com/Alfredvc/ccairgap/compare/v0.6.1...v0.6.2) (2026-05-29)
+
+
+### Bug Fixes
+
+* use current Codex hooks feature flag ([610192d](https://github.com/Alfredvc/ccairgap/commit/610192d4b4ea40ca9f65928f97ac87ccd03f6d44))
+
 ## [0.6.1](https://github.com/Alfredvc/ccairgap/compare/v0.6.0...v0.6.1) (2026-05-29)
 
 
