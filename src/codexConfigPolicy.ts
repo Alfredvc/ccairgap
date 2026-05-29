@@ -109,6 +109,19 @@ function filterHookRecord(
   return kept;
 }
 
+function featureTableWithoutDeprecatedHooksFlag(
+  doc: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const features = asRecord(doc.features);
+  if (!features) return undefined;
+  delete features.codex_hooks;
+  if (Object.keys(features).length === 0) {
+    delete doc.features;
+    return undefined;
+  }
+  return features;
+}
+
 export function filterCodexConfigToml(options: {
   toml: string;
   source?: string;
@@ -133,14 +146,15 @@ export function filterCodexConfigToml(options: {
     const kept = filterHookRecord(hooks, options.hookEnable ?? [], warnings, options.source);
     if (Object.keys(kept).length > 0) {
       doc.hooks = kept;
-      const features = asRecord(doc.features) ?? {};
-      features.codex_hooks = true;
+      const features = featureTableWithoutDeprecatedHooksFlag(doc) ?? {};
+      features.hooks = true;
       doc.features = features;
     } else {
       delete doc.hooks;
-      const features = asRecord(doc.features);
-      if (features) features.codex_hooks = false;
+      featureTableWithoutDeprecatedHooksFlag(doc);
     }
+  } else {
+    featureTableWithoutDeprecatedHooksFlag(doc);
   }
 
   return { content: stringify(doc), warnings };

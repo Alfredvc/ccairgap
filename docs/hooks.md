@@ -98,6 +98,6 @@ ccairgap can't use Claude Code's `disableAllHooks: true` flag (it would also kil
 
 ## Codex hooks
 
-Codex hook config is also filtered before it reaches a session. User `$CODEX_HOME/config.toml`, `$CODEX_HOME/hooks.json`, project `.codex/config.toml`, and project `.codex/hooks.json` keep only hook commands matched by `--hook-enable` / `hooks.enable`. Unmatched entries are removed, and `[features].codex_hooks` is enabled only when a matched non-managed hook remains.
+Codex hook config is also filtered before it reaches a session. User `$CODEX_HOME/config.toml`, `$CODEX_HOME/hooks.json`, project `.codex/config.toml`, and project `.codex/hooks.json` keep only hook commands matched by `--hook-enable` / `hooks.enable`. Unmatched entries are removed, and `[features].hooks` is enabled only when a matched non-managed hook remains.
 
 Managed or legacy managed Codex hook sources are not copied or mounted. If such sources are discovered for selected Codex, ccairgap fails closed until there is a separate managed-requirements design. Project `.codex/hooks/` support directories are not copied in the first implementation.

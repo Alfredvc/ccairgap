@@ -52,11 +52,13 @@ codex_hooks = false
     expect(parsed.codex_apps).toBeUndefined();
     expect(Object.keys(parsed.mcp_servers as Record<string, unknown>)).toEqual(["safe"]);
     expect(Object.keys(parsed.hooks as Record<string, unknown>)).toEqual(["keep"]);
-    expect((parsed.features as Record<string, unknown>).codex_hooks).toBe(true);
+    expect((parsed.features as Record<string, unknown>).hooks).toBe(true);
+    expect((parsed.features as Record<string, unknown>).codex_hooks).toBeUndefined();
+    expect(result.content).not.toContain("codex_hooks");
     expect(result.warnings.map((w) => w.code)).toContain("stripped-codex-config-key");
   });
 
-  it("disables MCP and hooks by default", () => {
+  it("disables MCP and hooks by default without preserving deprecated hook flags", () => {
     const result = filterCodexConfigToml({
       toml: `
 [mcp_servers.filesystem]
@@ -64,11 +66,16 @@ command = "node"
 
 [hooks.pre_model]
 command = "echo blocked"
+
+[features]
+codex_hooks = true
 `,
     });
     const parsed = parse(result.content ?? "") as Record<string, unknown>;
     expect(parsed.mcp_servers).toBeUndefined();
     expect(parsed.hooks).toBeUndefined();
+    expect(parsed.features).toBeUndefined();
+    expect(result.content).not.toContain("codex_hooks");
   });
 });
 
