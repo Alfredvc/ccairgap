@@ -15,6 +15,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execaSync } from "execa";
 
+const TEST_DOCKER_BUILD_ARGS = {
+  CLAUDE_CODE_VERSION: "2.1.143",
+  CODEX_VERSION: "0.134.0",
+};
+
 // Mock handoff → no-op. Without this, a clean session + empty sandbox branch
 // triggers `rm -rf $SESSION` at the end of launch() and the overlay state we
 // want to inspect disappears with it.
@@ -116,7 +121,7 @@ function baseOpts(repos: string[], extra: Partial<Parameters<typeof launch>[0]> 
     sync: [],
     mount: [],
     keepContainer: false,
-    dockerBuildArgs: {},
+    dockerBuildArgs: TEST_DOCKER_BUILD_ARGS,
     rebuild: false,
     hookEnable: [],
     mcpEnable: [],
