@@ -45,6 +45,14 @@ function collect(value: string, previous: string[]): string[] {
   return previous.concat([value]);
 }
 
+function applyCcVersionBuildArg(buildArgs: Record<string, string>): Record<string, string> {
+  const out = { ...buildArgs };
+  if (process.env.CCAIRGAP_CC_VERSION && !out.CLAUDE_CODE_VERSION) {
+    out.CLAUDE_CODE_VERSION = process.env.CCAIRGAP_CC_VERSION;
+  }
+  return out;
+}
+
 type LaunchCliOptions = {
   config?: string;
   profile?: string;
@@ -431,13 +439,7 @@ async function runLaunchCommand(
   }
 
   // CCAIRGAP_CC_VERSION env short-form for CLAUDE_CODE_VERSION build-arg.
-  const buildArgs: Record<string, string> = { ...merged.dockerBuildArgs };
-  if (
-    process.env.CCAIRGAP_CC_VERSION &&
-    !buildArgs.CLAUDE_CODE_VERSION
-  ) {
-    buildArgs.CLAUDE_CODE_VERSION = process.env.CCAIRGAP_CC_VERSION;
-  }
+  const buildArgs = applyCcVersionBuildArg(merged.dockerBuildArgs);
 
   const launchOpts: LaunchOptions = {
     agent: merged.agent,
@@ -557,6 +559,12 @@ async function main() {
     .option("--profile <name>", "load a named config file (same semantics as launch; mutually exclusive with --config)")
     .option("--agent <claude|codex>", "selected agent to preflight. Defaults to config, then claude.")
     .option(
+      "--docker-build-arg <KEY=VAL>",
+      "image build-arg to use when resolving the doctor image row. Repeatable.",
+      parseBuildArg,
+      {} as Record<string, string>,
+    )
+    .option(
       "--bare",
       "skip config-file loading unless --config/--profile is explicit (same semantics as launch)",
     )
@@ -564,7 +572,7 @@ async function main() {
       "--no-user-config",
       "skip the user-wide config layer (same semantics as launch)",
     )
-    .action(async (opts) => {
+    .action(async (opts, command: Command) => {
       if (opts.config && opts.profile) {
         console.error("ccairgap: --config and --profile are mutually exclusive");
         process.exit(1);
@@ -575,10 +583,19 @@ async function main() {
         bare: Boolean(opts.bare),
         userConfigEnabled: opts.userConfig !== false,
       });
+      const cliBuildArgs =
+        {
+          ...(opts.dockerBuildArg ?? {}),
+          ...((command.parent?.opts().dockerBuildArg as Record<string, string> | undefined) ?? {}),
+        };
       await doctor({
         agent: resolveSubcommandAgent({
           cliAgent: opts.agent !== undefined ? parseAgentKind(opts.agent, "doctor --agent") : undefined,
           configAgent: layered.merged.agent,
+        }),
+        dockerBuildArgs: applyCcVersionBuildArg({
+          ...(layered.merged.dockerBuildArg ?? {}),
+          ...cliBuildArgs,
         }),
       });
     });

@@ -3,34 +3,95 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  SUPPORTED_CODEX_VERSION,
   computeTag,
   defaultDockerfile,
   defaultImageBuildArgs,
+  hostCodexVersion,
+  normalizeClaudeVersion,
   normalizeCodexVersion,
   registryRef,
+  resolveAgentVersions,
   validateExpectedCodexVersion,
 } from "./image.js";
 
 describe("computeTag", () => {
+  const versions = {
+    claudeCodeVersion: "2.1.143",
+    codexVersion: "0.134.0",
+  };
+
   it("default Dockerfile path → ccairgap:<v>-<hash8>", () => {
-    const tag = computeTag(defaultDockerfile(), defaultDockerfile());
+    const tag = computeTag(defaultDockerfile(), defaultDockerfile(), versions);
     expect(tag).toMatch(/^ccairgap:\d+\.\d+\.\d+(?:-[\w.]+)?-[0-9a-f]{8}$/);
   });
 
-  it("custom Dockerfile tags depend on Dockerfile content only, not build args", () => {
+  it("custom Dockerfile path → ccairgap:custom-<hash12>", () => {
     const dir = mkdtempSync(join(tmpdir(), "ccairgap-image-test-"));
     const dockerfile = join(dir, "Dockerfile");
     writeFileSync(dockerfile, "FROM scratch\n");
 
-    const tag = computeTag(dockerfile, defaultDockerfile());
+    const tag = computeTag(dockerfile, defaultDockerfile(), versions);
 
     expect(tag).toMatch(/^ccairgap:custom-[0-9a-f]{12}$/);
-    expect(tag).toBe(computeTag(dockerfile, defaultDockerfile()));
+    expect(tag).toBe(computeTag(dockerfile, defaultDockerfile(), versions));
+  });
+
+  it("changes default and custom tags when only Claude Code version changes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccairgap-image-test-"));
+    const dockerfile = join(dir, "Dockerfile");
+    writeFileSync(dockerfile, "FROM scratch\n");
+
+    const changedClaude = { ...versions, claudeCodeVersion: "2.1.144" };
+
+    expect(computeTag(defaultDockerfile(), defaultDockerfile(), changedClaude)).not.toBe(
+      computeTag(defaultDockerfile(), defaultDockerfile(), versions),
+    );
+    expect(computeTag(dockerfile, defaultDockerfile(), changedClaude)).not.toBe(
+      computeTag(dockerfile, defaultDockerfile(), versions),
+    );
+  });
+
+  it("changes default and custom tags when only Codex version changes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccairgap-image-test-"));
+    const dockerfile = join(dir, "Dockerfile");
+    writeFileSync(dockerfile, "FROM scratch\n");
+
+    const changedCodex = { ...versions, codexVersion: "0.135.0" };
+
+    expect(computeTag(defaultDockerfile(), defaultDockerfile(), changedCodex)).not.toBe(
+      computeTag(defaultDockerfile(), defaultDockerfile(), versions),
+    );
+    expect(computeTag(dockerfile, defaultDockerfile(), changedCodex)).not.toBe(
+      computeTag(dockerfile, defaultDockerfile(), versions),
+    );
+  });
+
+  it("keeps tags stable when version object keys are reordered", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ccairgap-image-test-"));
+    const dockerfile = join(dir, "Dockerfile");
+    writeFileSync(dockerfile, "FROM scratch\n");
+    const reordered = {
+      codexVersion: versions.codexVersion,
+      claudeCodeVersion: versions.claudeCodeVersion,
+    };
+
+    expect(computeTag(defaultDockerfile(), defaultDockerfile(), reordered)).toBe(
+      computeTag(defaultDockerfile(), defaultDockerfile(), versions),
+    );
+    expect(computeTag(dockerfile, defaultDockerfile(), reordered)).toBe(
+      computeTag(dockerfile, defaultDockerfile(), versions),
+    );
   });
 });
 
 describe("Codex image version helpers", () => {
+  it("normalizes claude --version output", () => {
+    expect(normalizeClaudeVersion("2.1.143 (Claude Code)")).toBe("2.1.143");
+    expect(normalizeClaudeVersion("2.1.143")).toBe("2.1.143");
+    expect(normalizeClaudeVersion("2.1.144-alpha.1 (Claude Code)")).toBe("2.1.144-alpha.1");
+    expect(normalizeClaudeVersion("not a version")).toBeUndefined();
+  });
+
   it("normalizes codex --version output", () => {
     expect(normalizeCodexVersion("codex-cli 0.130.0")).toBe("0.130.0");
     expect(normalizeCodexVersion("0.130.0")).toBe("0.130.0");
@@ -38,41 +99,120 @@ describe("Codex image version helpers", () => {
     expect(normalizeCodexVersion("not a version")).toBeUndefined();
   });
 
-  it("defaults Docker build args for both agents and lets explicit build args override", () => {
-    expect(defaultImageBuildArgs({ claudeVersion: "1.2.3" })).toEqual({
+  it("defaults Docker build args from exact resolved versions and lets explicit build args override", () => {
+    expect(defaultImageBuildArgs({ claudeVersion: "1.2.3", codexVersion: "0.134.0" })).toEqual({
       CLAUDE_CODE_VERSION: "1.2.3",
-      CODEX_VERSION: SUPPORTED_CODEX_VERSION,
+      CODEX_VERSION: "0.134.0",
     });
 
     expect(
       defaultImageBuildArgs({
         claudeVersion: "1.2.3",
-        overrides: { CLAUDE_CODE_VERSION: "latest", CODEX_VERSION: "0.130.0-alpha.1" },
+        codexVersion: "0.134.0",
+        overrides: { CLAUDE_CODE_VERSION: "2.0.0", CODEX_VERSION: "0.134.0-alpha.1" },
       }),
     ).toEqual({
-      CLAUDE_CODE_VERSION: "latest",
-      CODEX_VERSION: "0.130.0-alpha.1",
+      CLAUDE_CODE_VERSION: "2.0.0",
+      CODEX_VERSION: "0.134.0-alpha.1",
     });
   });
 
-  it("rejects unsupported exact Codex version pins before image resolution", () => {
+  it("accepts exact Codex version pins before image resolution", () => {
     expect(validateExpectedCodexVersion("0.130.0")).toEqual({
       ok: true,
       version: "0.130.0",
     });
-    expect(validateExpectedCodexVersion("0.129.0")).toEqual({
-      ok: false,
-      version: "0.129.0",
-      message: "unsupported CODEX_VERSION 0.129.0; supported exact version is 0.130.0",
+    expect(validateExpectedCodexVersion("0.134.0")).toEqual({
+      ok: true,
+      version: "0.134.0",
     });
   });
 
-  it("warns for non-exact Codex version inputs that require runtime inspection", () => {
+  it("rejects non-exact Codex version inputs before image resolution", () => {
     expect(validateExpectedCodexVersion("latest")).toEqual({
-      ok: true,
-      message:
-        "CODEX_VERSION latest is not an exact supported semver; runtime image contract inspection must verify the installed Codex version",
+      ok: false,
+      message: "CODEX_VERSION latest is not exact; pass an exact --docker-build-arg CODEX_VERSION=x.y.z",
     });
+  });
+
+  it("resolves omitted agent build args from injected host versions", async () => {
+    await expect(
+      resolveAgentVersions(
+        {},
+        {
+          claudeCodeVersion: async () => "2.1.143",
+          codexVersion: async () => "0.134.0",
+        },
+      ),
+    ).resolves.toEqual({
+      claudeCodeVersion: "2.1.143",
+      codexVersion: "0.134.0",
+    });
+  });
+
+  it("keeps exact agent build args without calling host readers", async () => {
+    const hostReaders = {
+      claudeCodeVersion: vi.fn(async () => "2.1.143"),
+      codexVersion: vi.fn(async () => "0.134.0"),
+    };
+
+    await expect(
+      resolveAgentVersions(
+        { CLAUDE_CODE_VERSION: "2.0.0", CODEX_VERSION: "0.133.0" },
+        hostReaders,
+      ),
+    ).resolves.toEqual({
+      claudeCodeVersion: "2.0.0",
+      codexVersion: "0.133.0",
+    });
+    expect(hostReaders.claudeCodeVersion).not.toHaveBeenCalled();
+    expect(hostReaders.codexVersion).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-exact explicit agent build args", async () => {
+    await expect(
+      resolveAgentVersions(
+        { CLAUDE_CODE_VERSION: "2.1", CODEX_VERSION: "0.134.0" },
+        {
+          claudeCodeVersion: async () => "2.1.143",
+          codexVersion: async () => "0.134.0",
+        },
+      ),
+    ).rejects.toThrow(
+      "CLAUDE_CODE_VERSION 2.1 is not exact; pass an exact --docker-build-arg CLAUDE_CODE_VERSION=x.y.z",
+    );
+  });
+
+  it("rejects explicit latest agent build args", async () => {
+    await expect(
+      resolveAgentVersions(
+        { CLAUDE_CODE_VERSION: "latest", CODEX_VERSION: "0.134.0" },
+        {
+          claudeCodeVersion: async () => "2.1.143",
+          codexVersion: async () => "0.134.0",
+        },
+      ),
+    ).rejects.toThrow(
+      "CLAUDE_CODE_VERSION latest is not exact; pass an exact --docker-build-arg CLAUDE_CODE_VERSION=x.y.z",
+    );
+  });
+
+  it("rejects omitted versions when the host version cannot be resolved", async () => {
+    await expect(
+      resolveAgentVersions(
+        {},
+        {
+          claudeCodeVersion: async () => undefined,
+          codexVersion: async () => "0.134.0",
+        },
+      ),
+    ).rejects.toThrow(
+      "CLAUDE_CODE_VERSION latest could not resolve to an exact host version; pass an exact --docker-build-arg CLAUDE_CODE_VERSION=x.y.z",
+    );
+  });
+
+  it("exports a host Codex version reader", () => {
+    expect(hostCodexVersion).toEqual(expect.any(Function));
   });
 });
 
@@ -104,5 +244,68 @@ describe("registryRef", () => {
 
   it("returns undefined for non-ccairgap tags", () => {
     expect(registryRef("someother:1.0")).toBeUndefined();
+  });
+});
+
+describe("ensureImage", () => {
+  afterEach(async () => {
+    vi.doUnmock("execa");
+    await vi.resetModules();
+  });
+
+  it("builds a managed-runtime custom Dockerfile on the resolved runtime base image", async () => {
+    await vi.resetModules();
+    const execa = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args[0] === "image" && args[1] === "inspect") {
+        throw new Error("missing image");
+      }
+      if (args[0] === "pull") {
+        throw new Error("registry unavailable");
+      }
+      return { stdout: "" };
+    });
+    vi.doMock("execa", () => ({ execa }));
+    const mod = await import("./image.js");
+    const dir = mkdtempSync(join(tmpdir(), "ccairgap-image-test-"));
+    const dockerfile = join(dir, "Dockerfile");
+    writeFileSync(
+      dockerfile,
+      [
+        "ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required",
+        "FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}",
+        "RUN true",
+        "",
+      ].join("\n"),
+    );
+    const versions = {
+      claudeCodeVersion: "2.1.143",
+      codexVersion: "0.134.0",
+    };
+    const buildArgs = {
+      CLAUDE_CODE_VERSION: versions.claudeCodeVersion,
+      CODEX_VERSION: versions.codexVersion,
+    };
+    await mod.ensureImage({
+      dockerfile,
+      versions,
+      buildArgs,
+      rebuild: false,
+    });
+
+    const buildCalls = execa.mock.calls.filter(
+      ([cmd, args]) => cmd === "docker" && args[0] === "build",
+    );
+    expect(buildCalls).toHaveLength(2);
+    const runtimeBuild = buildCalls[0]!;
+    const customBuild = buildCalls[1]!;
+    expect(runtimeBuild[1]).toContain("--target");
+    expect(runtimeBuild[1]).toContain("ccairgap-runtime");
+    expect(customBuild[1]).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:.+-runtime-[0-9a-f]{8}$/),
+      ]),
+    );
+    expect(customBuild[1]).toContain("CLAUDE_CODE_VERSION=2.1.143");
+    expect(customBuild[1]).toContain("CODEX_VERSION=0.134.0");
   });
 });

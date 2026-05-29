@@ -9,6 +9,14 @@ const DOCKERFILE = readFileSync(
   join(__dirname, "..", "docker", "Dockerfile"),
   "utf8",
 );
+const RELEASE_WORKFLOW = readFileSync(
+  join(__dirname, "..", ".github", "workflows", "release.yml"),
+  "utf8",
+);
+const RELEASE_AGENT_VERSIONS = readFileSync(
+  join(__dirname, "..", "docker", "agent-versions.env"),
+  "utf8",
+);
 
 describe("docker/Dockerfile clipboard invariants", () => {
   it("does NOT install xclip", () => {
@@ -68,9 +76,12 @@ describe("docker/Dockerfile UID-portability invariants", () => {
 
 describe("docker/Dockerfile dual-agent invariants", () => {
   it("installs Claude Code and Codex with explicit build args", () => {
-    expect(DOCKERFILE).toMatch(/\bARG CLAUDE_CODE_VERSION=latest\b/);
-    expect(DOCKERFILE).toMatch(/\bARG CODEX_VERSION=0\.130\.0\b/);
-    expect(DOCKERFILE).toMatch(/claude\.ai\/install\.sh/);
+    expect(DOCKERFILE).toMatch(/^ARG CLAUDE_CODE_VERSION$/m);
+    expect(DOCKERFILE).toMatch(/^ARG CODEX_VERSION$/m);
+    expect(DOCKERFILE).not.toMatch(/\bARG CLAUDE_CODE_VERSION=latest\b/);
+    expect(DOCKERFILE).not.toMatch(/\bARG CODEX_VERSION=0\.130\.0\b/);
+    expect(DOCKERFILE).toMatch(/test -n "\$CLAUDE_CODE_VERSION" && test -n "\$CODEX_VERSION"/);
+    expect(DOCKERFILE).toMatch(/claude\.ai\/install\.sh \| bash -s "\$\{CLAUDE_CODE_VERSION\}"/);
     expect(DOCKERFILE).toMatch(/npm install -g @openai\/codex@\$\{CODEX_VERSION\}/);
   });
 
@@ -84,6 +95,22 @@ describe("docker/Dockerfile dual-agent invariants", () => {
     expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.claude\/projects\b/);
     expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.codex\b/);
     expect(DOCKERFILE).toMatch(/mkdir -p[\s\S]*\/home\/claude\/\.codex\/sessions\b/);
+  });
+});
+
+describe("release image workflow invariants", () => {
+  it("passes exact agent versions into the Docker build and identity hash", () => {
+    expect(RELEASE_AGENT_VERSIONS).toMatch(/^CLAUDE_CODE_VERSION=\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/m);
+    expect(RELEASE_AGENT_VERSIONS).toMatch(/^CODEX_VERSION=\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/m);
+    expect(RELEASE_WORKFLOW).toMatch(/docker\/agent-versions\.env/);
+    expect(RELEASE_WORKFLOW).not.toMatch(/CCAIRGAP_RELEASE_CLAUDE_CODE_VERSION/);
+    expect(RELEASE_WORKFLOW).not.toMatch(/CCAIRGAP_RELEASE_CODEX_VERSION/);
+    expect(RELEASE_WORKFLOW).toMatch(/h\.update\(dockerfile\)/);
+    expect(RELEASE_WORKFLOW).toMatch(/h\.update\(entrypoint\)/);
+    expect(RELEASE_WORKFLOW).toMatch(/CLAUDE_CODE_VERSION=\$\{process\.env\.CLAUDE_CODE_VERSION\}/);
+    expect(RELEASE_WORKFLOW).toMatch(/CODEX_VERSION=\$\{process\.env\.CODEX_VERSION\}/);
+    expect(RELEASE_WORKFLOW).toMatch(/build-args:\s*\|\s*CLAUDE_CODE_VERSION=/);
+    expect(RELEASE_WORKFLOW).toMatch(/CODEX_VERSION=\$\{\{ needs\.build\.outputs\.codex_version \}\}/);
   });
 });
 

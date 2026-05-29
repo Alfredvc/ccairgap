@@ -14,7 +14,7 @@
 | `--base <ref>` | HEAD of each repo | no | Base ref for `ccairgap/<id>`. |
 | `--keep-container` | off | no | Omit `docker run --rm` so the container persists for postmortem. |
 | `--dockerfile <path>` | bundled | no | Build from a user-supplied Dockerfile. See [dockerfile.md](dockerfile.md). |
-| `--docker-build-arg KEY=VAL` | — | yes | Forwarded to `docker build --build-arg`. Use `CLAUDE_CODE_VERSION=<semver>` to pin Claude Code or `CODEX_VERSION=<semver>` to pin Codex. Exact unsupported `CODEX_VERSION` values fail before image build. |
+| `--docker-build-arg KEY=VAL` | — | yes | Forwarded to `docker build --build-arg`. Omit agent-version args to follow exact host Claude Code and Codex versions automatically; use exact `CLAUDE_CODE_VERSION=<semver>` or `CODEX_VERSION=<semver>` only to intentionally pin away from the host. Non-exact values fail before image build. |
 | `--rebuild` | off | no | Force image rebuild. |
 | `-p, --print <prompt>` | — | no | Non-interactive prompt. Claude runs `claude -p`; Codex runs `codex exec`. For `--agent codex`, host `CODEX_API_KEY` is forwarded only in print mode. |
 | `-n, --name <name>` | random `<adj>-<noun>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix; the final id is `<name>-<4hex>`. Drives the session dir, docker container (`ccairgap-<id>`), branch (`ccairgap/<id>`), and Claude's session label. Must be a valid git ref component. See notes below. |

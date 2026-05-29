@@ -9,7 +9,7 @@ Files inside `.ccairgap/` are injected into every session, regardless of profile
 | `.ccairgap/mcp.json` | `mcpServers` merged into user-scope MCP (same format as `.mcp.json`) |
 | `.ccairgap/skills/` | Each immediate subdirectory containing `SKILL.md` becomes a slash command |
 
-**Note:** `.ccairgap/Dockerfile` is a host-consumed sidecar, not an injected session file. `ccairgap init` creates a minimal Dockerfile that starts from the published ccairgap image; edit it only for project-specific image additions.
+**Note:** `.ccairgap/Dockerfile` is a host-consumed sidecar, not an injected session file. `ccairgap init` creates a minimal Dockerfile that inherits from ccairgap's managed runtime base and installs the resolved host agent versions at the end; edit it only for project-specific image additions above that agent install block.
 
 **Example — deny `AskUserQuestion` in every session:**
 

@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import { SUPPORTED_CODEX_VERSION, normalizeCodexVersion } from "./image.js";
+import { normalizeClaudeVersion, normalizeCodexVersion } from "./image.js";
 
 export interface ImageContractFinding {
   code: string;
@@ -16,6 +16,8 @@ export type ImageContractRunner = (
 ) => Promise<{ stdout: string }>;
 
 export interface InspectImageContractOptions {
+  codexVersion: string;
+  claudeCodeVersion: string;
   run?: ImageContractRunner;
 }
 
@@ -34,7 +36,7 @@ const WRITABLE_DIRS = [
 
 export async function inspectImageContract(
   tag: string,
-  options: InspectImageContractOptions = {},
+  options: InspectImageContractOptions,
 ): Promise<ImageContractResult> {
   const run = options.run ?? dockerRun;
   const findings: ImageContractFinding[] = [];
@@ -56,18 +58,41 @@ export async function inspectImageContract(
         code: "unparseable-codex-version",
         message: `could not parse image Codex version from: ${version.stdout}`,
       });
-    } else if (normalized !== SUPPORTED_CODEX_VERSION) {
+    } else if (normalized !== options.codexVersion) {
       findings.push({
         code: "unsupported-codex-version",
         message:
-          `image Codex version ${normalized} is not supported; ` +
-          `expected ${SUPPORTED_CODEX_VERSION}`,
+          `image Codex version ${normalized} does not match expected launch version ` +
+          options.codexVersion,
       });
     }
   } catch (e) {
     findings.push({
       code: "codex-version-unavailable",
       message: `could not read image Codex version: ${(e as Error).message}`,
+    });
+  }
+
+  try {
+    const version = await runInImage(run, tag, ["claude", "--version"]);
+    const normalized = normalizeClaudeVersion(version.stdout);
+    if (normalized === undefined) {
+      findings.push({
+        code: "unparseable-claude-version",
+        message: `could not parse image Claude Code version from: ${version.stdout}`,
+      });
+    } else if (normalized !== options.claudeCodeVersion) {
+      findings.push({
+        code: "unsupported-claude-version",
+        message:
+          `image Claude Code version ${normalized} does not match expected launch version ` +
+          options.claudeCodeVersion,
+      });
+    }
+  } catch (e) {
+    findings.push({
+      code: "claude-version-unavailable",
+      message: `could not read image Claude Code version: ${(e as Error).message}`,
     });
   }
 

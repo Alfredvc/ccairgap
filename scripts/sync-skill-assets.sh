@@ -48,17 +48,9 @@ generated_header_dockerfile() {
 # Regenerate with: scripts/sync-skill-assets.sh
 #
 # To customize for your project, copy this file to <git-root>/.ccairgap/Dockerfile.
-# Add only project-specific image changes below the FROM line.
+# Add only project-specific image changes above the agent install block.
 
 EOF
-}
-
-published_version_ref() {
-    node -e '
-const fs = require("fs");
-const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-console.log(`ghcr.io/alfredvc/ccairgap:${pkg.version}`);
-'
 }
 
 sync_markdown() {
@@ -83,10 +75,32 @@ sync_dockerfile_template() {
     fi
     mkdir -p "$(dirname "$dst")"
     {
-        generated_header_dockerfile "published version image tag from package.json"
-        printf 'FROM %s\n' "$(published_version_ref)"
+        generated_header_dockerfile "ccairgap-managed runtime base image arg"
+        cat <<EOF
+ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required
+FROM \${CCAIRGAP_RUNTIME_BASE_IMAGE}
+
+# Add project-specific image changes above the agent install block.
+# Host Claude Code / Codex upgrades only invalidate the layers below.
+
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+
+RUN test -n "\$CLAUDE_CODE_VERSION" \\
+ && test -n "\$CODEX_VERSION"
+
+RUN npm install -g @openai/codex@\${CODEX_VERSION}
+
+USER claude
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "\${CLAUDE_CODE_VERSION}"
+
+USER root
+RUN chmod -R go+rwX /home/claude \\
+ && test "\$(claude --version | node -e 'const fs=require("node:fs");const input=fs.readFileSync(0,"utf8");const match=input.match(/(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)/);process.stdout.write(match?.[1] ?? "");')" = "\$CLAUDE_CODE_VERSION" \\
+ && test "\$(codex --version | node -e 'const fs=require("node:fs");const input=fs.readFileSync(0,"utf8");const match=input.match(/(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)/);process.stdout.write(match?.[1] ?? "");')" = "\$CODEX_VERSION"
+EOF
     } > "$dst"
-    echo "  published version Dockerfile template -> $dst"
+    echo "  managed-runtime-base Dockerfile template -> $dst"
 }
 
 echo "Syncing skill assets…"

@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 import { writeManifest, type Manifest } from "./manifest.js";
 import { resolveUserWideDir } from "./userConfig.js";
-import { cliVersion } from "./version.js";
 
 let root: string;
 let fakeBinDir: string;
@@ -255,6 +254,64 @@ describe("doctor: selected agent", () => {
       expect(lines).not.toContain("sk-secret");
     } finally {
       logSpy.mockRestore();
+    }
+  });
+
+  it("reports image version-resolution failures without aborting doctor", async () => {
+    await vi.resetModules();
+    vi.doMock("./image.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("./image.js")>()),
+      resolveAgentVersions: vi.fn(async () => {
+        throw new Error(
+          "CODEX_VERSION latest could not resolve to an exact host version; pass an exact --docker-build-arg CODEX_VERSION=x.y.z",
+        );
+      }),
+    }));
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor();
+      const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
+
+      expect(lines).toContain("[FAIL] image: CODEX_VERSION latest could not resolve to an exact host version");
+      expect(lines).toContain("[OK] clipboard passthrough:");
+    } finally {
+      logSpy.mockRestore();
+      vi.doUnmock("./image.js");
+      await vi.resetModules();
+    }
+  });
+
+  it("resolves the image row with provided build args", async () => {
+    await vi.resetModules();
+    const resolveAgentVersions = vi.fn(async () => ({
+      claudeCodeVersion: "2.1.143",
+      codexVersion: "0.136.0",
+    }));
+    vi.doMock("./image.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("./image.js")>()),
+      resolveAgentVersions,
+    }));
+    stubAllDoctorDeps();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { doctor } = await import("./subcommands.js");
+      await doctor({
+        dockerBuildArgs: {
+          CLAUDE_CODE_VERSION: "2.1.143",
+          CODEX_VERSION: "0.136.0",
+        },
+      });
+
+      expect(resolveAgentVersions).toHaveBeenCalledWith({
+        CLAUDE_CODE_VERSION: "2.1.143",
+        CODEX_VERSION: "0.136.0",
+      });
+    } finally {
+      logSpy.mockRestore();
+      vi.doUnmock("./image.js");
+      await vi.resetModules();
     }
   });
 });
@@ -602,7 +659,35 @@ describe("doctor: sidecar drift", () => {
   }
 
   function expectedExtensionDockerfile(): string {
-    return `FROM ghcr.io/alfredvc/ccairgap:${cliVersion()}\n`;
+    const normalizeAgentVersion =
+      "const fs=require(\"node:fs\");" +
+      "const input=fs.readFileSync(0,\"utf8\");" +
+      "const match=input.match(/(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)/);" +
+      "process.stdout.write(match?.[1] ?? \"\");";
+    return [
+      "ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required",
+      "FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}",
+      "",
+      "# Add project-specific image changes above the agent install block.",
+      "# Host Claude Code / Codex upgrades only invalidate the layers below.",
+      "",
+      "ARG CLAUDE_CODE_VERSION",
+      "ARG CODEX_VERSION",
+      "",
+      'RUN test -n "$CLAUDE_CODE_VERSION" \\',
+      ' && test -n "$CODEX_VERSION"',
+      "",
+      "RUN npm install -g @openai/codex@${CODEX_VERSION}",
+      "",
+      "USER claude",
+      'RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"',
+      "",
+      "USER root",
+      'RUN chmod -R go+rwX /home/claude \\',
+      ` && test "$(claude --version | node -e '${normalizeAgentVersion}')" = "$CLAUDE_CODE_VERSION" \\`,
+      ` && test "$(codex --version | node -e '${normalizeAgentVersion}')" = "$CODEX_VERSION"`,
+      "",
+    ].join("\n");
   }
 
   it("treats the current generated extension Dockerfile as up to date", async () => {

@@ -31,8 +31,8 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 ## Versioning
 
 - **CLI:** semver. Patch = bug fixes, minor = new flags / new optional manifest fields, major = flag rename or removal, manifest shape change, or state-dir layout change.
-- **Container image tag** = CLI version + content hash of `Dockerfile`+`entrypoint.sh` (or `custom-<hash>` when built from a user Dockerfile). See §"Container image".
-- **Claude Code inside the image:** defaults to the host's installed Claude Code version at build time (detected via `claude --version`). Falls back to `latest` if detection fails. Users can override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` or `CCAIRGAP_CC_VERSION=<semver>`.
+- **Container image tag** = CLI version + content hash of `Dockerfile`+`entrypoint.sh`+exact resolved Claude Code and Codex versions (or `custom-<hash>` over the user Dockerfile plus exact resolved agent versions and the managed base image identity when used). Generated sidecars inherit a runtime base image that does not include agent-version installs. See §"Container image".
+- **Agent versions inside the image:** default `latest` inputs resolve to exact host `claude --version` and `codex --version` values before image work begins. `latest` is not a build identity and is never passed to the bundled Dockerfile. Users can override with exact `--docker-build-arg CLAUDE_CODE_VERSION=<semver>` and `--docker-build-arg CODEX_VERSION=<semver>`, but normal host-agent upgrades need no build args.
 - **Manifest schema:** `$SESSION/manifest.json` carries a top-level `"version": <N>` field. The handoff routine reads it first and errors clearly on unknown versions. Bump only when the shape changes incompatibly.
 - **Flag stability:** launch-command flags and subcommand names are part of the public API. Renaming or removing either requires a major version bump.
 
@@ -109,7 +109,7 @@ Default (no subcommand): start a new session.
 | `--base <ref>` | no | Base ref for `ccairgap/<id>` branch. Default: current HEAD of each repo (`--repo` + every `--extra-repo`). |
 | `--keep-container` | no | Omit `docker run --rm`. Container persists after exit for postmortem via `docker logs` / `docker exec`. Manual cleanup: `docker rm ccairgap-<id>`. |
 | `--dockerfile <path>` | no | Build from a user-supplied Dockerfile instead of the bundled one. Resulting image tag carries a `custom-<hash>` suffix (see §"Container image"). |
-| `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Common use: `CLAUDE_CODE_VERSION=1.2.3` to pin Claude Code or `CODEX_VERSION=0.130.0` to pin Codex. Exact unsupported Codex versions fail before image pull/build; non-exact values still require post-resolution image contract inspection. |
+| `--docker-build-arg KEY=VAL` | yes | Forwarded to `docker build --build-arg`. Omit agent-version args to follow exact host Claude Code and Codex versions automatically; set exact `CLAUDE_CODE_VERSION=1.2.3` or `CODEX_VERSION=1.2.3` only to intentionally pin away from the host. Non-exact values fail before image pull/build. |
 | `--rebuild` | no | Force rebuild of the container image before launching, even if the tag already exists locally. |
 | `-p, --print <prompt>` | no | Run the selected agent in non-interactive print mode: Claude uses `claude -p "<prompt>"`; Codex uses `codex exec`. For selected Codex, host `CODEX_API_KEY` is forwarded only in print mode and can satisfy selected auth for that launch. Not supported for `exec`, including config-sourced `print`. |
 | `-r, --resume <id-or-name>` | no | Resume an existing Claude session inside the sandbox. Accepts **either** a session UUID **or** the session's custom title (what `claude` prints on exit). Titles are matched case-insensitively and must be exact; 0 or >1 matches abort launch with a candidate list. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` (plus the optional `<uuid>/` subagents dir) into `$SESSION/transcripts/` before `docker run`. Inside the container, `claude -r "$CCAIRGAP_RESUME"` always uses the resolved UUID (not the raw name). Requires a workspace repo; errors under `--bare` / ro-only. Works with both host-born and ccairgap-born sessions — no separate UX per origin. Config key: `resume: <id-or-name>` (scalar). Not supported for `exec`, including config-sourced `resume`. |
@@ -130,7 +130,7 @@ Claude remains the default selected agent. When `--agent codex` or `agent: codex
 - A workspace repo is required. `--agent codex --bare --repo <path>` is valid, but ro-only/no-repo launches and `--agent codex --bare` without `--repo` fail before side effects.
 - `--resume` is rejected before side effects. Resume remains Claude-only until Codex resume semantics are designed.
 - Codex passthrough args are validated with the Codex allowlist, and `--image` values must already be visible through a workspace repo, `--ro`, `--cp`, `--sync`, or `--mount`.
-- Exact unsupported `CODEX_VERSION` build args fail before image pull/build. After image resolution, ccairgap inspects the image for both agent binaries, the supported Codex version, and required Codex mount targets.
+- Non-exact `CODEX_VERSION` build args fail before image pull/build. After image resolution, ccairgap inspects the image for both agent binaries, the launch-resolved Claude Code and Codex versions, and required Codex mount targets.
 - Selected Codex auth is fatal unless `--print` has a host `CODEX_API_KEY`. In that print-mode API-key case, `$CODEX_HOME/auth.json` is advisory and copied only if it sanitizes safely.
 - Claude credentials may be copied as advisory peer state for a Codex-selected launch, but selected Codex never runs the Claude pre-launch refresh path and never starts the runtime auth-refresh watcher.
 
@@ -147,9 +147,9 @@ For `ccairgap exec --agent codex -- <command...>`, Codex still controls the prep
 | `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
 | `attach <id>` | Spawn a second selected agent inside the running container `ccairgap-<id>` via `docker exec`. Advanced. Defaults to the session manifest agent, with absent `agent` in old manifests treated as `claude`; `--agent claude\|codex` can override when that agent's in-container state exists. `attach` is the only subcommand that accepts a selected-agent `--` passthrough tail. See §"Attach". |
 | `exec -- <command...>` | Prepare the selected-agent environment and run an arbitrary command as exact argv. `--` is required before the command; no shell parsing is performed. `--agent` selects the prepared environment, not the final binary. `--print` and `--resume` are rejected, including config-sourced values. Config `claude-args` / `codex-args` are ignored with a warning in exec mode. Canonical usage: `ccairgap exec -- aharness recipe-driven-design.fsm.ts` or `ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts`. |
-| `doctor` | Agent-aware preflight checks. Defaults to config `agent`, then `claude`; `--agent claude\|codex` overrides config. Shared checks include Docker, state dir, host binaries, image freshness, clipboard, sidecar drift, and user-wide config. Claude checks host Claude credentials and auth-refresh state; Codex checks sanitized `$CODEX_HOME/auth.json` without printing secrets. |
+| `doctor` | Agent-aware preflight checks. Defaults to config `agent`, then `claude`; `--agent claude\|codex` overrides config. Shared checks include Docker, state dir, host binaries, image freshness, clipboard, sidecar drift, and user-wide config. The image row resolves the same exact agent versions launch would use from config/CLI `docker-build-arg` values and `CCAIRGAP_CC_VERSION`. Claude checks host Claude credentials and auth-refresh state; Codex checks sanitized `$CODEX_HOME/auth.json` without printing secrets. |
 | `inspect` | Enumerate the full config surface ccairgap would see at launch: hook entries, MCP server definitions, `env` vars, and `extraKnownMarketplaces` entries across every source (user `~/.claude/settings.json`, each enabled plugin, `.claude/settings.json[.local]` under `--repo` + every `--extra-repo`, `~/.claude.json`, and `<repo>/.mcp.json`). Output is JSON `{hooks, mcpServers, env, marketplaces}` to stdout; `--pretty` renders human-readable tables instead. Read-only; no session is created and no files are mutated. Accepts the same `--config` / `--repo` / `--extra-repo` inputs as launch plus `--agent`; Codex inspect adds sanitized Codex config/auth/session state and warnings without printing secrets. See §"Hook policy". |
-| `init` | Materialize an extension `Dockerfile` (`FROM ghcr.io/alfredvc/ccairgap:<version>`) and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if either target file exists; `--force` overwrites both. Intended for users who want to customize the container image without forking the repo or copying the raw bundled Dockerfile. See §"Container image customization". |
+| `init` | Materialize an extension `Dockerfile` (`ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required` / `FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}` plus final exact agent-version install/checks) and a minimal `config.yaml` (with `dockerfile: Dockerfile`) into `<git-root>/.ccairgap/` — or `dirname(--config)` if `--config` is passed. Fails if either target file exists; `--force` overwrites both. Intended for users who want to customize the container image without forking the repo or copying the raw bundled Dockerfile. See §"Container image customization". |
 | `install-completion [<shell>]` | Install shell tab-completion for ccairgap. Writes one `source` line into `~/.bashrc` / `~/.zshrc` / `~/.config/fish/config.fish` (shell picked by arg or prompt). Backed by `@pnpm/tabtab`. Shell completion script offers static subcommand names including `exec`, flag names, plus dynamic candidates: session ids for `recover` / `discard`, custom titles for `--resume` / `-r`, shell names for `install-completion`. See §"Shell completion". |
 | `uninstall-completion` | Remove the ccairgap `source` line from every supported shell rc. Idempotent — no-op when not installed. |
 | `completion-server` | Internal tabtab callback entry. Invoked by the shell completion function with tabtab's `COMP_*` env vars; emits newline-separated candidates to stdout. Not listed in `--help`; users never call it directly. |
@@ -170,8 +170,8 @@ tmux new -s work 'ccairgap --repo ~/src/foo'
 ccairgap list
 ccairgap recover 20260417T143022Z
 
-# Force image rebuild with a pinned Claude Code version
-ccairgap --rebuild --docker-build-arg CLAUDE_CODE_VERSION=1.2.3 --repo ~/src/foo
+# Force image rebuild
+ccairgap --rebuild --repo ~/src/foo
 
 # Run a command in the prepared sandbox
 ccairgap exec -- aharness recipe-driven-design.fsm.ts
@@ -216,7 +216,7 @@ In order:
     - Env vars pushed via `-e`:
         - `NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>` if the host env var is set and points at an existing file. The file is RO-bind-mounted at that neutral container path (never at the same host absolute path — that risks overmounting the base image's CA trust store).
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
-    - Image: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>` by default, or `ccairgap:custom-<sha256(dockerfile)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
+    - Image: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh+exact agent versions)[:8]>` by default, or `ccairgap:custom-<sha256(dockerfile+exact agent versions+managed base identity when used)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 13. Install exit trap: run §"Handoff routine" against `$SESSION/<id>/`.
 14. Exec the `docker run` command.
 
@@ -283,8 +283,6 @@ sync:
 mount:
   - .cache
 
-docker-build-arg:
-  CLAUDE_CODE_VERSION: "1.2.3"
 docker-run-arg:
   - "-p 8080:8080"
 hooks:
@@ -582,13 +580,13 @@ See `SECURITY.md` §"Clipboard passthrough risks".
 2. **Registry pull** from `ghcr.io/alfredvc/ccairgap:<cli-version>-<hash8>` (override repo with `CCAIRGAP_REGISTRY=<host>/<owner>/<repo>`). Skipped when `--rebuild` or `--dockerfile` is set, or when the tag is custom (`ccairgap:custom-*`).
 3. **Local build** from the Dockerfile shipped inside the npm package (or `--dockerfile <path>`).
 
-The published image is built and signed in `.github/workflows/release.yml`'s `publish-image` job: multi-arch (`linux/amd64`, `linux/arm64`), tagged `ghcr.io/alfredvc/ccairgap:<version>` and `:<version>-<hash8>`, with a SLSA build-provenance attestation pushed alongside the manifest. Verify with `gh attestation verify oci://ghcr.io/alfredvc/ccairgap:<tag> --owner alfredvc`. The hash is deterministic from the bundled `Dockerfile`+`entrypoint.sh` content, so a registry pull either matches the locally-computed tag byte-for-byte or fails — there is no drift surface. CLI version mismatch (user has v0.5.0, registry has v0.4.x) → pull misses → local build. When a prior release already published an image with the same `<hash8>` (i.e. `Dockerfile`+`entrypoint.sh` unchanged), the workflow retags that digest under the new version via `docker buildx imagetools create` and skips the rebuild — the original attestation still resolves under the new tag.
+The published image is built and signed in `.github/workflows/release.yml`'s `publish-image` job: multi-arch (`linux/amd64`, `linux/arm64`), tagged `ghcr.io/alfredvc/ccairgap:<version>` and `:<version>-<hash8>`, with a SLSA build-provenance attestation pushed alongside the manifest. The workflow also publishes `:<version>-runtime-<runtime-hash8>` and `:<version>-runtime` for generated sidecars. Verify with `gh attestation verify oci://ghcr.io/alfredvc/ccairgap:<tag> --owner alfredvc`. The release job reads exact `CLAUDE_CODE_VERSION` and `CODEX_VERSION` pins from `docker/agent-versions.env`, passes them as Docker build args to the final image, and includes them in the final-image hash in the same order as `computeTag()`. A registry pull either matches the locally computed Dockerfile+entrypoint+agent-version tag or misses and falls back to local build. CLI version mismatch (user has v0.5.0, registry has v0.4.x) or agent-version mismatch → pull misses → local build. When a prior release already published an image with the same `<hash8>` (i.e. `Dockerfile`+`entrypoint.sh`+agent versions unchanged), the workflow retags that digest under the new version via `docker buildx imagetools create` and skips the rebuild — the original attestation still resolves under the new tag.
 
 **Base:** `node:24-slim` (active LTS).
 
 **Installed:**
-- Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via `ARG CLAUDE_CODE_VERSION` (default: host version detected at build time when building locally; `latest` for registry-built images since CI has no host claude). Override via `--docker-build-arg CLAUDE_CODE_VERSION=<semver>`. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
-- Codex CLI via `npm install -g @openai/codex@${CODEX_VERSION}`. The supported baseline is `CODEX_VERSION=0.130.0`; exact unsupported pins are rejected by the Codex image-version policy before launch.
+- Claude Code via the native installer (`https://claude.ai/install.sh`), installed as the `claude` user into `~/.local/bin/claude`. Version controlled via exact `ARG CLAUDE_CODE_VERSION`, resolved from the host or supplied explicitly before image work begins. Native install avoids the npm-to-native-installer migration nag that `@anthropic-ai/claude-code` triggers since v2.1.15.
+- Codex CLI via `npm install -g @openai/codex@${CODEX_VERSION}`. Version controlled via exact `ARG CODEX_VERSION`, resolved from the host or supplied explicitly before image work begins.
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `vim`.
 - `python3`, `python3-pip`, `python3-venv` — common for user scripts and MCP servers. `build-essential` is intentionally **not** installed (~200MB bloat); `pip install` of packages with native deps will fail. Users who need it: `--dockerfile` a customized image.
 
@@ -608,8 +606,9 @@ Not installed: `tmux` (user handles tmux outside the container).
 
 Dockerfile (condensed):
 ```dockerfile
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.130.0
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+RUN test -n "$CLAUDE_CODE_VERSION" && test -n "$CODEX_VERSION"
 RUN npm install -g @openai/codex@${CODEX_VERSION}
 # node:*-slim ships a `node` user at UID/GID 1000; rename in place. Cosmetic
 # only — the runtime user is whatever --user the CLI passes.
@@ -641,14 +640,17 @@ Files written from the container to bind-mounted host paths (creds dir, alternat
 
 | Invocation | Tag |
 |------------|-----|
-| Default | `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>` |
-| `--dockerfile <path>` | `ccairgap:custom-<sha256(dockerfile)[:12]>` |
+| Default | `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh+exact agent versions)[:8]>` |
+| Runtime base | `ccairgap:<cli-version>-runtime-<sha256(runtime-Dockerfile+entrypoint.sh)[:8]>` |
+| `--dockerfile <path>` | `ccairgap:custom-<sha256(dockerfile+exact agent versions+managed base image identity when used)[:12]>` |
 
-Both suffixes are deterministic: identical content always produces the same tag, so rebuilds are skipped when nothing changed. The default tag includes a content hash over both baked files so edits to either the Dockerfile or `entrypoint.sh` (shipped with a CLI upgrade, or a manual patch) produce a new tag and auto-trigger a rebuild on next launch. Custom and default tags coexist without collision.
+Both suffixes are deterministic: identical content and identical resolved agent versions always produce the same tag, so rebuilds are skipped when nothing changed. The default tag includes a content hash over both baked files and the exact Claude Code and Codex versions, so edits to either the Dockerfile or `entrypoint.sh` (shipped with a CLI upgrade, or a manual patch) or a host agent-version change produce a new tag and auto-trigger a pull/build on next launch. Custom Dockerfiles that use `ARG CCAIRGAP_RUNTIME_BASE_IMAGE` include the computed runtime base image tag in their identity; host agent-version changes leave that runtime base stable and invalidate only the generated final agent install block. Custom and default tags coexist without collision.
 
 **Rebuild triggers** (the CLI builds the image only if one of these applies):
-1. No local image matches the computed tag (covers: first run, CLI upgrade with new version, edits to bundled `Dockerfile` / `entrypoint.sh`, edits to a custom Dockerfile).
+1. No local image matches the computed tag (covers: first run, CLI upgrade with new version, edits to bundled `Dockerfile` / `entrypoint.sh`, edits to a custom Dockerfile, or changed resolved host Claude Code / Codex versions).
 2. `--rebuild` was passed.
+
+The first launch after adding exact agent versions to image identity may build or pull a new image even when an older Dockerfile-content-only tag exists.
 
 Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the current image is older than a threshold (default: 14 days) so the user can explicitly `--rebuild`. `doctor` also lists older `ccairgap:<cli-version>-*` tags that linger after content-hash changes so the user can prune them manually with `docker image rm` — the CLI never removes images itself.
 
@@ -656,8 +658,8 @@ Image age is never auto-rebuilt. `ccairgap doctor` surfaces a warning if the cur
 
 Two supported paths to change what's inside the image:
 
-1. **`--docker-build-arg KEY=VAL`** — the bundled Dockerfile exposes `CLAUDE_CODE_VERSION` and `CODEX_VERSION`. Pin either agent without touching the Dockerfile.
-2. **Sidecar Dockerfile via `ccairgap init`** — materialize a small Dockerfile that starts with `FROM ghcr.io/alfredvc/ccairgap:<version>` into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place by adding only project-specific packages or files below the `FROM` line. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo or copy the raw bundled Dockerfile.
+1. **`--docker-build-arg KEY=VAL`** — optional escape hatch. The bundled Dockerfile exposes `CLAUDE_CODE_VERSION` and `CODEX_VERSION`, but normal launches resolve both from the host. Pin either agent only when intentionally diverging from the host.
+2. **Sidecar Dockerfile via `ccairgap init`** — materialize a small Dockerfile that starts with `ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required` / `FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}` and installs/checks `CLAUDE_CODE_VERSION` / `CODEX_VERSION` at the end into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place by adding only project-specific packages before the generated agent install block. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo or copy the raw bundled Dockerfile.
 
 `ccairgap init` writes two files: `Dockerfile` and `config.yaml`. If either exists, `init` aborts with an error listing it; `--force` overwrites both unconditionally (no merge — any prior edits to `config.yaml` are lost). Legacy `entrypoint.sh` sidecars from older versions are ignored by the generated Dockerfile unless the user edits the Dockerfile to reference them.
 
@@ -1169,7 +1171,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 | Env var | Effect |
 |---------|--------|
 | `CCAIRGAP_HOME` | Overrides the state dir. Default: `$XDG_STATE_HOME/ccairgap/` (which itself defaults to `~/.local/state/ccairgap/`). If set, this path replaces the default root wholesale — both `sessions/` and `output/` live underneath. |
-| `CCAIRGAP_CC_VERSION` | Short-form override for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Used at image build time. |
+| `CCAIRGAP_CC_VERSION` | Short-form override for `--docker-build-arg CLAUDE_CODE_VERSION=<value>`. Omit it to follow host `claude --version` automatically. |
 
 Other XDG env vars (`XDG_STATE_HOME`, etc.) are respected per the XDG Base Directory spec.
 

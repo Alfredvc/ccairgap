@@ -383,6 +383,7 @@ fi
 
 ENTRYPOINT_AGENT="${CCAIRGAP_AGENT:-claude}"
 ENTRYPOINT_MODE="${CCAIRGAP_ENTRYPOINT_MODE:-agent}"
+CODEX_PRINT_STDIN=0
 
 print_command() {
     local first=1
@@ -443,7 +444,8 @@ case "$ENTRYPOINT_MODE" in
                 ;;
             codex)
                 if [ -n "${CCAIRGAP_PRINT:-}" ]; then
-                    FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT")
+                    FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" -)
+                    CODEX_PRINT_STDIN=1
                 else
                     FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@")
                 fi
@@ -472,6 +474,14 @@ esac
 if [ "${CCAIRGAP_ENTRYPOINT_DRY_RUN:-}" = "1" ]; then
     dry_run "$DRY_RUN_BRANCH" "${FINAL_CMD[@]}"
     exit 0
+fi
+
+if [ "$CODEX_PRINT_STDIN" = "1" ]; then
+    set +e
+    printf '%s' "$CCAIRGAP_PRINT" | "${FINAL_CMD[@]}"
+    rc=${PIPESTATUS[1]}
+    set -e
+    exit "$rc"
 fi
 
 exec -- "${FINAL_CMD[@]}"

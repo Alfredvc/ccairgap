@@ -1,7 +1,4 @@
-FROM node:24-slim
-
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.130.0
+FROM node:24-slim AS ccairgap-runtime
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -19,8 +16,6 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
       python3-venv \
  && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @openai/codex@${CODEX_VERSION}
-
 # Rename baked node user/group → claude. Cosmetic: at runtime the CLI
 # overrides via `docker run --user $(id -u):$(id -g)` and bind-mounts a
 # session-generated /etc/passwd + /etc/group, so the baked entry is never
@@ -34,12 +29,6 @@ ENV PATH=/home/claude/.local/bin:$PATH
 
 USER claude
 WORKDIR /home/claude
-
-RUN if [ "${CLAUDE_CODE_VERSION}" = "latest" ]; then \
-        curl -fsSL https://claude.ai/install.sh | bash; \
-    else \
-        curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
-    fi
 
 # Pre-create bind-mount target dirs so Docker doesn't auto-create them as
 # root:root before the entrypoint runs. Matches container paths:
@@ -76,3 +65,19 @@ RUN chmod 0755 /usr/local/bin/ccairgap-entrypoint
 # go+rwX chmod.
 WORKDIR /home/claude
 ENTRYPOINT ["/usr/local/bin/ccairgap-entrypoint"]
+
+FROM ccairgap-runtime AS ccairgap-final
+
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+RUN test -n "$CLAUDE_CODE_VERSION" && test -n "$CODEX_VERSION"
+
+RUN npm install -g @openai/codex@${CODEX_VERSION}
+
+USER claude
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
+
+USER root
+RUN chmod -R go+rwX /home/claude \
+ && test "$(claude --version | node -e 'const fs=require("node:fs");const input=fs.readFileSync(0,"utf8");const match=input.match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);process.stdout.write(match?.[1] ?? "");')" = "$CLAUDE_CODE_VERSION" \
+ && test "$(codex --version | node -e 'const fs=require("node:fs");const input=fs.readFileSync(0,"utf8");const match=input.match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);process.stdout.write(match?.[1] ?? "");')" = "$CODEX_VERSION"

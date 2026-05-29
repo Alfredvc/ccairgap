@@ -407,3 +407,67 @@ describe("exec CLI routing", () => {
     );
   });
 });
+
+describe("doctor CLI routing", () => {
+  const savedArgv = process.argv;
+  const savedCcVersion = process.env.CCAIRGAP_CC_VERSION;
+
+  afterEach(() => {
+    process.argv = savedArgv;
+    if (savedCcVersion === undefined) delete process.env.CCAIRGAP_CC_VERSION;
+    else process.env.CCAIRGAP_CC_VERSION = savedCcVersion;
+    vi.doUnmock("./subcommands.js");
+    vi.doUnmock("./configLayered.js");
+  });
+
+  it("passes config, CLI, and CCAIRGAP_CC_VERSION build args to doctor", async () => {
+    await vi.resetModules();
+    process.argv = [
+      "node",
+      "ccairgap",
+      "doctor",
+      "--bare",
+      "--docker-build-arg=CODEX_VERSION=0.136.0",
+    ];
+    process.env.CCAIRGAP_CC_VERSION = "2.1.143";
+
+    const doctorMock = vi.fn(async () => {});
+    vi.doMock("./subcommands.js", () => ({
+      attach: vi.fn(),
+      doctor: doctorMock,
+      discard: vi.fn(),
+      initCmd: vi.fn(),
+      inspectCmd: vi.fn(),
+      listOrphans: vi.fn(),
+      recover: vi.fn(),
+      resolveSubcommandAgent: vi.fn((opts: { cliAgent?: string; configAgent?: string } = {}) =>
+        opts.cliAgent ?? opts.configAgent ?? "claude",
+      ),
+    }));
+    vi.doMock("./configLayered.js", () => ({
+      loadAllLayers: vi.fn(() => ({
+        layered: {
+          merged: {
+            agent: "codex",
+            dockerBuildArg: {
+              CODEX_VERSION: "0.135.0",
+            },
+          },
+          provenance: {},
+        },
+        userWideDir: "/tmp/ccairgap-user",
+      })),
+    }));
+
+    await import("./cli.js");
+    await vi.waitFor(() => expect(doctorMock).toHaveBeenCalled());
+
+    expect(doctorMock).toHaveBeenCalledWith({
+      agent: "codex",
+      dockerBuildArgs: {
+        CLAUDE_CODE_VERSION: "2.1.143",
+        CODEX_VERSION: "0.136.0",
+      },
+    });
+  });
+});

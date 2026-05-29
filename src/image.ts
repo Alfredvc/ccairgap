@@ -5,11 +5,27 @@ import { dirname, join, resolve } from "node:path";
 import { execa } from "execa";
 import { cliVersion } from "./version.js";
 
-export const SUPPORTED_CODEX_VERSION = "0.130.0";
+const AGENT_VERSION_PATTERN = /(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/;
+const EXACT_AGENT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const MANAGED_BASE_IMAGE_BUILD_ARG = "CCAIRGAP_BASE_IMAGE";
+const MANAGED_RUNTIME_BASE_IMAGE_BUILD_ARG = "CCAIRGAP_RUNTIME_BASE_IMAGE";
+const RUNTIME_STAGE_NAME = "ccairgap-runtime";
+
+export interface ResolvedAgentVersions {
+  claudeCodeVersion: string;
+  codexVersion: string;
+}
+
+export interface AgentVersionHostReaders {
+  claudeCodeVersion: () => Promise<string | undefined>;
+  codexVersion: () => Promise<string | undefined>;
+}
 
 export interface ImageBuildOptions {
   /** Absolute path to the Dockerfile to build. */
   dockerfile: string;
+  /** Exact resolved agent versions used for image identity. */
+  versions: ResolvedAgentVersions;
   /** docker build --build-arg values. */
   buildArgs: Record<string, string>;
   /** Force rebuild even if tag exists locally. */
@@ -60,62 +76,164 @@ function resolveBundledDockerAsset(name: string): string {
 /**
  * Compute the image tag for a given Dockerfile path.
  *
- * Default path: `ccairgap:<cli-version>-<hash8>` where the hash covers both
- * the Dockerfile and entrypoint.sh content. Edits to either bake a new tag,
- * so the rebuild-on-miss path auto-applies changes. Stale `ccairgap:<v>-*`
- * tags linger until the user prunes them — `ccairgap doctor` surfaces them.
+ * Default path: `ccairgap:<cli-version>-<hash8>` where the hash covers the
+ * Dockerfile, entrypoint.sh, and exact resolved agent versions. Edits to any
+ * of those bake a new tag, so the rebuild-on-miss path auto-applies changes.
+ * Stale `ccairgap:<v>-*` tags linger until the user prunes them — `ccairgap
+ * doctor` surfaces them.
  *
- * Custom path (`--dockerfile`): `ccairgap:custom-<hash12>` over the
- * Dockerfile alone. User owns their entrypoint if any.
+ * Custom path (`--dockerfile`): `ccairgap:custom-<hash12>` over the Dockerfile,
+ * exact resolved agent versions, and the managed base image identity when the
+ * Dockerfile opts into `ARG CCAIRGAP_BASE_IMAGE` or
+ * `ARG CCAIRGAP_RUNTIME_BASE_IMAGE`.
  */
-export function computeTag(dockerfile: string, defaultPath: string): string {
+function appendAgentVersionIdentity(
+  hash: ReturnType<typeof createHash>,
+  versions: ResolvedAgentVersions,
+): void {
+  hash.update(`\nCLAUDE_CODE_VERSION=${versions.claudeCodeVersion}`);
+  hash.update(`\nCODEX_VERSION=${versions.codexVersion}`);
+}
+
+function computeDefaultTag(defaultPath: string, versions: ResolvedAgentVersions): string {
+  const h = createHash("sha256");
+  h.update(readFileSync(defaultPath));
+  h.update(readFileSync(defaultEntrypoint()));
+  appendAgentVersionIdentity(h, versions);
+  return `ccairgap:${cliVersion()}-${h.digest("hex").slice(0, 8)}`;
+}
+
+function runtimeDockerfileIdentity(defaultPath: string): string {
+  const content = readFileSync(defaultPath, "utf8");
+  const finalStageMarker = `\nFROM ${RUNTIME_STAGE_NAME} AS ccairgap-final`;
+  const finalStageIndex = content.indexOf(finalStageMarker);
+  return finalStageIndex === -1 ? content : content.slice(0, finalStageIndex);
+}
+
+function computeRuntimeBaseTag(defaultPath: string): string {
+  const h = createHash("sha256");
+  h.update(runtimeDockerfileIdentity(defaultPath));
+  h.update(readFileSync(defaultEntrypoint()));
+  return `ccairgap:${cliVersion()}-runtime-${h.digest("hex").slice(0, 8)}`;
+}
+
+function dockerfileUsesBuildArg(content: Buffer | string, arg: string): boolean {
+  return content.includes(arg);
+}
+
+export function computeTag(
+  dockerfile: string,
+  defaultPath: string,
+  versions: ResolvedAgentVersions,
+): string {
   if (resolve(dockerfile) === resolve(defaultPath)) {
-    const h = createHash("sha256");
-    h.update(readFileSync(dockerfile));
-    h.update(readFileSync(defaultEntrypoint()));
-    return `ccairgap:${cliVersion()}-${h.digest("hex").slice(0, 8)}`;
+    return computeDefaultTag(dockerfile, versions);
   }
   const content = readFileSync(dockerfile);
-  const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
+  const h = createHash("sha256");
+  h.update(content);
+  appendAgentVersionIdentity(h, versions);
+  if (dockerfileUsesBuildArg(content, MANAGED_RUNTIME_BASE_IMAGE_BUILD_ARG)) {
+    h.update(
+      `\n${MANAGED_RUNTIME_BASE_IMAGE_BUILD_ARG}=${computeRuntimeBaseTag(defaultPath)}`,
+    );
+  }
+  if (dockerfileUsesBuildArg(content, MANAGED_BASE_IMAGE_BUILD_ARG)) {
+    h.update(`\n${MANAGED_BASE_IMAGE_BUILD_ARG}=${computeDefaultTag(defaultPath, versions)}`);
+  }
+  const hash = h.digest("hex").slice(0, 12);
   return `ccairgap:custom-${hash}`;
 }
 
 export function normalizeCodexVersion(output: string): string | undefined {
-  return output.trim().match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/)?.[1];
+  return output.trim().match(AGENT_VERSION_PATTERN)?.[1];
+}
+
+export function normalizeClaudeVersion(output: string): string | undefined {
+  return output.trim().match(AGENT_VERSION_PATTERN)?.[1];
+}
+
+function isExactAgentVersion(value: string): boolean {
+  return EXACT_AGENT_VERSION_PATTERN.test(value);
+}
+
+function exactVersionError(key: string, value: string): string {
+  return `${key} ${value} is not exact; pass an exact --docker-build-arg ${key}=x.y.z`;
+}
+
+function validateExactAgentVersion(key: string, value: string): string {
+  if (!isExactAgentVersion(value)) {
+    throw new Error(exactVersionError(key, value));
+  }
+  return value;
+}
+
+async function resolveAgentVersion(
+  key: "CLAUDE_CODE_VERSION" | "CODEX_VERSION",
+  explicitValue: string | undefined,
+  hostVersion: () => Promise<string | undefined>,
+): Promise<string> {
+  if (explicitValue !== undefined) {
+    return validateExactAgentVersion(key, explicitValue);
+  }
+
+  const resolved = await hostVersion();
+  if (resolved !== undefined && isExactAgentVersion(resolved)) {
+    return resolved;
+  }
+
+  throw new Error(
+    `${key} latest could not resolve to an exact host version; ` +
+      `pass an exact --docker-build-arg ${key}=x.y.z`,
+  );
 }
 
 export function validateExpectedCodexVersion(value: string): CodexVersionValidation {
-  const exact = value.match(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)?.[0];
-  if (exact === undefined) {
-    return {
-      ok: true,
-      message:
-        `CODEX_VERSION ${value} is not an exact supported semver; ` +
-        "runtime image contract inspection must verify the installed Codex version",
-    };
-  }
-  if (exact === SUPPORTED_CODEX_VERSION) {
-    return { ok: true, version: exact };
+  if (isExactAgentVersion(value)) {
+    return { ok: true, version: value };
   }
   return {
     ok: false,
-    version: exact,
-    message:
-      `unsupported CODEX_VERSION ${exact}; supported exact version is ` +
-      SUPPORTED_CODEX_VERSION,
+    message: exactVersionError("CODEX_VERSION", value),
   };
 }
 
 export function defaultImageBuildArgs(options: {
-  claudeVersion?: string;
-  codexVersion?: string;
+  claudeVersion: string;
+  codexVersion: string;
   overrides?: Record<string, string>;
-} = {}): Record<string, string> {
-  return {
-    CLAUDE_CODE_VERSION: options.claudeVersion ?? "latest",
-    CODEX_VERSION: options.codexVersion ?? SUPPORTED_CODEX_VERSION,
+}): Record<string, string> {
+  const buildArgs = {
+    CLAUDE_CODE_VERSION: options.claudeVersion,
+    CODEX_VERSION: options.codexVersion,
     ...(options.overrides ?? {}),
   };
+  buildArgs.CLAUDE_CODE_VERSION = validateExactAgentVersion(
+    "CLAUDE_CODE_VERSION",
+    buildArgs.CLAUDE_CODE_VERSION,
+  );
+  buildArgs.CODEX_VERSION = validateExactAgentVersion("CODEX_VERSION", buildArgs.CODEX_VERSION);
+  return buildArgs;
+}
+
+export async function resolveAgentVersions(
+  buildArgs: Record<string, string> = {},
+  hostReaders: AgentVersionHostReaders = {
+    claudeCodeVersion: hostClaudeVersion,
+    codexVersion: hostCodexVersion,
+  },
+): Promise<ResolvedAgentVersions> {
+  const claudeCodeVersion = await resolveAgentVersion(
+    "CLAUDE_CODE_VERSION",
+    buildArgs.CLAUDE_CODE_VERSION,
+    hostReaders.claudeCodeVersion,
+  );
+  const codexVersion = await resolveAgentVersion(
+    "CODEX_VERSION",
+    buildArgs.CODEX_VERSION,
+    hostReaders.codexVersion,
+  );
+  return { claudeCodeVersion, codexVersion };
 }
 
 export async function imageExistsLocally(tag: string): Promise<boolean> {
@@ -133,8 +251,12 @@ export async function buildImage(
   contextDir: string,
   dockerfile: string,
   buildArgs: Record<string, string>,
+  options: { target?: string } = {},
 ): Promise<void> {
   const args = ["build", "-t", tag, "-f", dockerfile];
+  if (options.target !== undefined) {
+    args.push("--target", options.target);
+  }
   for (const [k, v] of Object.entries(buildArgs)) {
     args.push("--build-arg", `${k}=${v}`);
   }
@@ -148,8 +270,8 @@ export async function buildImage(
  *
  * Versioned image tag derived from the local tag (`ccairgap:X-Y` →
  * `<registry>:X-Y`). Hash is deterministic from Dockerfile+entrypoint.sh
- * content, so a registry pull either matches byte-for-byte or fails — there
- * is no drift surface.
+ * content plus exact agent versions, so a registry pull either matches
+ * byte-for-byte or fails — there is no drift surface.
  */
 export function registryRef(localTag: string): string | undefined {
   if (!localTag.startsWith("ccairgap:")) return undefined;
@@ -186,7 +308,14 @@ export async function ensureImage(opts: ImageBuildOptions): Promise<ResolvedImag
   const defaultPath = defaultDockerfile();
   const dockerfile = resolve(opts.dockerfile);
   const contextDir = dirname(dockerfile);
-  const tag = computeTag(dockerfile, defaultPath);
+  const isDefaultDockerfile = resolve(dockerfile) === resolve(defaultPath);
+  const dockerfileContent = readFileSync(dockerfile);
+  const usesManagedRuntimeBaseImage =
+    !isDefaultDockerfile &&
+    dockerfileUsesBuildArg(dockerfileContent, MANAGED_RUNTIME_BASE_IMAGE_BUILD_ARG);
+  const usesManagedBaseImage =
+    !isDefaultDockerfile && dockerfileUsesBuildArg(dockerfileContent, MANAGED_BASE_IMAGE_BUILD_ARG);
+  const tag = computeTag(dockerfile, defaultPath, opts.versions);
 
   if (!opts.rebuild && (await imageExistsLocally(tag))) {
     return { tag, contextDir, dockerfile };
@@ -197,7 +326,47 @@ export async function ensureImage(opts: ImageBuildOptions): Promise<ResolvedImag
       return { tag, contextDir, dockerfile };
     }
   }
-  await buildImage(tag, contextDir, dockerfile, opts.buildArgs);
+  let buildArgs = opts.buildArgs;
+  if (usesManagedRuntimeBaseImage) {
+    const base = await ensureRuntimeBaseImage(defaultPath, opts.rebuild);
+    buildArgs = {
+      ...opts.buildArgs,
+      [MANAGED_RUNTIME_BASE_IMAGE_BUILD_ARG]: base.tag,
+    };
+  } else if (usesManagedBaseImage) {
+    const base = await ensureImage({
+      dockerfile: defaultPath,
+      versions: opts.versions,
+      buildArgs: opts.buildArgs,
+      rebuild: opts.rebuild,
+    });
+    buildArgs = {
+      ...opts.buildArgs,
+      [MANAGED_BASE_IMAGE_BUILD_ARG]: base.tag,
+    };
+  }
+  await buildImage(tag, contextDir, dockerfile, buildArgs);
+  return { tag, contextDir, dockerfile };
+}
+
+async function ensureRuntimeBaseImage(
+  defaultPath: string,
+  rebuild: boolean,
+): Promise<ResolvedImage> {
+  const dockerfile = resolve(defaultPath);
+  const contextDir = dirname(dockerfile);
+  const tag = computeRuntimeBaseTag(defaultPath);
+
+  if (!rebuild && (await imageExistsLocally(tag))) {
+    return { tag, contextDir, dockerfile };
+  }
+  if (!rebuild) {
+    const ref = registryRef(tag);
+    if (ref !== undefined && (await tryPullImage(tag, ref))) {
+      return { tag, contextDir, dockerfile };
+    }
+  }
+  await buildImage(tag, contextDir, dockerfile, {}, { target: RUNTIME_STAGE_NAME });
   return { tag, contextDir, dockerfile };
 }
 
@@ -219,8 +388,17 @@ export async function readImageClaudeVersion(tag: string): Promise<string | unde
 export async function hostClaudeVersion(): Promise<string | undefined> {
   try {
     const { stdout } = await execa("claude", ["--version"], { timeout: 5_000 });
-    const match = stdout.trim().match(/(\d+\.\d+\.\d+(?:-\S+)?)/);
-    return match?.[1];
+    return normalizeClaudeVersion(stdout);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Best-effort: read Codex version from the host `codex` binary. */
+export async function hostCodexVersion(): Promise<string | undefined> {
+  try {
+    const { stdout } = await execa("codex", ["--version"], { timeout: 5_000 });
+    return normalizeCodexVersion(stdout);
   } catch {
     return undefined;
   }

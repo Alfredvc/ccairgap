@@ -66,7 +66,7 @@ In print mode, `CODEX_API_KEY` from the host environment is forwarded into the c
 
 ccairgap sets `CCAIRGAP_AGENT=codex` and `CODEX_HOME=/home/claude/.codex` for the container. Interactive mode executes Codex through the unified entrypoint as `codex ...`; print mode executes `codex exec ...`. User passthrough tokens appear after the image tag in the Docker argv and are validated before Docker starts.
 
-Before Docker execution, ccairgap inspects the resolved image for both agent binaries, supported Codex version, and required Codex mount targets. Exact unsupported `CODEX_VERSION` build args fail even earlier, before pull or build.
+Before Docker execution, ccairgap resolves exact host Claude Code and Codex versions, computes an image tag that includes both versions, and inspects the resolved image for both agent binaries, the expected Claude Code and Codex versions, and required Codex mount targets. Explicit non-exact `CODEX_VERSION` values fail before pull or build because `latest` is not an image identity.
 
 ## `exec` command mode
 
@@ -84,7 +84,7 @@ Here `--agent codex` selects the staged environment and auth/config policy; it d
 
 `ccairgap inspect --agent codex` reports sanitized Codex config, auth status, rollout session counts, and policy warnings. It never prints auth secret values or stripped external connection values.
 
-`ccairgap doctor --agent codex` runs the shared host checks and validates `$CODEX_HOME/auth.json` through the selected Codex auth sanitizer. It reports the auth kind, not the secret. Without `--agent`, doctor uses config `agent` and then falls back to Claude.
+`ccairgap doctor --agent codex` runs the shared host checks, resolves the same agent versions launch would use, reports the versioned image tag for those versions, and validates `$CODEX_HOME/auth.json` through the selected Codex auth sanitizer. It honors config/CLI `docker-build-arg` values and `CCAIRGAP_CC_VERSION`. It reports the auth kind, not the secret. Without `--agent`, doctor uses config `agent` and then falls back to Claude. If version resolution fails, doctor reports the image row failure instead of aborting the whole command.
 
 ## Config and guidance policy
 

@@ -20,7 +20,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `base` | string | `--base` | Base ref for the `ccairgap/<id>` branch. Default: HEAD of each repo. |
 | `keep-container` | bool | `--keep-container` | Omit `docker run --rm`. |
 | `dockerfile` | string | `--dockerfile` | Custom Dockerfile path. Relative → resolved against the **config file's directory** (sidecar convention). |
-| `docker-build-arg` | `{KEY: "VAL"}` | `--docker-build-arg` (repeat) | Map. Most common key: `CLAUDE_CODE_VERSION`. |
+| `docker-build-arg` | `{KEY: "VAL"}` | `--docker-build-arg` (repeat) | Map. Optional escape hatch. Omit `CLAUDE_CODE_VERSION` / `CODEX_VERSION` to follow the exact host agent versions automatically; set exact values only when intentionally pinning away from the host. Non-exact values fail before image build. |
 | `rebuild` | bool | `--rebuild` | Force image rebuild. |
 | `print` | string | `-p` / `--print` | Non-interactive prompt. Rejected for `ccairgap exec`. |
 | `name` | string | `-n` / `--name` | Session id prefix; final id is `<name>-<4hex>`. Branch becomes `ccairgap/<id>`. |
@@ -136,16 +136,13 @@ hooks:
   enable:
     - "python3 *"
 
-# Pin Claude Code version inside the container image.
-docker-build-arg:
-  CLAUDE_CODE_VERSION: "1.2.3"
-
 # Expose the Vite dev server port so the host can reach it.
 docker-run-arg:
   - "-p 5173:5173"
 
-# Extend the default image with project-specific binaries. Anchored on the
-# config file's directory, so this resolves to <git-root>/.ccairgap/Dockerfile.
+# Extend ccairgap's managed runtime base with project-specific binaries.
+# Anchored on the config file's directory, so this resolves to
+# <git-root>/.ccairgap/Dockerfile.
 dockerfile: Dockerfile
 ```
 
@@ -255,10 +252,6 @@ ccairgap init --user
 
 **`~/.config/ccairgap/config.yaml` — persistent user defaults:**
 ```yaml
-# Pin Claude Code version for all projects.
-docker-build-arg:
-  CLAUDE_CODE_VERSION: "1.2.3"
-
 # Always enable the python3 auto-approve hook.
 hooks:
   enable:

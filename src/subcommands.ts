@@ -29,6 +29,7 @@ import {
   defaultEntrypoint,
   computeTag,
   imageExistsLocally,
+  resolveAgentVersions,
 } from "./image.js";
 import { probeCredentials } from "./credentials.js";
 import { checkHostBinary } from "./binaries.js";
@@ -354,9 +355,10 @@ function checkStateDir(): DoctorCheck {
   }
 }
 
-async function checkImage(): Promise<DoctorCheck> {
+async function checkImage(buildArgs: Record<string, string>): Promise<DoctorCheck> {
   try {
-    const tag = computeTag(defaultDockerfile(), defaultDockerfile());
+    const versions = await resolveAgentVersions(buildArgs);
+    const tag = computeTag(defaultDockerfile(), defaultDockerfile(), versions);
     const present = await imageExistsLocally(tag);
     if (!present) return { name: "image", ok: false, detail: `${tag} not built yet (first run will build)` };
     const { stdout } = await execa("docker", ["image", "inspect", tag, "--format", "{{.Created}}"]);
@@ -703,7 +705,10 @@ export function resolveSubcommandAgent(opts: {
   return opts.cliAgent ?? opts.configAgent ?? "claude";
 }
 
-export async function doctor(opts: { agent?: AgentKind } = {}): Promise<void> {
+export async function doctor(opts: {
+  agent?: AgentKind;
+  dockerBuildArgs?: Record<string, string>;
+} = {}): Promise<void> {
   const agent = opts.agent ?? "claude";
   const checks: DoctorCheck[] = [];
   checks.push({ name: "selected agent", ok: true, detail: agent });
@@ -714,7 +719,7 @@ export async function doctor(opts: { agent?: AgentKind } = {}): Promise<void> {
   checks.push(await checkHostBinary("git"));
   checks.push(await checkHostBinary("rsync"));
   checks.push(await checkHostBinary("cp"));
-  checks.push(await checkImage());
+  checks.push(await checkImage(opts.dockerBuildArgs ?? {}));
   checks.push(checkClipboard());
   if (agent === "claude") {
     for (const c of await checkAuthRefresh()) checks.push(c);
@@ -737,22 +742,30 @@ function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function isCurrentExtensionDockerfile(content: string): boolean {
-  const tag = cliVersion();
-  return new RegExp(`^(?:\\s*#.*\\n|\\s*\\n)*FROM \\S+:${escapeRegExp(tag)}\\s*$`).test(
-    content,
-  );
+  return new RegExp(
+    [
+      "^(?:\\s*#.*\\n|\\s*\\n)*",
+      "ARG CCAIRGAP_RUNTIME_BASE_IMAGE(?:=[^\\n]*)?\\n",
+      "FROM \\$\\{CCAIRGAP_RUNTIME_BASE_IMAGE\\}\\n",
+      "[\\s\\S]*",
+      "ARG CLAUDE_CODE_VERSION\\n",
+      "ARG CODEX_VERSION\\n\\n",
+      "RUN test -n \"\\$CLAUDE_CODE_VERSION\"",
+      "[\\s\\S]*npm install -g @openai/codex@\\$\\{CODEX_VERSION\\}",
+      "[\\s\\S]*claude\\.ai/install\\.sh \\| bash -s \"\\$\\{CLAUDE_CODE_VERSION\\}\"",
+      "[\\s\\S]*claude --version[\\s\\S]*\"\\$CLAUDE_CODE_VERSION\"",
+      "[\\s\\S]*codex --version[\\s\\S]*\"\\$CODEX_VERSION\"\\s*$",
+    ].join(""),
+  ).test(content);
 }
 
 /**
  * Check sidecar Dockerfile / entrypoint.sh under <git-root>/.ccairgap/.
  * The generated extension Dockerfile is current when it inherits from this
- * CLI's plain release tag; other sidecars are hash-compared against the bundled
- * copies. Returns undefined when the sidecar dir does not exist.
+ * CLI-managed runtime base image arg and final exact agent install/check
+ * block; other sidecars are hash-compared against the bundled copies.
+ * Returns undefined when the sidecar dir does not exist.
  */
 function checkSidecarDrift(): DoctorCheck | undefined {
   let gitRoot: string | undefined;
@@ -876,8 +889,9 @@ function checkUserWideConfig(): DoctorCheck[] {
 function defaultInitConfigYaml(): string {
   return [
     "# ccairgap config — see README.md §\"Config file\" for all keys.",
-    "# Sidecar Dockerfile lives next to this file and extends the published",
-    "# ccairgap image. Add only project-specific image changes there.",
+    "# Sidecar Dockerfile lives next to this file and extends ccairgap's",
+    "# managed runtime base. Add project-specific image changes above the",
+    "# agent install block.",
     "dockerfile: Dockerfile",
     "",
   ].join("\n");
@@ -885,8 +899,35 @@ function defaultInitConfigYaml(): string {
 
 /** Minimal Dockerfile written by `ccairgap init` for image extension. */
 function defaultInitDockerfile(): string {
-  const repo = process.env.CCAIRGAP_REGISTRY ?? "ghcr.io/alfredvc/ccairgap";
-  return `FROM ${repo}:${cliVersion()}\n`;
+  const normalizeAgentVersion =
+    "const fs=require(\"node:fs\");" +
+    "const input=fs.readFileSync(0,\"utf8\");" +
+    "const match=input.match(/(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)/);" +
+    "process.stdout.write(match?.[1] ?? \"\");";
+  return [
+    "ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required",
+    "FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}",
+    "",
+    "# Add project-specific image changes above the agent install block.",
+    "# Host Claude Code / Codex upgrades only invalidate the layers below.",
+    "",
+    "ARG CLAUDE_CODE_VERSION",
+    "ARG CODEX_VERSION",
+    "",
+    'RUN test -n "$CLAUDE_CODE_VERSION" \\',
+    ' && test -n "$CODEX_VERSION"',
+    "",
+    "RUN npm install -g @openai/codex@${CODEX_VERSION}",
+    "",
+    "USER claude",
+    'RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"',
+    "",
+    "USER root",
+    'RUN chmod -R go+rwX /home/claude \\',
+    ` && test "$(claude --version | node -e '${normalizeAgentVersion}')" = "$CLAUDE_CODE_VERSION" \\`,
+    ` && test "$(codex --version | node -e '${normalizeAgentVersion}')" = "$CODEX_VERSION"`,
+    "",
+  ].join("\n");
 }
 
 export interface InitOptions {

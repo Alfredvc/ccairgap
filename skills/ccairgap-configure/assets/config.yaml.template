@@ -86,14 +86,16 @@
 # Container image
 # ---------------------------------------------------------------------------
 
-# Custom Dockerfile (extends base image). Sidecar anchor — resolved against
-# this config file's own directory. `dockerfile: Dockerfile` =
-# <git-root>/.ccairgap/Dockerfile.
+# Custom Dockerfile (extends ccairgap's managed runtime base). Sidecar
+# anchor — resolved against this config file's own directory.
+# `dockerfile: Dockerfile` = <git-root>/.ccairgap/Dockerfile.
 # dockerfile: Dockerfile
 
-# Build args forwarded to `docker build --build-arg`.
+# Optional build args forwarded to `docker build --build-arg`.
+# Omit agent-version args to follow host Claude Code and Codex automatically.
 # docker-build-arg:
-#   CLAUDE_CODE_VERSION: "latest"   # pin to a specific version for reproducibility
+#   CLAUDE_CODE_VERSION: "2.1.143"
+#   CODEX_VERSION: "0.134.0"
 
 # Force rebuild even if the tag exists locally.
 # rebuild: false

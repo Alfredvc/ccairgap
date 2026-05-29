@@ -26,7 +26,9 @@ import {
   defaultDockerfile,
   hostClaudeVersion,
   defaultImageBuildArgs,
+  resolveAgentVersions,
   validateExpectedCodexVersion,
+  type ResolvedAgentVersions,
 } from "./image.js";
 import { inspectImageContract } from "./imageContract.js";
 import { handoff } from "./handoff.js";
@@ -188,6 +190,11 @@ function die(msg: string): never {
 function printCodexWarning(warning: { message: string; source?: string }): void {
   const source = warning.source ? `${warning.source}: ` : "";
   console.error(`ccairgap: Codex warning: ${source}${warning.message}`);
+}
+
+function nonVersionBuildArgs(buildArgs: Record<string, string>): Record<string, string> {
+  const { CLAUDE_CODE_VERSION: _claude, CODEX_VERSION: _codex, ...rest } = buildArgs;
+  return rest;
 }
 
 function dedupeResolved(paths: string[]): string[] {
@@ -401,6 +408,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     ...(commandPlan?.env ?? { CCAIRGAP_AGENT: selectedAgent }),
     CCAIRGAP_ENTRYPOINT_MODE: isExecMode ? "exec" : "agent",
   };
+
+  let agentVersions: ResolvedAgentVersions;
+  try {
+    agentVersions = await resolveAgentVersions(opts.dockerBuildArgs);
+  } catch (e) {
+    die((e as Error).message);
+  }
 
   // Resume requires a workspace repo: the source transcript lives under
   // ~/.claude/projects/<encoded-cwd>/ and the cwd is the workspace.
@@ -718,18 +732,22 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   // Step 7: image
   const dockerfilePath = opts.dockerfile ?? defaultDockerfile();
-  const defaultClaudeVersion = opts.dockerBuildArgs.CLAUDE_CODE_VERSION ?? (await hostClaudeVersion()) ?? "latest";
   const buildArgs = defaultImageBuildArgs({
-    claudeVersion: defaultClaudeVersion,
-    overrides: opts.dockerBuildArgs,
+    claudeVersion: agentVersions.claudeCodeVersion,
+    codexVersion: agentVersions.codexVersion,
+    overrides: nonVersionBuildArgs(opts.dockerBuildArgs),
   });
   const image = await ensureImage({
     dockerfile: dockerfilePath,
+    versions: agentVersions,
     buildArgs,
     rebuild: opts.rebuild,
   });
   if (selectedAgent === "codex") {
-    const contract = await inspectImageContract(image.tag);
+    const contract = await inspectImageContract(image.tag, {
+      codexVersion: agentVersions.codexVersion,
+      claudeCodeVersion: agentVersions.claudeCodeVersion,
+    });
     if (!contract.ok) {
       for (const finding of contract.findings) {
         console.error(`ccairgap: image contract failed: ${finding.message}`);
@@ -965,8 +983,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   const dockerArgs: string[] = ["run"];
   if (!opts.keepContainer) dockerArgs.push("--rm");
-  // Interactive REPL needs -it; print mode is non-interactive so use -i only so output pipes cleanly.
-  dockerArgs.push(opts.print ? "-i" : "-it");
+  // Interactive REPL needs -it. Print mode must not keep stdin open: Codex
+  // `exec` treats open stdin as additional prompt input and waits for EOF.
+  if (opts.print === undefined) dockerArgs.push("-it");
   dockerArgs.push("--cap-drop=ALL", "--security-opt=no-new-privileges", "--name", `ccairgap-${id}`);
   // UID-portability: container runs directly as the host UID/GID via
   // `docker run --user`. The image bakes /home/claude as writable by any

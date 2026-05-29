@@ -18,6 +18,11 @@ import { launch, validateRepoRoOverlap } from "./launch.js";
 import { encodeCwd } from "./paths.js";
 import { sanitizePath } from "./autoMemory.js";
 
+const TEST_DOCKER_BUILD_ARGS = {
+  CLAUDE_CODE_VERSION: "2.1.143",
+  CODEX_VERSION: "0.134.0",
+};
+
 const fakeRealpath = (map: Record<string, string>) => (p: string) => {
   if (!(p in map)) {
     const err = new Error(`ENOENT: no such file or directory, realpath '${p}'`) as NodeJS.ErrnoException;
@@ -188,7 +193,7 @@ describe("launch --resume validation runs before any session-dir creation", () =
         sync: [],
         mount: [],
         keepContainer: false,
-        dockerBuildArgs: {},
+        dockerBuildArgs: TEST_DOCKER_BUILD_ARGS,
         rebuild: false,
         hookEnable: [],
         mcpEnable: [],
@@ -318,7 +323,7 @@ exit 0
       sync: [],
       mount: [],
       keepContainer: false,
-      dockerBuildArgs: {},
+      dockerBuildArgs: TEST_DOCKER_BUILD_ARGS,
       rebuild: false,
       hookEnable: [],
       mcpEnable: [],
@@ -345,7 +350,7 @@ exit 0
       sync: [],
       mount: [],
       keepContainer: false,
-      dockerBuildArgs: {},
+      dockerBuildArgs: TEST_DOCKER_BUILD_ARGS,
       rebuild: false,
       hookEnable: [],
       mcpEnable: [],
@@ -385,7 +390,7 @@ exit 0
       sync: [],
       mount: [],
       keepContainer: false,
-      dockerBuildArgs: {},
+      dockerBuildArgs: TEST_DOCKER_BUILD_ARGS,
       rebuild: false,
       hookEnable: [],
       mcpEnable: [],
@@ -414,7 +419,7 @@ exit 0
 
     await launch({
       repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
       hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
       bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
     });
@@ -431,7 +436,7 @@ exit 0
 
     await launch({
       repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
       hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
       bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: true, claudeArgs: [], refreshBelowTtlMinutes: 0,
     });
@@ -444,7 +449,7 @@ exit 0
   it("does not emit the mount or env var when the host memory dir is absent", async () => {
     await launch({
       repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-      keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+      keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
       hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
       bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
     });
@@ -460,7 +465,7 @@ exit 0
     try {
       await launch({
         repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
         hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
         bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
       });
@@ -479,7 +484,7 @@ exit 0
     try {
       await launch({
         repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
         hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
         bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
       });
@@ -501,7 +506,7 @@ exit 0
       await expect(
         launch({
           repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-          keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+          keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
           hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
           bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
         }),
@@ -521,7 +526,7 @@ exit 0
     try {
       await launch({
         repos: [repoDir], ros: [], cp: [], sync: [], mount: [],
-        keepContainer: false, dockerBuildArgs: {}, rebuild: false,
+        keepContainer: false, dockerBuildArgs: TEST_DOCKER_BUILD_ARGS, rebuild: false,
         hookEnable: [], mcpEnable: [], dockerRunArgs: [], warnDockerArgs: false,
         bare: false, clipboard: false, noPreserveDirty: false, noAutoMemory: false, claudeArgs: [], refreshBelowTtlMinutes: 0,
       });
@@ -630,7 +635,7 @@ exit 0
       sync: [],
       mount: [],
       keepContainer: false,
-      dockerBuildArgs: {},
+      dockerBuildArgs: TEST_DOCKER_BUILD_ARGS,
       rebuild: false,
       hookEnable: [],
       mcpEnable: [],
@@ -654,6 +659,7 @@ exit 0
     ensureImage?: ReturnType<typeof vi.fn>;
     inspectImageContract?: ReturnType<typeof vi.fn>;
     requireHostBinaries?: ReturnType<typeof vi.fn>;
+    resolveAgentVersions?: ReturnType<typeof vi.fn>;
   } = {}) {
     await vi.resetModules();
     const requireHostBinaries = options.requireHostBinaries ?? vi.fn(async () => {});
@@ -675,6 +681,12 @@ exit 0
       }));
     const inspectImageContract =
       options.inspectImageContract ?? vi.fn(async () => ({ ok: true, findings: [] }));
+    const resolveAgentVersions =
+      options.resolveAgentVersions ??
+      vi.fn(async (buildArgs: Record<string, string>) => ({
+        claudeCodeVersion: buildArgs.CLAUDE_CODE_VERSION ?? "1.0.0",
+        codexVersion: buildArgs.CODEX_VERSION ?? "0.134.0",
+      }));
 
     vi.doMock("./binaries.js", () => ({
       requireHostBinaries,
@@ -694,6 +706,7 @@ exit 0
       defaultDockerfile: vi.fn(() => join(root, "Dockerfile")),
       ensureImage,
       hostClaudeVersion: vi.fn(async () => "1.0.0"),
+      resolveAgentVersions,
     }));
     vi.doMock("./imageContract.js", () => ({
       inspectImageContract,
@@ -712,6 +725,7 @@ exit 0
       ensureImage,
       inspectImageContract,
       requireHostBinaries,
+      resolveAgentVersions,
     };
   }
 
@@ -783,19 +797,52 @@ exit 0
     expect(sessionEntries()).toEqual([]);
   });
 
-  it("rejects unsupported exact CODEX_VERSION before image resolution", async () => {
+  it("rejects non-exact CODEX_VERSION before image resolution", async () => {
     const ensureImage = vi.fn(async () => {
-      throw new Error("ensureImage should not be reached for unsupported CODEX_VERSION");
+      throw new Error("ensureImage should not be reached for non-exact CODEX_VERSION");
     });
     const { launch: isolatedLaunch, generateId, resolveCredentials } =
       await importLaunchWithMocks({ ensureImage });
 
     await expect(
-      isolatedLaunch(baseOptions({ dockerBuildArgs: { CODEX_VERSION: "0.129.0" } })),
+      isolatedLaunch(
+        baseOptions({
+          dockerBuildArgs: { ...TEST_DOCKER_BUILD_ARGS, CODEX_VERSION: "latest" },
+        }),
+      ),
     ).rejects.toThrow(/process\.exit\(1\)/);
 
     const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
-    expect(stderrLines.some((line) => line.includes("unsupported CODEX_VERSION 0.129.0"))).toBe(true);
+    expect(stderrLines.some((line) => line.includes("CODEX_VERSION latest is not exact"))).toBe(true);
+    expect(generateId).not.toHaveBeenCalled();
+    expect(resolveCredentials).not.toHaveBeenCalled();
+    expect(ensureImage).not.toHaveBeenCalled();
+    expect(sessionEntries()).toEqual([]);
+  });
+
+  it("rejects non-exact Claude version before session materialization", async () => {
+    const ensureImage = vi.fn(async () => {
+      throw new Error("ensureImage should not be reached for non-exact CLAUDE_CODE_VERSION");
+    });
+    const resolveAgentVersions = vi.fn(async () => {
+      throw new Error(
+        "CLAUDE_CODE_VERSION 2.1 is not exact; pass an exact --docker-build-arg CLAUDE_CODE_VERSION=x.y.z",
+      );
+    });
+    const { launch: isolatedLaunch, generateId, resolveCredentials } =
+      await importLaunchWithMocks({ ensureImage, resolveAgentVersions });
+
+    await expect(
+      isolatedLaunch(
+        baseOptions({
+          agent: "claude",
+          dockerBuildArgs: { ...TEST_DOCKER_BUILD_ARGS, CLAUDE_CODE_VERSION: "2.1" },
+        }),
+      ),
+    ).rejects.toThrow(/process\.exit\(1\)/);
+
+    const stderrLines = stderrSpy.mock.calls.map((args) => String(args[0]));
+    expect(stderrLines.some((line) => line.includes("CLAUDE_CODE_VERSION 2.1 is not exact"))).toBe(true);
     expect(generateId).not.toHaveBeenCalled();
     expect(resolveCredentials).not.toHaveBeenCalled();
     expect(ensureImage).not.toHaveBeenCalled();
@@ -890,7 +937,7 @@ exit 0
   });
 
   it("runs selected Codex with Codex env, mounts, argv, manifest, and no Claude watcher", async () => {
-    const { launch: isolatedLaunch, resolveCredentials, startRuntimeAuthRefresh, inspectImageContract } =
+    const { launch: isolatedLaunch, resolveCredentials, startRuntimeAuthRefresh, ensureImage, inspectImageContract } =
       await importLaunchWithMocks();
 
     const result = await isolatedLaunch(baseOptions({ codexArgs: ["--model", "gpt-5-codex"] }));
@@ -905,7 +952,19 @@ exit 0
     expect(run.endsWith("ccairgap:test --model gpt-5-codex")).toBe(true);
     expect(resolveCredentials).not.toHaveBeenCalled();
     expect(startRuntimeAuthRefresh).not.toHaveBeenCalled();
-    expect(inspectImageContract).toHaveBeenCalledWith("ccairgap:test");
+    expect(ensureImage).toHaveBeenCalledWith({
+      dockerfile: join(root, "Dockerfile"),
+      versions: {
+        claudeCodeVersion: TEST_DOCKER_BUILD_ARGS.CLAUDE_CODE_VERSION,
+        codexVersion: TEST_DOCKER_BUILD_ARGS.CODEX_VERSION,
+      },
+      buildArgs: TEST_DOCKER_BUILD_ARGS,
+      rebuild: false,
+    });
+    expect(inspectImageContract).toHaveBeenCalledWith("ccairgap:test", {
+      codexVersion: TEST_DOCKER_BUILD_ARGS.CODEX_VERSION,
+      claudeCodeVersion: TEST_DOCKER_BUILD_ARGS.CLAUDE_CODE_VERSION,
+    });
 
     const manifest = JSON.parse(readFileSync(join(result.sessionDir, "manifest.json"), "utf8")) as {
       agent?: string;
@@ -913,6 +972,31 @@ exit 0
     };
     expect(manifest.agent).toBe("codex");
     expect(manifest.codex?.host_home).toBe(join(fakeHome, ".codex"));
+  });
+
+  it("uses host-resolved versions for default image build args", async () => {
+    const resolveAgentVersions = vi.fn(async () => ({
+      claudeCodeVersion: "2.1.143",
+      codexVersion: "0.135.0",
+    }));
+    const { launch: isolatedLaunch, ensureImage } =
+      await importLaunchWithMocks({ resolveAgentVersions });
+
+    await isolatedLaunch(baseOptions({ dockerBuildArgs: {} }));
+
+    expect(resolveAgentVersions).toHaveBeenCalledWith({});
+    expect(ensureImage).toHaveBeenCalledWith({
+      dockerfile: join(root, "Dockerfile"),
+      versions: {
+        claudeCodeVersion: "2.1.143",
+        codexVersion: "0.135.0",
+      },
+      buildArgs: {
+        CLAUDE_CODE_VERSION: "2.1.143",
+        CODEX_VERSION: "0.135.0",
+      },
+      rebuild: false,
+    });
   });
 
   it("runs exec mode with Codex environment and exact command argv", async () => {
@@ -933,7 +1017,10 @@ exit 0
     expect(run).toContain("/codex-home:/home/claude/.codex:rw");
     expect(resolveCredentials).not.toHaveBeenCalled();
     expect(startRuntimeAuthRefresh).not.toHaveBeenCalled();
-    expect(inspectImageContract).toHaveBeenCalledWith("ccairgap:test");
+    expect(inspectImageContract).toHaveBeenCalledWith("ccairgap:test", {
+      codexVersion: TEST_DOCKER_BUILD_ARGS.CODEX_VERSION,
+      claudeCodeVersion: TEST_DOCKER_BUILD_ARGS.CLAUDE_CODE_VERSION,
+    });
 
     const argv = dockerRunArgv();
     const imageIndex = argv.indexOf("ccairgap:test");

@@ -13,7 +13,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initCmd, resolveInitTarget } from "./subcommands.js";
-import { cliVersion } from "./version.js";
 
 let root: string;
 
@@ -95,7 +94,35 @@ describe("resolveInitTarget", () => {
 
 describe("initCmd", () => {
   function expectedExtensionDockerfile(): string {
-    return `FROM ghcr.io/alfredvc/ccairgap:${cliVersion()}\n`;
+    const normalizeAgentVersion =
+      "const fs=require(\"node:fs\");" +
+      "const input=fs.readFileSync(0,\"utf8\");" +
+      "const match=input.match(/(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)/);" +
+      "process.stdout.write(match?.[1] ?? \"\");";
+    return [
+      "ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required",
+      "FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}",
+      "",
+      "# Add project-specific image changes above the agent install block.",
+      "# Host Claude Code / Codex upgrades only invalidate the layers below.",
+      "",
+      "ARG CLAUDE_CODE_VERSION",
+      "ARG CODEX_VERSION",
+      "",
+      'RUN test -n "$CLAUDE_CODE_VERSION" \\',
+      ' && test -n "$CODEX_VERSION"',
+      "",
+      "RUN npm install -g @openai/codex@${CODEX_VERSION}",
+      "",
+      "USER claude",
+      'RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"',
+      "",
+      "USER root",
+      'RUN chmod -R go+rwX /home/claude \\',
+      ` && test "$(claude --version | node -e '${normalizeAgentVersion}')" = "$CLAUDE_CODE_VERSION" \\`,
+      ` && test "$(codex --version | node -e '${normalizeAgentVersion}')" = "$CODEX_VERSION"`,
+      "",
+    ].join("\n");
   }
 
   it("writes an extension Dockerfile and config.yaml into target dir", () => {

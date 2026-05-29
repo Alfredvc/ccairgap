@@ -8,30 +8,55 @@
 
 Use a custom Dockerfile when a workflow needs a binary not in the base image. Pass it via `--dockerfile <path>` or `dockerfile: <path>` in `config.yaml` (resolves against the config file's directory — sidecar convention).
 
-## What the base image already has
+## What the default image already has
 
 `docker/Dockerfile` — `FROM node:24-slim` plus:
 
 - `node`, `npm` (from base)
-- `@anthropic-ai/claude-code` (installed via `claude.ai/install.sh`, pinned via `CLAUDE_CODE_VERSION` build arg, default `latest`)
-- `@openai/codex` (installed with `npm install -g @openai/codex@${CODEX_VERSION}`, default `CODEX_VERSION=0.130.0`)
+- `@anthropic-ai/claude-code` (installed via `claude.ai/install.sh`, pinned via exact `CLAUDE_CODE_VERSION` build arg)
+- `@openai/codex` (installed with `npm install -g @openai/codex@${CODEX_VERSION}`, pinned via exact `CODEX_VERSION` build arg)
 - `git`, `git-lfs`, `curl`, `jq`, `rsync`, `ca-certificates`, `less`, `tzdata`, `vim`
 - `python3`, `python3-pip`, `python3-venv`
 
 No `uv`, no browsers, no other language toolchains, no Docker client, no cloud SDKs, no `build-essential` (~200MB; opt in via custom Dockerfile if `pip install` of native-dep packages is needed).
+
+Generated extension Dockerfiles inherit from ccairgap's runtime stage, which has the OS packages, UID model, entrypoint, and mount target layout. The generated file then installs Claude Code and Codex at the end so project package layers can stay cached across agent upgrades.
 
 ## Default extension pattern
 
 `ccairgap init` writes a minimal extension Dockerfile:
 
 ```dockerfile
-FROM ghcr.io/alfredvc/ccairgap:<version>
+ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required
+FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}
+
+# Add project-specific image changes above the agent install block.
+# Host Claude Code / Codex upgrades only invalidate the layers below.
+
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+
+RUN test -n "$CLAUDE_CODE_VERSION" \
+ && test -n "$CODEX_VERSION"
+
+RUN npm install -g @openai/codex@${CODEX_VERSION}
+
+USER claude
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
+
+USER root
+RUN chmod -R go+rwX /home/claude \
+ && test "$(claude --version | node -e '...')" = "$CLAUDE_CODE_VERSION" \
+ && test "$(codex --version | node -e '...')" = "$CODEX_VERSION"
 ```
 
-The tag is the release version tag for the published image. Add only project-specific packages or files below that `FROM` line:
+`CCAIRGAP_RUNTIME_BASE_IMAGE` is set by ccairgap, not by users. At launch, ccairgap ensures a stable runtime base image exists locally by using the normal local → registry → build flow. The generated Dockerfile installs Claude Code and Codex at the end, after the place where project-specific packages belong. That keeps user package layers cached when only the host agent versions change.
+
+Add project-specific packages above the agent install block:
 
 ```dockerfile
-FROM ghcr.io/alfredvc/ccairgap:<version>
+ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required
+FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}
 
 USER root
 
@@ -41,9 +66,25 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages --no-cache-dir uv
+
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+
+RUN test -n "$CLAUDE_CODE_VERSION" \
+ && test -n "$CODEX_VERSION"
+
+RUN npm install -g @openai/codex@${CODEX_VERSION}
+
+USER claude
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
+
+USER root
+RUN chmod -R go+rwX /home/claude \
+ && test "$(claude --version | node -e '...')" = "$CLAUDE_CODE_VERSION" \
+ && test "$(codex --version | node -e '...')" = "$CODEX_VERSION"
 ```
 
-This keeps the ccairgap entrypoint, runtime user model, agent CLIs, and mount target layout inherited from the published image. `docker build` pulls the base image if it is not already present locally, then builds your `ccairgap:custom-<hash>` image on top.
+This keeps the ccairgap entrypoint, runtime user model, and mount target layout inherited from the managed runtime base image. When your host Claude Code or Codex version changes, the runtime base and project package layers stay cached; only the final agent install layers rebuild. You do not need to add `CLAUDE_CODE_VERSION` or `CODEX_VERSION` build args for normal host-agent upgrades.
 
 ## Required invariants for replacement Dockerfiles
 
@@ -131,7 +172,7 @@ Installing the Docker CLI inside the container is fine. **Do not** mount `/var/r
 
 ## Pinning Claude Code version
 
-Default is `latest` at build time for the bundled Dockerfile, which drifts. Pin via `docker-build-arg` when you are using the bundled Dockerfile directly:
+By default, ccairgap resolves `latest` to the exact host `claude --version` before image work begins. `latest` is not an image identity and is never passed to the bundled Dockerfile; if host version resolution fails, launch fails before build and asks for an exact version. Most users should omit this setting so the container follows the host version automatically. Pin via `docker-build-arg` only when you intentionally want the container to differ from the host:
 
 ```yaml
 docker-build-arg:
@@ -140,25 +181,27 @@ docker-build-arg:
 
 Or environment variable on the host: `CCAIRGAP_CC_VERSION=1.2.3`. Or CLI: `--docker-build-arg CLAUDE_CODE_VERSION=1.2.3`.
 
-For an extension Dockerfile generated by `ccairgap init`, the agent versions are inherited from the `FROM ghcr.io/alfredvc/ccairgap:<version>` base image. Change that base image tag to move to a different prebuilt ccairgap image.
+For an extension Dockerfile generated by `ccairgap init`, leave `ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required` / `FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}` in place. ccairgap fills it with the managed runtime base image tag. Keep project-specific package installs above the agent install block.
 
 ## Pinning Codex version
 
-The bundled Dockerfile exposes `CODEX_VERSION`, defaulting to the supported baseline `0.130.0`:
+By default, ccairgap resolves `latest` to the exact host `codex --version` before image work begins. `latest` is not an image identity and is never passed to the bundled Dockerfile; if host version resolution fails, launch fails before build and asks for an exact version. Most users should omit this setting so the container follows the host version automatically. Pin via `docker-build-arg` only when you intentionally want the container to differ from the host:
 
 ```yaml
 docker-build-arg:
-  CODEX_VERSION: "0.130.0"
+  CODEX_VERSION: "1.2.3"
 ```
 
-Exact unsupported Codex pins are rejected by the image-version policy before launch. Non-exact inputs such as dist-tags require runtime image contract inspection because the installed version is only known after build or pull. Extension Dockerfiles inherit the Codex version from their `FROM` image.
+Exact Codex pins are validated by the image-version policy before launch. Non-exact inputs such as dist-tags are rejected because ccairgap must know the exact Codex version before it can compute the image tag. Extension Dockerfiles install Codex in the final block and check that it matches the resolved exact version.
 
 ## Rebuild semantics
 
-- Built-in image tag: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh)[:8]>`.
-- Custom image tag: `ccairgap:custom-<sha256(dockerfile)[:12]>`. Content-addressed.
-- Source order on launch: local image with the computed tag → registry pull from `ghcr.io/alfredvc/ccairgap:<version>-<hash8>` (default-Dockerfile only) → local build. `--rebuild` skips the first two steps and forces a build. Custom Dockerfiles (`--dockerfile`) produce a local custom image; when they `FROM ghcr.io/alfredvc/ccairgap:<version>`, Docker pulls that base image during the build if needed.
+- Built-in image tag: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh+exact agent versions)[:8]>`.
+- Runtime base image tag: `ccairgap:<cli-version>-runtime-<sha256(runtime-Dockerfile+entrypoint.sh)[:8]>`.
+- Custom image tag: `ccairgap:custom-<sha256(dockerfile+exact agent versions+managed base image identity when used)[:12]>`. Content-addressed.
+- Source order on launch: local image with the computed tag → registry pull from `ghcr.io/alfredvc/ccairgap:<version>-<hash8>` (default-Dockerfile only) → local build. `--rebuild` skips the first two steps and forces a build. Custom Dockerfiles (`--dockerfile`) produce a local custom image; when they use `ARG CCAIRGAP_RUNTIME_BASE_IMAGE`, ccairgap first ensures the matching runtime base image exists, then passes that local base tag into `docker build`.
 - Override the registry repo with `CCAIRGAP_REGISTRY=<host>/<owner>/<repo>` (e.g. for forks or private mirrors).
+- Changing the host Claude Code or Codex version changes the resolved image tag, so the next launch builds or pulls that one new image once. The first launch after upgrading to versioned image identity may also build a new image even when an older Dockerfile-content tag already exists.
 - Image age is never auto-rebuilt. `ccairgap doctor` warns if > 14 days old.
 
 ## When NOT to write a custom Dockerfile

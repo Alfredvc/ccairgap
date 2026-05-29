@@ -17,7 +17,10 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      claude_code_version: ${{ steps.agent-versions.outputs.claude_code_version }}
+      codex_version: ${{ steps.agent-versions.outputs.codex_version }}
       hash8: ${{ steps.hash.outputs.hash8 }}
+      runtime_hash8: ${{ steps.hash.outputs.runtime_hash8 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,13 +41,55 @@ jobs:
             exit 1
           fi
           echo "version=$pkg" >> "$GITHUB_OUTPUT"
-      - name: Compute Dockerfile+entrypoint hash8 (matches src/image.ts computeTag)
-        id: hash
+      - name: Read release image agent versions
+        id: agent-versions
+        shell: bash
         run: |
-          # Mirrors computeTag in src/image.ts: sha256 of Dockerfile then
-          # entrypoint.sh content concatenated, first 8 hex chars.
-          hash8=$(cat docker/Dockerfile docker/entrypoint.sh | sha256sum | cut -c1-8)
-          echo "hash8=$hash8" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          source docker/agent-versions.env
+          exact='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          if [[ ! "${CLAUDE_CODE_VERSION:-}" =~ $exact ]]; then
+            echo "::error::docker/agent-versions.env CLAUDE_CODE_VERSION must be an exact semver."
+            exit 1
+          fi
+          if [[ ! "${CODEX_VERSION:-}" =~ $exact ]]; then
+            echo "::error::docker/agent-versions.env CODEX_VERSION must be an exact semver."
+            exit 1
+          fi
+          echo "claude_code_version=$CLAUDE_CODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "codex_version=$CODEX_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Compute Dockerfile+entrypoint image hashes (matches src/image.ts computeTag)
+        id: hash
+        env:
+          CLAUDE_CODE_VERSION: ${{ steps.agent-versions.outputs.claude_code_version }}
+          CODEX_VERSION: ${{ steps.agent-versions.outputs.codex_version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFileSync, appendFileSync } from "node:fs";
+
+          const dockerfile = readFileSync("docker/Dockerfile", "utf8");
+          const entrypoint = readFileSync("docker/entrypoint.sh");
+          const runtimeMarker = "\nFROM ccairgap-runtime AS ccairgap-final";
+          const runtimeIdentity = dockerfile.includes(runtimeMarker)
+            ? dockerfile.slice(0, dockerfile.indexOf(runtimeMarker))
+            : dockerfile;
+
+          const runtime = createHash("sha256");
+          runtime.update(runtimeIdentity);
+          runtime.update(entrypoint);
+
+          const h = createHash("sha256");
+          h.update(dockerfile);
+          h.update(entrypoint);
+          h.update(`\nCLAUDE_CODE_VERSION=${process.env.CLAUDE_CODE_VERSION}`);
+          h.update(`\nCODEX_VERSION=${process.env.CODEX_VERSION}`);
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `runtime_hash8=${runtime.digest("hex").slice(0, 8)}\n` +
+              `hash8=${h.digest("hex").slice(0, 8)}\n`,
+          );
+          NODE
 
   publish-image:
     needs: build
@@ -70,11 +115,22 @@ jobs:
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "owner=$owner" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/$owner/ccairgap" >> "$GITHUB_OUTPUT"
-      - name: Probe GHCR for prior release with same Dockerfile+entrypoint hash
+      - uses: docker/build-push-action@v6
+        id: build-runtime
+        with:
+          context: ./docker
+          file: ./docker/Dockerfile
+          target: ccairgap-runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}-runtime-${{ needs.build.outputs.runtime_hash8 }}
+            ${{ steps.meta.outputs.image }}:${{ needs.build.outputs.version }}-runtime
+      - name: Probe GHCR for prior release with same image identity hash
         # If a previous release already pushed an image with this exact hash8
-        # (i.e. Dockerfile + entrypoint.sh unchanged), reuse that digest by
-        # retagging instead of rebuilding+repushing identical layers. Falls
-        # through to the build path on any API failure.
+        # (i.e. Dockerfile + entrypoint.sh + agent versions unchanged), reuse
+        # that digest by retagging instead of rebuilding+repushing identical
+        # layers. Falls through to the build path on any API failure.
         id: probe
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,8 +163,12 @@ jobs:
         with:
           context: ./docker
           file: ./docker/Dockerfile
+          target: ccairgap-final
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            CLAUDE_CODE_VERSION=${{ needs.build.outputs.claude_code_version }}
+            CODEX_VERSION=${{ needs.build.outputs.codex_version }}
           # CLI pulls the version+hash form. Plain :version tag is for humans
           # browsing the registry; both refs point at the same digest.
           tags: |
