@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.6.1](https://github.com/Alfredvc/ccairgap/compare/v0.6.0...v0.6.1) (2026-05-29)
+
+
+### Features
+
+* add exec command mode ([2601b31](https://github.com/Alfredvc/ccairgap/commit/2601b31696903b65cfe186d62baaff1222119bdc))
+
 ## [0.6.0](https://github.com/Alfredvc/ccairgap/compare/v0.5.2...v0.6.0) (2026-05-13)
 
 
