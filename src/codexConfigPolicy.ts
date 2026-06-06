@@ -21,9 +21,7 @@ const DANGEROUS_TOP_LEVEL_KEYS = [
   "experimental_realtime_ws_base_url",
   "otel",
   "notify",
-  "plugins",
   "plugin_marketplaces",
-  "marketplaces",
   "codex_apps",
   "mcp_oauth_credentials_store",
   "provider_auth_command",
@@ -88,6 +86,37 @@ function hookCommand(value: unknown): string | undefined {
   return typeof cmd === "string" ? cmd : undefined;
 }
 
+const HOOK_EVENT_KEYS = new Set([
+  "PreToolUse",
+  "PermissionRequest",
+  "PostToolUse",
+  "PreCompact",
+  "PostCompact",
+  "SessionStart",
+  "UserPromptSubmit",
+  "SubagentStart",
+  "SubagentStop",
+  "Stop",
+]);
+
+function hasCurrentHookEventShape(hooks: Record<string, unknown>): boolean {
+  return Object.entries(hooks).some(
+    ([key, value]) => key === "state" || HOOK_EVENT_KEYS.has(key) || Array.isArray(value),
+  );
+}
+
+function warnDisabledHook(
+  warnings: CodexPolicyWarning[],
+  source: string | undefined,
+  message: string,
+) {
+  warnings.push({
+    code: "disabled-codex-hook",
+    message,
+    source,
+  });
+}
+
 function filterHookRecord(
   hooks: Record<string, unknown>,
   enabled: readonly string[],
@@ -99,22 +128,108 @@ function filterHookRecord(
     const command = hookCommand(hookValue);
     if (command && matchesGlob(command, enabled)) kept[name] = hookValue;
     else {
-      warnings.push({
-        code: "disabled-codex-hook",
-        message: `disabled Codex hook '${name}'`,
+      warnDisabledHook(
+        warnings,
         source,
-      });
+        command ? `disabled Codex hook command '${command}'` : `disabled Codex hook '${name}'`,
+      );
     }
   }
   return kept;
 }
 
-function featureTableWithoutDeprecatedHooksFlag(
+function filterHookEvents(
+  hooks: Record<string, unknown>,
+  enabled: readonly string[],
+  warnings: CodexPolicyWarning[],
+  source?: string,
+): Record<string, unknown> {
+  const keptEvents: Record<string, unknown> = {};
+  let keptEventCount = 0;
+  const state = hooks.state;
+
+  for (const [eventName, eventValue] of Object.entries(hooks)) {
+    if (eventName === "state") continue;
+    if (!Array.isArray(eventValue)) {
+      const command = hookCommand(eventValue);
+      if (command && matchesGlob(command, enabled)) {
+        keptEvents[eventName] = eventValue;
+        keptEventCount++;
+      } else if (command || HOOK_EVENT_KEYS.has(eventName)) {
+        warnDisabledHook(
+          warnings,
+          source,
+          command
+            ? `disabled Codex hook command '${command}'`
+            : `disabled Codex hook '${eventName}'`,
+        );
+      }
+      continue;
+    }
+
+    const keptGroups: unknown[] = [];
+    for (const groupValue of eventValue) {
+      const group = asRecord(groupValue);
+      if (!group) {
+        warnDisabledHook(warnings, source, `disabled Codex hook group in '${eventName}'`);
+        continue;
+      }
+      const handlers = Array.isArray(group.hooks) ? group.hooks : [];
+      const keptHandlers: unknown[] = [];
+      for (const handler of handlers) {
+        const command = hookCommand(handler);
+        if (command && matchesGlob(command, enabled)) {
+          keptHandlers.push(handler);
+        } else {
+          warnDisabledHook(
+            warnings,
+            source,
+            command
+              ? `disabled Codex hook command '${command}'`
+              : `disabled Codex hook handler in '${eventName}'`,
+          );
+        }
+      }
+      if (keptHandlers.length > 0) {
+        keptGroups.push({ ...group, hooks: keptHandlers });
+      }
+    }
+    if (keptGroups.length > 0) {
+      keptEvents[eventName] = keptGroups;
+      keptEventCount += keptGroups.length;
+    }
+  }
+
+  if (keptEventCount > 0 && state !== undefined) keptEvents.state = state;
+  return keptEvents;
+}
+
+function filterHooksConfig(
+  hooks: Record<string, unknown>,
+  enabled: readonly string[],
+  warnings: CodexPolicyWarning[],
+  source?: string,
+): Record<string, unknown> {
+  return hasCurrentHookEventShape(hooks)
+    ? filterHookEvents(hooks, enabled, warnings, source)
+    : filterHookRecord(hooks, enabled, warnings, source);
+}
+
+function setHooksFeature(
   doc: Record<string, unknown>,
+  enabled: boolean,
 ): Record<string, unknown> | undefined {
   const features = asRecord(doc.features);
-  if (!features) return undefined;
+  if (!features) {
+    if (enabled) {
+      doc.features = { hooks: true };
+      return doc.features as Record<string, unknown>;
+    }
+    return undefined;
+  }
   delete features.codex_hooks;
+  if (enabled) features.hooks = true;
+  else delete features.hooks;
   if (Object.keys(features).length === 0) {
     delete doc.features;
     return undefined;
@@ -143,18 +258,16 @@ export function filterCodexConfigToml(options: {
 
   const hooks = asRecord(doc.hooks);
   if (hooks) {
-    const kept = filterHookRecord(hooks, options.hookEnable ?? [], warnings, options.source);
+    const kept = filterHooksConfig(hooks, options.hookEnable ?? [], warnings, options.source);
     if (Object.keys(kept).length > 0) {
       doc.hooks = kept;
-      const features = featureTableWithoutDeprecatedHooksFlag(doc) ?? {};
-      features.hooks = true;
-      doc.features = features;
+      setHooksFeature(doc, true);
     } else {
       delete doc.hooks;
-      featureTableWithoutDeprecatedHooksFlag(doc);
+      setHooksFeature(doc, false);
     }
   } else {
-    featureTableWithoutDeprecatedHooksFlag(doc);
+    setHooksFeature(doc, false);
   }
 
   return { content: stringify(doc), warnings };
@@ -180,11 +293,7 @@ function filterHookJsonValue(
       const command = hookCommand(entry);
       const keep = !!command && matchesGlob(command, enabled);
       if (!keep) {
-        warnings.push({
-          code: "disabled-codex-hook",
-          message: `disabled Codex hook at index ${index}`,
-          source,
-        });
+        warnDisabledHook(warnings, source, `disabled Codex hook at index ${index}`);
       }
       return keep;
     });
@@ -192,6 +301,11 @@ function filterHookJsonValue(
   }
   const hooks = asRecord(value);
   if (!hooks) return undefined;
+  const wrapped = asRecord(hooks.hooks);
+  if (wrapped) {
+    const kept = filterHooksConfig(wrapped, enabled, warnings, source);
+    return Object.keys(kept).length > 0 ? { ...hooks, hooks: kept } : undefined;
+  }
   const kept = filterHookRecord(hooks, enabled, warnings, source);
   return Object.keys(kept).length > 0 ? kept : undefined;
 }

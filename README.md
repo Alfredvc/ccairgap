@@ -73,9 +73,9 @@ With Claude selected, the sandbox has:
 - Your managed-policy settings (enterprise / MDM; skipped when absent)
 
 With Codex selected, the sandbox has:
-- Sanitized host `$CODEX_HOME` config and auth
+- Sanitized host `$CODEX_HOME` config, auth, skills, and installed plugin cache
 - Project guidance from `AGENTS.md`, `AGENTS.override.md`, `.codex/`, and `.agents/` surfaces
-- Codex hooks and MCP filtered behind the same explicit enable policy
+- File-defined Codex hooks and MCP filtered behind the same explicit enable policy
 - Session-local Codex history and rollout state, with validated rollout records copied back on handoff
 
 ### Common setups
@@ -192,7 +192,7 @@ flowchart LR
 
 For Claude, your `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md, credentials — is mounted read-only and copied in at startup, so inside the container Claude looks and behaves exactly like yours. Project-scope Claude config comes along too, including uncommitted files like `settings.local.json` with your MCP approvals and permission allow-lists. Transcripts written during the session land back in `~/.claude/projects/` on exit, so `claude --resume` on the host keeps working.
 
-For Codex, ccairgap resolves `$CODEX_HOME`, filters config, sanitizes auth, overlays safe project guidance, and writes a session-local `CODEX_HOME` for the container. Runtime Codex auth, logs, history, memories, plugin state, and marketplace state stay inside the session; validated rollout records are copied back during handoff or `recover`.
+For Codex, ccairgap resolves `$CODEX_HOME`, filters config, sanitizes auth, copies skills and installed plugin cache, overlays safe project guidance, and writes a session-local `CODEX_HOME` for the container. Runtime Codex auth, logs, history, memories, plugin data, and marketplace writes stay inside the session; validated rollout records are copied back during handoff or `recover`.
 
 Hooks and MCP servers are disabled by default, because most of them reach for host binaries the container doesn't ship. Opt them in by glob — and if a binary is missing, extend the provided Dockerfile. Your real settings are never edited; the filter runs on copies.
 

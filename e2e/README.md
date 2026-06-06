@@ -26,7 +26,7 @@ npm run test:e2e:tier2
 | Suite | Tier | What it covers |
 |-------|------|----------------|
 | `e2e/tier1/` | 1 | Container lifecycle: launch, exit, CCAIRGAP_TEST_CMD backdoor, entrypoint env wiring |
-| `e2e/tier2/` | 2 | Integration: repo cloning, mount correctness, handoff, recover, selected-agent entrypoint dry-run |
+| `e2e/tier2/` | 2 | Integration: repo cloning, mount correctness, handoff, recover, selected-agent entrypoint dry-run, Codex staged home/plugin cache |
 
 ## Entrypoint dry-run
 

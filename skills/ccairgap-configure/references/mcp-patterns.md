@@ -118,4 +118,6 @@ Host files are never mutated; patched copies live under `$SESSION/mcp-policy/` a
 
 Codex MCP entries in `$CODEX_HOME/config.toml` and project `.codex/config.toml` are disabled by default. `--mcp-enable` / `mcp.enable` can keep file-defined Codex MCP servers by name, using the same glob style as Claude MCP filtering.
 
-Codex MCP OAuth credentials, `mcp_oauth_credentials_store`, plugin MCP integrations, and `codex_apps` are always omitted in the first implementation. Enabling a matching MCP name does not enable app integrations or copied OAuth credentials.
+Codex plugin configuration is preserved so installed plugins can load from the session-local plugin cache. Plugin-provided MCP servers follow the preserved Codex plugin config; disable the plugin or its `[plugins."<plugin>@<marketplace>".mcp_servers.<server>]` entry on the host when that server should not run in ccairgap.
+
+Codex MCP OAuth credentials, `mcp_oauth_credentials_store`, and `codex_apps` are omitted. Enabling a matching file-defined MCP name does not enable app integrations or copied OAuth credentials.

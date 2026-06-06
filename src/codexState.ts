@@ -1,5 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { filterCodexConfigToml, filterCodexHooksJson } from "./codexConfigPolicy.js";
 import { planCodexAuth, writeCodexSessionAuth, type CodexAuthWarning } from "./codexAuth.js";
 import {
@@ -26,6 +34,40 @@ export interface CodexStatePlan {
 function copyOptionalFile(src: string, dest: string, warnings: CodexOverlayWarning[]): void {
   if (!existsSync(src)) return;
   copySafeCodexFile(src, dest, warnings, { followSymlinks: true });
+}
+
+function copyTreeSkippingSymlinks(srcDir: string, destDir: string): void {
+  if (!existsSync(srcDir)) return;
+  const walk = (src: string, dest: string) => {
+    let st;
+    try {
+      st = lstatSync(src);
+    } catch {
+      return;
+    }
+    if (st.isSymbolicLink()) return;
+    if (st.isDirectory()) {
+      mkdirSync(dest, { recursive: true });
+      let entries: string[];
+      try {
+        entries = readdirSync(src);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry === "." || entry === ".." || entry.includes("/") || entry.includes("\\")) {
+          continue;
+        }
+        walk(join(src, entry), join(dest, entry));
+      }
+      return;
+    }
+    if (st.isFile()) {
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
+    }
+  };
+  walk(srcDir, destDir);
 }
 
 function asStateWarnings(
@@ -67,6 +109,14 @@ export function materializeCodexState(options: {
       destDir: join(homeDir, "skills", "agents"),
     });
   }
+  copyTreeSkippingSymlinks(
+    join(options.hostHome, "plugins", "cache"),
+    join(homeDir, "plugins", "cache"),
+  );
+  copyTreeSkippingSymlinks(
+    join(options.hostHome, ".tmp", "marketplaces"),
+    join(homeDir, ".tmp", "marketplaces"),
+  );
   warnings.push(...asStateWarnings(overlayWarnings));
 
   const userConfig = join(options.hostHome, "config.toml");

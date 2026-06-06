@@ -22,8 +22,8 @@ RUN mkdir -p \
       /home/claude/.claude/projects \
       /home/claude/.claude/plugins/cache \
       /home/claude/.codex/sessions \
- && printf '%s\n' '#!/bin/sh' 'echo fake claude "$@"' > /home/claude/.local/bin/claude \
- && printf '%s\n' '#!/bin/sh' 'echo codex-cli 0.130.0' > /home/claude/.local/bin/codex \
+ && printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ]; then echo 2.1.143; else echo fake claude "$@"; fi' > /home/claude/.local/bin/claude \
+ && printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ]; then echo codex-cli 0.130.0; else echo fake codex "$@"; fi' > /home/claude/.local/bin/codex \
  && chmod +x /home/claude/.local/bin/claude /home/claude/.local/bin/codex \
  && chmod -R go+rwX /home/claude
 RUN printf '%s\n' \

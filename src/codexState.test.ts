@@ -51,6 +51,43 @@ describe("materializeCodexState", () => {
     if (platform() !== "win32") expect(statSync(plan.authFile ?? "").mode & 0o777).toBe(0o600);
   });
 
+  it("materializes plugin config and installed plugin cache", () => {
+    writeFileSync(join(hostHome, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-test" }));
+    writeFileSync(
+      join(hostHome, "config.toml"),
+      `
+[plugins."sample@debug"]
+enabled = true
+
+[marketplaces.debug]
+source_type = "local"
+source = "/Users/me/debug-marketplace"
+`,
+    );
+    const pluginRoot = join(hostHome, "plugins", "cache", "debug", "sample", "1.0.0");
+    mkdirSync(pluginRoot, { recursive: true });
+    writeFileSync(join(pluginRoot, "plugin.json"), '{"name":"sample"}\n');
+    mkdirSync(join(hostHome, "plugins", "data", "sample-debug"), { recursive: true });
+    writeFileSync(join(hostHome, "plugins", "data", "sample-debug", "state.json"), "{}\n");
+
+    const plan = materializeCodexState({ sessionDir, hostHome, selected: true });
+
+    const config = readFileSync(join(plan.homeDir, "config.toml"), "utf8");
+    expect(config).toContain('[plugins."sample@debug"]');
+    expect(config).toContain("[marketplaces.debug]");
+    const copiedPluginManifest = join(
+      plan.homeDir,
+      "plugins",
+      "cache",
+      "debug",
+      "sample",
+      "1.0.0",
+      "plugin.json",
+    );
+    expect(readFileSync(copiedPluginManifest, "utf8")).toBe('{"name":"sample"}\n');
+    expect(existsSync(join(plan.homeDir, "plugins", "data"))).toBe(false);
+  });
+
   it("warns and omits advisory auth without throwing", () => {
     const plan = materializeCodexState({ sessionDir, hostHome, selected: false });
 
