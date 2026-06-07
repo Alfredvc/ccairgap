@@ -29,6 +29,7 @@ export interface CodexProjectOverlayResult {
 const MAX_FILE_BYTES = 256 * 1024;
 
 const SKILL_TREE_EXCLUDED_SEGMENTS = new Set([".git", ".venv", "venv", "node_modules"]);
+const HOOK_TREE_EXCLUDED_SEGMENTS = new Set([".git", ".venv", "venv", "node_modules"]);
 
 function isUtf8(buf: Buffer): boolean {
   try {
@@ -159,6 +160,48 @@ export function copySafeCodexSkillTree(options: {
   walk(rootReal, "");
 }
 
+export function copySafeCodexHookSupportTree(options: {
+  srcDir: string;
+  destDir: string;
+  warnings: CodexOverlayWarning[];
+}): void {
+  const { srcDir, destDir, warnings } = options;
+  if (!existsSync(srcDir)) return;
+
+  const walk = (logicalDir: string, relDir: string) => {
+    let entries: string[];
+    try {
+      entries = readdirSync(logicalDir);
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry === "." || entry === ".." || entry.includes("/") || entry.includes("\\")) continue;
+      if (entry.startsWith(".") || HOOK_TREE_EXCLUDED_SEGMENTS.has(entry)) continue;
+
+      const src = join(logicalDir, entry);
+      const rel = relDir === "" ? entry : join(relDir, entry);
+
+      let lst;
+      try {
+        lst = lstatSync(src);
+      } catch {
+        continue;
+      }
+
+      if (lst.isDirectory()) {
+        walk(src, rel);
+        continue;
+      }
+
+      copySafeCodexFile(src, join(destDir, rel), warnings);
+    }
+  };
+
+  walk(srcDir, "");
+}
+
 function appendPolicyWarnings(
   warnings: CodexOverlayWarning[],
   policyWarnings: CodexPolicyWarning[],
@@ -222,6 +265,11 @@ export function overlayProjectCodexConfig(options: {
   copySafeCodexSkillTree({
     srcDir: join(options.hostPath, ".codex", "skills"),
     destDir: join(options.clonePath, ".codex", "skills"),
+  });
+  copySafeCodexHookSupportTree({
+    srcDir: join(options.hostPath, ".codex", "hooks"),
+    destDir: join(options.clonePath, ".codex", "hooks"),
+    warnings,
   });
   copySafeCodexSkillTree({
     srcDir: join(options.hostPath, ".agents", "skills"),

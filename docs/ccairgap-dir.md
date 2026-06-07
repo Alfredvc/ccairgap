@@ -54,4 +54,4 @@ The command path must be valid inside the ccairgap container image, not on the h
 
 ## Codex boundary
 
-`.ccairgap/` remains a ccairgap-scoped Claude overlay. It does not define Codex guidance. Codex guidance is copied only from native Codex surfaces: project `AGENTS.md`, `AGENTS.override.md`, `.codex/config.toml`, `.codex/hooks.json`, `.codex/skills/`, `.agents/skills/`, and safe user-level `$CODEX_HOME` guidance.
+`.ccairgap/` remains a ccairgap-scoped Claude overlay. It does not define Codex guidance. Codex guidance is copied only from native Codex surfaces: project `AGENTS.md`, `AGENTS.override.md`, `.codex/config.toml`, `.codex/hooks.json`, `.codex/hooks/`, `.codex/skills/`, `.agents/skills/`, and safe user-level `$CODEX_HOME` guidance.

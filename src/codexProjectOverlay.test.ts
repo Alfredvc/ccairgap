@@ -88,13 +88,13 @@ describe("overlayProjectCodexConfig", () => {
     });
   });
 
-  it("copies .codex/skills and .agents/skills but ignores sibling .codex/rules and .codex/hooks dirs", () => {
+  it("copies .codex/skills, .codex/hooks support files, and .agents/skills but ignores sibling .codex/rules", () => {
     mkdirSync(join(host, ".codex", "skills", "demo"), { recursive: true });
     writeFileSync(join(host, ".codex", "skills", "demo", "SKILL.md"), "skill\n");
     mkdirSync(join(host, ".codex", "rules"), { recursive: true });
     writeFileSync(join(host, ".codex", "rules", "policy.star"), "deny\n");
     mkdirSync(join(host, ".codex", "hooks"), { recursive: true });
-    writeFileSync(join(host, ".codex", "hooks", "run.sh"), "echo no\n");
+    writeFileSync(join(host, ".codex", "hooks", "run.mjs"), "console.log('ok')\n");
     mkdirSync(join(host, ".agents", "skills", "demo"), { recursive: true });
     writeFileSync(join(host, ".agents", "skills", "demo", "README.md"), "agent skill\n");
 
@@ -106,8 +106,46 @@ describe("overlayProjectCodexConfig", () => {
     expect(readFileSync(join(clone, ".agents", "skills", "demo", "README.md"), "utf8")).toBe(
       "agent skill\n",
     );
+    expect(readFileSync(join(clone, ".codex", "hooks", "run.mjs"), "utf8")).toBe(
+      "console.log('ok')\n",
+    );
     expect(existsSync(join(clone, ".codex", "rules"))).toBe(false);
-    expect(existsSync(join(clone, ".codex", "hooks"))).toBe(false);
+  });
+
+  it("skips unsafe .codex/hooks support entries", () => {
+    mkdirSync(join(host, ".codex", "hooks", "nested"), { recursive: true });
+    writeFileSync(join(host, ".codex", "hooks", "safe.mjs"), "console.log('safe')\n");
+    writeFileSync(join(host, ".codex", "hooks", "nested", "safe.mjs"), "console.log('nested')\n");
+    writeFileSync(join(host, ".codex", "hooks", ".env"), "SECRET=1\n");
+    writeFileSync(join(host, ".codex", "hooks", "run.sh"), "echo go\n");
+    chmodSync(join(host, ".codex", "hooks", "run.sh"), 0o755);
+    symlinkSync("safe.mjs", join(host, ".codex", "hooks", "link.mjs"));
+
+    const result = overlayProjectCodexConfig({ hostPath: host, clonePath: clone });
+
+    expect(readFileSync(join(clone, ".codex", "hooks", "safe.mjs"), "utf8")).toBe(
+      "console.log('safe')\n",
+    );
+    expect(readFileSync(join(clone, ".codex", "hooks", "nested", "safe.mjs"), "utf8")).toBe(
+      "console.log('nested')\n",
+    );
+    expect(existsSync(join(clone, ".codex", "hooks", ".env"))).toBe(false);
+    expect(existsSync(join(clone, ".codex", "hooks", "run.sh"))).toBe(false);
+    expect(existsSync(join(clone, ".codex", "hooks", "link.mjs"))).toBe(false);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        {
+          code: "unsafe-codex-overlay-file",
+          message: "executable files are not copied",
+          source: join(host, ".codex", "hooks", "run.sh"),
+        },
+        {
+          code: "unsafe-codex-overlay-file",
+          message: "symlinks are not copied",
+          source: join(host, ".codex", "hooks", "link.mjs"),
+        },
+      ]),
+    );
   });
 
   it("drops dot-files but copies symlinks, executables, and arbitrary files", () => {
