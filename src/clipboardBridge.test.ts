@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,8 +7,29 @@ import {
   buildClipboardMounts,
   buildClipboardEnvVars,
   detectAndSetupClipboardBridge,
+  startHostWatcher,
+  MACOS_WATCHER_SCRIPT,
   type ClipboardMode,
 } from "./clipboardBridge.js";
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function countLines(path: string): number {
+  if (!existsSync(path)) return 0;
+  const text = readFileSync(path, "utf8").trim();
+  return text === "" ? 0 : text.split("\n").length;
+}
 
 describe("detectClipboardMode", () => {
   it("returns none on unsupported platforms", () => {
@@ -141,6 +162,139 @@ describe("buildClipboardEnvVars", () => {
       });
     });
   }
+});
+
+describe("MACOS_WATCHER_SCRIPT", () => {
+  it("checks the pasteboard change count before exporting PNG data", () => {
+    const changeCountIndex = MACOS_WATCHER_SCRIPT.indexOf("changeCount");
+    const pngExportIndex = MACOS_WATCHER_SCRIPT.indexOf("PNGf");
+
+    expect(changeCountIndex).toBeGreaterThanOrEqual(0);
+    expect(pngExportIndex).toBeGreaterThanOrEqual(0);
+    expect(changeCountIndex).toBeLessThan(pngExportIndex);
+  });
+});
+
+describe("startHostWatcher", () => {
+  let tmp: string;
+  let oldPath: string | undefined;
+  let oldFakePidPath: string | undefined;
+  let oldFakeExportLog: string | undefined;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "ccairgap-clip-watch-test-"));
+    oldPath = process.env.PATH;
+    oldFakePidPath = process.env.CCAIRGAP_FAKE_OSASCRIPT_PID;
+    oldFakeExportLog = process.env.CCAIRGAP_FAKE_EXPORT_LOG;
+  });
+
+  afterEach(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+
+    if (oldFakePidPath === undefined) delete process.env.CCAIRGAP_FAKE_OSASCRIPT_PID;
+    else process.env.CCAIRGAP_FAKE_OSASCRIPT_PID = oldFakePidPath;
+
+    if (oldFakeExportLog === undefined) delete process.env.CCAIRGAP_FAKE_EXPORT_LOG;
+    else process.env.CCAIRGAP_FAKE_EXPORT_LOG = oldFakeExportLog;
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("cleanup terminates an in-flight macOS osascript child", async () => {
+    const binDir = join(tmp, "bin");
+    const fakePidPath = join(tmp, "osascript.pid");
+    const fakeOsascript = join(binDir, "osascript");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      fakeOsascript,
+      `#!/bin/sh
+echo "$$" > "$CCAIRGAP_FAKE_OSASCRIPT_PID"
+trap 'exit 0' TERM
+while :; do sleep 1; done
+`,
+    );
+    chmodSync(fakeOsascript, 0o755);
+
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    process.env.CCAIRGAP_FAKE_OSASCRIPT_PID = fakePidPath;
+
+    let fakePid: number | undefined;
+    const started = await startHostWatcher("macos", tmp);
+    try {
+      expect(started).not.toBeNull();
+
+      for (let i = 0; i < 20 && !existsSync(fakePidPath); i++) {
+        await delay(25);
+      }
+      expect(existsSync(fakePidPath)).toBe(true);
+
+      fakePid = Number(readFileSync(fakePidPath, "utf8").trim());
+      expect(processIsAlive(fakePid)).toBe(true);
+
+      await started!.cleanup();
+
+      for (let i = 0; i < 20 && processIsAlive(fakePid); i++) {
+        await delay(25);
+      }
+      expect(processIsAlive(fakePid)).toBe(false);
+    } finally {
+      await started?.cleanup();
+      if (fakePid !== undefined && processIsAlive(fakePid)) {
+        try { process.kill(fakePid, "SIGKILL"); } catch { /* already dead */ }
+      }
+    }
+  });
+
+  it("does not export PNG again while the macOS pasteboard change count is unchanged", async () => {
+    const binDir = join(tmp, "bin");
+    const exportLog = join(tmp, "exports.log");
+    const fakeOsascript = join(binDir, "osascript");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      fakeOsascript,
+      `#!/bin/sh
+case "$*" in
+  *changeCount*)
+    echo 42
+    exit 0
+    ;;
+esac
+
+for arg in "$@"; do
+  case "$arg" in
+    *'POSIX file "'*)
+      out=\${arg#*POSIX file \\"}
+      out=\${out%%\\"*}
+      printf png > "$out"
+      echo export >> "$CCAIRGAP_FAKE_EXPORT_LOG"
+      exit 0
+      ;;
+  esac
+done
+exit 1
+`,
+    );
+    chmodSync(fakeOsascript, 0o755);
+
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    process.env.CCAIRGAP_FAKE_EXPORT_LOG = exportLog;
+
+    const started = await startHostWatcher("macos", tmp);
+    try {
+      expect(started).not.toBeNull();
+
+      for (let i = 0; i < 20 && countLines(exportLog) === 0; i++) {
+        await delay(25);
+      }
+      expect(countLines(exportLog)).toBe(1);
+
+      await delay(1200);
+      expect(countLines(exportLog)).toBe(1);
+    } finally {
+      await started?.cleanup();
+    }
+  });
 });
 
 describe("detectAndSetupClipboardBridge", () => {

@@ -111,12 +111,13 @@ export function hasCommand(cmd: string): boolean {
 }
 
 /**
- * macOS watcher: polls `osascript` (NSPasteboard via AppleScript) every ~1 s.
+ * macOS watcher: polls the cheap NSPasteboard changeCount every ~1 s and only
+ * asks AppleScript to materialize PNG bytes when the pasteboard changed.
  * osascript is a macOS built-in — no install required. Writes atomically
  * (tmp → rename); removes the bridge file when clipboard transitions away from
  * an image so the container-side shim's `-f` check doubles as a "has image"
- * signal. osascript exits non-zero when the clipboard holds no PNG, so the
- * `else` branch handles both "no image" and "osascript error" uniformly.
+ * signal. The shell wrapper tracks the active osascript child and terminates it
+ * on shutdown so a stuck pasteboard read cannot survive watcher cleanup.
  *
  * Invocation: `bash -c "$MACOS_WATCHER_SCRIPT" ccairgap-clipboard-watcher <bridge-path>`
  */
@@ -125,9 +126,46 @@ set -u
 BRIDGE="$1"
 BRIDGE_DIR="$(dirname "$BRIDGE")"
 mkdir -p "$BRIDGE_DIR"
+LAST_CHANGE_COUNT=""
+OSASCRIPT_PID=""
+
+cleanup_child() {
+    if [ -n "\${OSASCRIPT_PID:-}" ]; then
+        kill -TERM "$OSASCRIPT_PID" 2>/dev/null || true
+        wait "$OSASCRIPT_PID" 2>/dev/null || true
+    fi
+    exit 0
+}
+trap cleanup_child TERM INT HUP
+
+run_osascript() {
+    osascript "$@" &
+    OSASCRIPT_PID=$!
+    wait "$OSASCRIPT_PID"
+    status=$?
+    OSASCRIPT_PID=""
+    return "$status"
+}
+
 while :; do
+    COUNT_TMP="$(mktemp "\${BRIDGE}.count.XXXXXX")"
+    if run_osascript -l JavaScript -e 'ObjC.import("AppKit"); $.NSPasteboard.generalPasteboard.changeCount' > "$COUNT_TMP" 2>/dev/null; then
+        CHANGE_COUNT="$(tr -d '[:space:]' < "$COUNT_TMP")"
+    else
+        CHANGE_COUNT=""
+    fi
+    rm -f "$COUNT_TMP" 2>/dev/null || true
+
+    if [ -n "$CHANGE_COUNT" ] && [ "$CHANGE_COUNT" = "$LAST_CHANGE_COUNT" ]; then
+        sleep 1
+        continue
+    fi
+    if [ -n "$CHANGE_COUNT" ]; then
+        LAST_CHANGE_COUNT="$CHANGE_COUNT"
+    fi
+
     TMP="$(mktemp "\${BRIDGE}.tmp.XXXXXX")"
-    if osascript -e 'set png_data to (the clipboard as \u00ABclass PNGf\u00BB)' -e "set fp to open for access POSIX file \\"$TMP\\" with write permission" -e 'write png_data to fp' -e 'close access fp' 2>/dev/null && [ -s "$TMP" ]; then
+    if run_osascript -e 'set png_data to (the clipboard as \u00ABclass PNGf\u00BB)' -e "set fp to open for access POSIX file \\"$TMP\\" with write permission" -e 'write png_data to fp' -e 'close access fp' 2>/dev/null && [ -s "$TMP" ]; then
         mv "$TMP" "$BRIDGE"
     else
         rm -f "$TMP" "$BRIDGE" 2>/dev/null || true
