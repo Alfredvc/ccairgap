@@ -499,6 +499,13 @@ async function main() {
     if (first !== undefined) program.error(`unknown command '${first}'`);
   });
 
+  // Commander parses root options on both sides of a subcommand name, so a
+  // subcommand option that shares a name with a root option (`--agent`,
+  // `--config`, `--profile`, `--repo`, `--extra-repo`, `--bare`,
+  // `--no-user-config`, `--docker-build-arg`) is always captured by the root.
+  // Subcommand actions therefore read `command.optsWithGlobals()`.
+  // `.enablePositionalOptions()` is not an alternative: optsWithGlobals lets
+  // root defaults overwrite values `exec` parsed locally (e.g. `exec --ro x`).
   addLaunchEnvironmentOptions(program).action(async (_opts, cmd) => {
     await runLaunchCommand(cmd, cliSelectedAgentArgs);
   });
@@ -545,7 +552,8 @@ async function main() {
         "Defaults to the session manifest agent; exiting the attached agent does not stop the container.",
     )
     .option("--agent <claude|codex>", "agent to attach. Defaults to the session manifest agent.")
-    .action(async (id: string, opts: { agent?: string }) => {
+    .action(async (id: string, _localOpts: unknown, command: Command) => {
+      const opts = command.optsWithGlobals() as { agent?: string };
       await attach(id, {
         agent: opts.agent !== undefined ? parseAgentKind(opts.agent, "attach --agent") : undefined,
         selectedAgentArgs: cliSelectedAgentArgs,
@@ -572,7 +580,8 @@ async function main() {
       "--no-user-config",
       "skip the user-wide config layer (same semantics as launch)",
     )
-    .action(async (opts, command: Command) => {
+    .action(async (_localOpts, command: Command) => {
+      const opts = command.optsWithGlobals();
       if (opts.config && opts.profile) {
         console.error("ccairgap: --config and --profile are mutually exclusive");
         process.exit(1);
@@ -583,11 +592,7 @@ async function main() {
         bare: Boolean(opts.bare),
         userConfigEnabled: opts.userConfig !== false,
       });
-      const cliBuildArgs =
-        {
-          ...(opts.dockerBuildArg ?? {}),
-          ...((command.parent?.opts().dockerBuildArg as Record<string, string> | undefined) ?? {}),
-        };
+      const cliBuildArgs = (opts.dockerBuildArg as Record<string, string> | undefined) ?? {};
       await doctor({
         agent: resolveSubcommandAgent({
           cliAgent: opts.agent !== undefined ? parseAgentKind(opts.agent, "doctor --agent") : undefined,
@@ -627,7 +632,8 @@ async function main() {
         "CLAUDE.md/settings.json/mcp.json/skills/). Use under scripted/CI invocations " +
         "that want a hermetic launch without going full --bare.",
     )
-    .action((opts) => {
+    .action((_localOpts, command: Command) => {
+      const opts = command.optsWithGlobals();
       if (opts.config && opts.profile) {
         console.error("ccairgap: --config and --profile are mutually exclusive");
         process.exit(1);
@@ -728,7 +734,8 @@ async function main() {
       "overwrite existing Dockerfile / config.yaml (destructive; no merge)",
     )
     .option("--user", "scaffold user-wide config at ~/.config/ccairgap/ instead of project dir")
-    .action((opts) => {
+    .action((_localOpts, command: Command) => {
+      const opts = command.optsWithGlobals();
       try {
         initCmd({
           configPath: opts.config,

@@ -284,6 +284,67 @@ describe("subcommands e2e", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // subcommand options that share a name with a root option
+  // ---------------------------------------------------------------------------
+
+  it("doctor honors --agent before or after the subcommand name", async () => {
+    await seedClaudeHome(home);
+    for (const argv of [["doctor", "--agent", "codex"], ["--agent", "codex", "doctor"]]) {
+      const result = await runCli(argv, { env: { HOME: home, CCAIRGAP_HOME: ccairgapHome } });
+      expect(result.stdout + result.stderr).toContain("[OK] selected agent: codex");
+    }
+  });
+
+  it("doctor honors --config", async () => {
+    await seedClaudeHome(home);
+    const cfg = path.join(home, "codex.yaml");
+    writeFileSync(cfg, "agent: codex\n");
+    const result = await runCli(["doctor", "--config", cfg], {
+      env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+    });
+    expect(result.stdout + result.stderr).toContain("[OK] selected agent: codex");
+  });
+
+  it("inspect honors --repo when cwd is a different directory", async () => {
+    await seedClaudeHome(home, { settings: {} });
+    const repoPath = await seedGitRepo(home, "inspect-repo", {
+      files: {
+        ".claude/settings.json": JSON.stringify({
+          hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "echo from-repo" }] }] },
+        }),
+      },
+    });
+    const elsewhere = path.join(home, "elsewhere");
+    mkdirSync(elsewhere, { recursive: true });
+
+    const result = await runCli(["inspect", "--repo", repoPath], {
+      env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+      cwd: elsewhere,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { hooks: { source: string; command: string }[] };
+    expect(parsed.hooks).toContainEqual(
+      expect.objectContaining({ source: "project", command: "echo from-repo" }),
+    );
+  });
+
+  it("init honors --config", async () => {
+    const repoPath = await seedGitRepo(home, "init-config-repo");
+    await seedClaudeHome(home);
+    const target = path.join(repoPath, "custom", "config.yaml");
+
+    const result = await runCli(["init", "--config", target], {
+      env: { HOME: home, CCAIRGAP_HOME: ccairgapHome },
+      cwd: repoPath,
+    });
+
+    expect(result.exitCode).toBe(0);
+    await assertFileExists(target);
+    await assertFileNotExists(path.join(repoPath, ".ccairgap", "config.yaml"));
+  });
+
+  // ---------------------------------------------------------------------------
   // discard
   // ---------------------------------------------------------------------------
 
