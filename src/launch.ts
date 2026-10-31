@@ -907,11 +907,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     enabled: opts.clipboard && opts.print === undefined,
   });
 
-  // Absolute-symlink overlay: walk host ~/.claude/, materialize each absolute
-  // symlink's target into $SESSION/claude-symlink-overlay/<rel>, and emit one
+  // Symlink overlay: walk host ~/.claude/, materialize the target of each
+  // symlink that points outside ~/.claude/ (absolute, or relative with `..`
+  // past the root) into $SESSION/claude-symlink-overlay/<rel>, and emit one
   // RO bind mount per entry at /host-claude/<rel>. Required because the
-  // entrypoint's `rsync -L` runs inside the container — absolute symlink
-  // targets resolve against the container's namespace, where host paths like
+  // entrypoint's `rsync -L` runs inside the container — those targets resolve
+  // against the container's namespace, where host paths like
   // `/Users/alfredvc/...` don't exist, and the rsync would skip them with
   // "symlink has no referent" warnings. Doing the resolution host-side gives
   // the container real files in place of the broken symlinks.

@@ -11,10 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildClaudeSymlinkOverlay,
-  scanAbsoluteSymlinks,
+  scanEscapingSymlinks,
 } from "./claudeSymlinkOverlay.js";
 
-describe("scanAbsoluteSymlinks", () => {
+describe("scanEscapingSymlinks", () => {
   let root: string;
   let claudeDir: string;
   let externalDir: string;
@@ -33,18 +33,18 @@ describe("scanAbsoluteSymlinks", () => {
 
   it("returns empty array when ~/.claude/ has no symlinks", () => {
     writeFileSync(join(claudeDir, "settings.json"), "{}");
-    expect(scanAbsoluteSymlinks(claudeDir)).toEqual([]);
+    expect(scanEscapingSymlinks(claudeDir)).toEqual([]);
   });
 
   it("returns empty array when ~/.claude/ does not exist", () => {
-    expect(scanAbsoluteSymlinks(join(root, "nope"))).toEqual([]);
+    expect(scanEscapingSymlinks(join(root, "nope"))).toEqual([]);
   });
 
   it("finds absolute symlinks at top level", () => {
     const target = join(externalDir, "skill");
     mkdirSync(target);
     symlinkSync(target, join(claudeDir, "skills"));
-    const out = scanAbsoluteSymlinks(claudeDir);
+    const out = scanEscapingSymlinks(claudeDir);
     expect(out).toHaveLength(1);
     expect(out[0]?.relPath).toBe("skills");
     expect(out[0]?.rawTarget).toBe(target);
@@ -55,15 +55,32 @@ describe("scanAbsoluteSymlinks", () => {
     const target = join(externalDir, "ccairgap-configure");
     mkdirSync(target);
     symlinkSync(target, join(claudeDir, "skills", "ccairgap-configure"));
-    const out = scanAbsoluteSymlinks(claudeDir);
+    const out = scanEscapingSymlinks(claudeDir);
     expect(out).toHaveLength(1);
     expect(out[0]?.relPath).toBe("skills/ccairgap-configure");
   });
 
-  it("skips relative symlinks", () => {
+  it("skips relative symlinks that stay inside ~/.claude/", () => {
     mkdirSync(join(claudeDir, "real"));
     symlinkSync("real", join(claudeDir, "alias"));
-    expect(scanAbsoluteSymlinks(claudeDir)).toEqual([]);
+    mkdirSync(join(claudeDir, "skills"));
+    symlinkSync("../real", join(claudeDir, "skills", "inside"));
+    expect(scanEscapingSymlinks(claudeDir)).toEqual([]);
+  });
+
+  it("finds relative symlinks whose target leaves ~/.claude/", () => {
+    mkdirSync(join(claudeDir, "skills"));
+    symlinkSync("../../.agents/skills/stop-slop", join(claudeDir, "skills", "stop-slop"));
+    symlinkSync("../outside", join(claudeDir, "top"));
+    // Re-enters ~/.claude/ by its host name. The container mounts the root at
+    // /host-claude, so this target does not resolve there either.
+    symlinkSync("../.claude/real", join(claudeDir, "reenter"));
+    const out = scanEscapingSymlinks(claudeDir).sort((a, b) => a.relPath.localeCompare(b.relPath));
+    expect(out).toEqual([
+      { relPath: "reenter", rawTarget: "../.claude/real" },
+      { relPath: "skills/stop-slop", rawTarget: "../../.agents/skills/stop-slop" },
+      { relPath: "top", rawTarget: "../outside" },
+    ]);
   });
 
   it("does not descend into excluded top-level dirs (projects/, sessions/, plugins/cache)", () => {
@@ -75,7 +92,7 @@ describe("scanAbsoluteSymlinks", () => {
     symlinkSync(target, join(claudeDir, "projects", "x"));
     symlinkSync(target, join(claudeDir, "sessions", "x"));
     symlinkSync(target, join(claudeDir, "plugins", "cache", "x"));
-    expect(scanAbsoluteSymlinks(claudeDir)).toEqual([]);
+    expect(scanEscapingSymlinks(claudeDir)).toEqual([]);
   });
 
   it("does descend into plugins/ but skips plugins/cache/", () => {
@@ -85,7 +102,7 @@ describe("scanAbsoluteSymlinks", () => {
     mkdirSync(join(claudeDir, "plugins", "cache"), { recursive: true });
     symlinkSync(target, join(claudeDir, "plugins", "marketplaces", "x"));
     symlinkSync(target, join(claudeDir, "plugins", "cache", "x"));
-    const out = scanAbsoluteSymlinks(claudeDir);
+    const out = scanEscapingSymlinks(claudeDir);
     expect(out.map((e) => e.relPath)).toEqual(["plugins/marketplaces/x"]);
   });
 
@@ -98,7 +115,7 @@ describe("scanAbsoluteSymlinks", () => {
     symlinkSync(target, join(claudeDir, "agents", "skill", ".git", "x"));
     symlinkSync(target, join(claudeDir, "agents", "skill", ".venv", "x"));
     symlinkSync(target, join(claudeDir, "agents", "skill", "venv", "x"));
-    expect(scanAbsoluteSymlinks(claudeDir)).toEqual([]);
+    expect(scanEscapingSymlinks(claudeDir)).toEqual([]);
   });
 });
 
@@ -121,7 +138,7 @@ describe("buildClaudeSymlinkOverlay", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("returns no mounts when ~/.claude/ has no absolute symlinks", async () => {
+  it("returns no mounts when ~/.claude/ has no symlinks that leave it", async () => {
     const mounts = await buildClaudeSymlinkOverlay(claudeDir, stageDir);
     expect(mounts).toEqual([]);
   });
@@ -141,6 +158,18 @@ describe("buildClaudeSymlinkOverlay", () => {
     // Materialized content is real, not a symlink
     const staged = readFileSync(join(stageDir, "skills", "SKILL.md"), "utf8");
     expect(staged).toBe("hello\n");
+  });
+
+  it("materializes a relative directory symlink whose target leaves ~/.claude/", async () => {
+    const target = join(externalDir, "skill");
+    mkdirSync(target);
+    writeFileSync(join(target, "SKILL.md"), "rel\n");
+    mkdirSync(join(claudeDir, "skills"));
+    symlinkSync("../../ext/skill", join(claudeDir, "skills", "rel"));
+
+    const mounts = await buildClaudeSymlinkOverlay(claudeDir, stageDir);
+    expect(mounts.map((m) => m.dst)).toEqual(["/host-claude/skills/rel"]);
+    expect(readFileSync(join(stageDir, "skills", "rel", "SKILL.md"), "utf8")).toBe("rel\n");
   });
 
   it("materializes a file symlink", async () => {

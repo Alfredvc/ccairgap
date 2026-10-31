@@ -6,7 +6,7 @@ import {
   readlinkSync,
   realpathSync,
 } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execa } from "execa";
 import type { Mount } from "./mounts.js";
 
@@ -39,25 +39,41 @@ function isExcludedRelPath(relPath: string): boolean {
   return false;
 }
 
-export interface AbsoluteSymlinkEntry {
+export interface EscapingSymlinkEntry {
   /** Path relative to `~/.claude/` (e.g. `skills/ccairgap-configure`). */
   relPath: string;
-  /** Raw `readlink` text — always absolute. */
+  /** Raw `readlink` text — absolute, or relative with a target outside `~/.claude/`. */
   rawTarget: string;
 }
 
 /**
- * Walk the host `~/.claude/` tree and return every symlink whose `readlink`
- * text is an absolute path. Relative symlinks are skipped — they resolve
- * correctly inside the container (rsync `-L` handles them path-relative to
- * the link's location, which matches between host and container).
+ * True iff `target` (raw `readlink` text of the link at `relPath`) points
+ * outside `~/.claude/`. Absolute targets always count: the container sees
+ * `~/.claude/` only at `/host-claude`. A relative target counts when its
+ * lexical resolution from the link's directory leaves the root, e.g.
+ * `skills/x → ../../.agents/skills/x`. Inside the container that path
+ * resolves above `/host-claude` and does not exist.
+ */
+function targetEscapesRoot(relPath: string, target: string): boolean {
+  if (isAbsolute(target)) return true;
+  const root = "/r";
+  const rel = relative(root, resolve(root, dirname(relPath), target));
+  return rel === ".." || rel.startsWith("../") || isAbsolute(rel);
+}
+
+/**
+ * Walk the host `~/.claude/` tree and return every symlink whose target is
+ * outside `~/.claude/` (see `targetEscapesRoot`). Relative symlinks that stay
+ * inside `~/.claude/` are skipped — they resolve correctly inside the
+ * container (rsync `-L` resolves them from the link's location, and the tree
+ * under `/host-claude` matches the host tree).
  *
  * Excluded subtrees match the entrypoint rsync excludes plus `.git/`. This
  * keeps the overlay minimal and avoids materializing huge dirs (build output,
  * full repos symlinked under `~/.claude/agents/`, etc.).
  */
-export function scanAbsoluteSymlinks(hostClaudeDir: string): AbsoluteSymlinkEntry[] {
-  const out: AbsoluteSymlinkEntry[] = [];
+export function scanEscapingSymlinks(hostClaudeDir: string): EscapingSymlinkEntry[] {
+  const out: EscapingSymlinkEntry[] = [];
   if (!existsSync(hostClaudeDir)) return out;
 
   const walk = (relPath: string): void => {
@@ -78,7 +94,7 @@ export function scanAbsoluteSymlinks(hostClaudeDir: string): AbsoluteSymlinkEntr
         } catch {
           continue;
         }
-        if (isAbsolute(target)) {
+        if (targetEscapesRoot(childRel, target)) {
           out.push({ relPath: childRel, rawTarget: target });
         }
       } else if (d.isDirectory()) {
@@ -108,9 +124,9 @@ export interface MaterializedSymlink {
  * entrypoint uses, plus `.git`, so we don't drag node_modules / venv / git
  * history into the overlay. File targets use `cp -L`.
  */
-export async function materializeAbsoluteSymlinks(
+export async function materializeEscapingSymlinks(
   hostClaudeDir: string,
-  symlinks: AbsoluteSymlinkEntry[],
+  symlinks: EscapingSymlinkEntry[],
   stageDir: string,
 ): Promise<MaterializedSymlink[]> {
   const out: MaterializedSymlink[] = [];
@@ -176,15 +192,15 @@ export function symlinkOverlayMounts(materialized: MaterializedSymlink[]): Mount
 
 /**
  * Convenience wrapper: scan, materialize, return mounts. Returns an empty
- * list when `~/.claude/` has no absolute symlinks (the common case).
+ * list when `~/.claude/` has no symlinks that point outside it (the common case).
  */
 export async function buildClaudeSymlinkOverlay(
   hostClaudeDir: string,
   stageDir: string,
 ): Promise<Mount[]> {
-  const symlinks = scanAbsoluteSymlinks(hostClaudeDir);
+  const symlinks = scanEscapingSymlinks(hostClaudeDir);
   if (symlinks.length === 0) return [];
   mkdirSync(stageDir, { recursive: true });
-  const materialized = await materializeAbsoluteSymlinks(hostClaudeDir, symlinks, stageDir);
+  const materialized = await materializeEscapingSymlinks(hostClaudeDir, symlinks, stageDir);
   return symlinkOverlayMounts(materialized);
 }
