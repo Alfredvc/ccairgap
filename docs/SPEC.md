@@ -411,12 +411,10 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/creds/` (always) | `/host-claude-creds-dir` | rw | Directory mount. CLI materializes `.credentials.json` (mode 0600, stripped of `claudeAiOauth.refreshToken`) on every launch and atomically rewrites it on each runtime refresh tick. Entrypoint `ln -sf`s `~/.claude/.credentials.json` to the mounted file so Claude Code's mtime-cache invalidation picks up host-driven rewrites. RW so atomic `rename(2)` succeeds; container writes to anything else in this dir are discarded on exit. See §"Authentication flow". |
 | `$SESSION/auth-warnings/` (always) | `/run/ccairgap-auth-warnings` | ro | Directory the host runtime auth-refresh watcher writes warning text into (atomic tmp + rename). The entrypoint's UserPromptSubmit hook reads `current.txt` (when present) and emits it as the top-level `systemMessage` field so failure surfaces inside the running TUI. |
 | `$SESSION/hook-policy/user-settings.json` | `/host-claude-patched-settings.json` | ro | Single-file mount. Host-built copy of `settings.json` with `hooks` filtered per `--hook-enable` (empty list → `hooks: {}`) and `disableAllHooks: false` forced. Entrypoint overlays it on the rsync'd `~/.claude/settings.json` before the env-merge jq step. See §"Hook policy". |
-| `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled cache-backed plugin that ships a `hooks/hooks.json`. Always present (filtered = `{}` for the empty enable list). |
-| `$SESSION/hook-policy/dir-plugins/<market>/<plugin>/hooks.json` | `<pluginDir>/hooks/hooks.json` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin that ships `hooks/hooks.json`. Always present. |
 | `$SESSION/hook-policy/projects/<repo>/settings.json` (and `.local`) | `<original-host-path>/.claude/settings.json` (and `.local`) | ro | Nested single-file overlay on top of the session-clone's `.claude/` dir. One mount per repo `.claude/settings.json[.local]` that declares hooks. Always present. |
 | `$SESSION/mcp-policy/claude-json.json` | `/host-claude-patched-json` | ro | Single-file mount. Host-built copy of `~/.claude.json` with user-scope and every user-project-scope `mcpServers` filtered per `--mcp-enable` (empty list → `mcpServers: {}` at every scope). Entrypoint overlays it in place of `~/.claude.json` before the jq onboarding patch. Always present. See §"MCP policy". |
-| `$SESSION/mcp-policy/plugins/<market>/<plugin>/<ver>/{.mcp.json,plugin.json}` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/{.mcp.json,plugin.json}` | ro | Nested single-file overlay on top of the RO plugin cache. One mount per enabled cache-backed plugin file that declares `mcpServers`. Always present when source exists. |
-| `$SESSION/mcp-policy/dir-plugins/<market>/<plugin>/{.mcp.json,plugin.json}` | `<pluginDir>/{.mcp.json,plugin.json}` | ro | Nested single-file overlay on top of the directory-sourced marketplace RO mount. One mount per enabled directory-sourced plugin file that declares `mcpServers`. Always present when source exists. |
+| `$SESSION/plugin-policy/cache/<market>/<plugin>/<ver>/<rel>` | `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/<rel>` **and** `<host ~/.claude>/plugins/cache/<market>/<plugin>/<ver>/<rel>` | ro | Nested single-file overlays for each enabled cache-backed plugin. `<ver>` is the `installPath` recorded in `~/.claude/plugins/installed_plugins.json`. `<rel>` is each hook/MCP-bearing file: `hooks/hooks.json`, `.mcp.json`, `.claude-plugin/plugin.json`, and each `.json` file the manifest names under `hooks` / `mcpServers`. Claude Code reads plugins at the host-absolute `installPath` (through the host-abs plugins RO mount), so the overlay must cover that path. The second dst collapses into the first when host `~/.claude` equals container `$HOME/.claude`. See §"Plugin policy". |
+| `$SESSION/plugin-policy/directory/<market>/<plugin>/<rel>` | `<pluginDir>/<rel>` | ro | Nested single-file overlays for each enabled directory-sourced plugin, at the host path (the marketplace source tree is RO-mounted 1:1). Same `<rel>` set as the cache-backed row. See §"Plugin policy". |
 | `$SESSION/mcp-policy/projects/<repo>/.mcp.json` | `<original-host-path>/.mcp.json` | ro | Nested single-file overlay on top of the session clone. One mount per repo whose `.mcp.json` exists. Filtered by glob **and** host approval state — servers approved on host via `enabledMcpjsonServers` / `enableAllProjectMcpServers` and matching the glob survive; everything else is stripped. |
 | `~/.claude/plugins/cache/` (resolved) | `/home/claude/.claude/plugins/cache/` | ro | RO-mount stays even after entrypoint copy so this big dir is not duplicated into container FS. |
 | `~/.claude/plugins/` (resolved) | `<host-abs-path>/.claude/plugins/` | ro | Second RO mount of plugins tree at the original host absolute path. `known_marketplaces.json` (`installLocation`) and `installed_plugins.json` (`installPath`) store absolute host paths; without a mount at the real host path, Claude Code startup fails with "Plugin X not found in marketplace Y" for `github`/`git`/`npm`/`url`-sourced marketplaces. Skipped when host `~/.claude` coincides with container `$HOME/.claude` (no new path). |
@@ -981,7 +979,7 @@ If a future Claude Code flag needs to join the denylist (e.g. a new host-path fl
 
 Claude Code hooks run arbitrary host commands in response to tool calls and session events (`PreToolUse`, `PostToolUse`, `SessionStart`, `Notification`, `UserPromptSubmit`, `Stop`, `PermissionRequest`). Host-side hook configs routinely reference binaries (`afplay`, project-local `python3` scripts, user-installed CLIs) that are not present in the sandboxed container; left unfiltered, they fail on every tool call and break the session.
 
-**Default: all hooks disabled, statusLine preserved.** The CLI sets `disableAllHooks: false` and overlays an empty `hooks: {}` field at every hook-bearing source (user settings, every enabled plugin's `hooks.json`, project settings). No hook command is executed. `statusLine` survives — Claude Code's `disableAllHooks: true` flag would also kill the custom status line, so this default explicitly avoids it. Trade-off: any future hook source ccairgap doesn't enumerate would slip through; keep `enumerateHooks` and `applyHookPolicy` in lockstep.
+**Default: all hooks disabled, statusLine preserved.** The CLI sets `disableAllHooks: false` and overlays an empty `hooks: {}` field at every hook-bearing source (user settings, every enabled plugin's hook files and manifest, project settings). No hook command is executed. `statusLine` survives — Claude Code's `disableAllHooks: true` flag would also kill the custom status line, so this default explicitly avoids it. Trade-off: any future hook source ccairgap doesn't enumerate would slip through; keep `enumerateHooks`, `applyHookPolicy`, and `applyPluginPolicy` in lockstep.
 
 **Opt-in: `--hook-enable <glob>` (repeatable) or `hooks.enable: [<glob>, …]` in config.** Each glob is matched against the raw `command` string of each hook entry. Wildcard is `*` (anchored full match). Hooks whose command matches any glob are kept; everything else is stripped. Glob semantics are deliberately thin — users see the exact `command` strings in their JSON, so a substring-with-`*` match is sufficient to describe intent.
 
@@ -990,18 +988,17 @@ Claude Code hooks run arbitrary host commands in response to tool calls and sess
 Claude Code has **no native per-hook disable**; the only global switches are `disableAllHooks: true` (suppresses every hook **and** the custom `statusLine`) and `enabledPlugins[<key>] = false` (disables an entire plugin, which also loses its skills/commands/agents — too coarse for per-hook opt-in). The `disableAllHooks` flag is unusable as ccairgap's default because it kills `statusLine`, so instead the CLI rewrites hook-bearing JSON host-side at every source and overlays the patched copies in the container via nested single-file bind mounts. The same overlay path runs whether the enable list is empty (filtered = `{}`, neutralizing every hook) or non-empty (filtered down to surviving entries).
 
 - **User settings:** host `~/.claude/settings.json` is read, its `hooks` field is filtered, and `disableAllHooks: false` is forced (overrides any host-level setting and keeps `statusLine` running). The patched file is written to `$SESSION/hook-policy/user-settings.json` and mounted RO at `/host-claude-patched-settings.json`. The entrypoint `cp`s it over the rsync'd `settings.json` before the env-merge step.
-- **Plugin hooks (cache-backed):** for each `enabledPlugins[<plugin>@<market>] === true` whose cache dir has a `hooks/hooks.json`, the `hooks` field is filtered, the patched file written to `$SESSION/hook-policy/plugins/<market>/<plugin>/<ver>/hooks.json`, and mounted RO over `/home/claude/.claude/plugins/cache/<market>/<plugin>/<ver>/hooks/hooks.json`. The outer plugin-cache RO mount is declared first; the inner file mount lands later and overlays the parent. Always runs.
-- **Plugin hooks (directory-sourced):** marketplaces with `source.source === "directory"` are loaded by Claude Code from the marketplace source tree, not from the cache. Each such marketplace's `.claude-plugin/marketplace.json` is parsed; for every `plugins[]` entry whose `<plugin>@<market>` is enabled, `<pluginDir>/hooks/hooks.json` is filtered, written to `$SESSION/hook-policy/dir-plugins/<market>/<plugin>/hooks.json`, and mounted RO over the host path `<pluginDir>/hooks/hooks.json` (same path inside the container, since `discoverLocalMarketplaces` RO-mounts the source tree 1:1). Without this, hooks in directory-sourced plugins bypass the cache overlay and fire unfiltered. Always runs.
+- **Plugin hooks:** filtered by `applyPluginPolicy`. See §"Plugin policy".
 - **Project settings:** for each repo (`--repo` + every `--extra-repo`), both `.claude/settings.json` and `.claude/settings.local.json` in the session clone are read, filtered, and overlaid via a single-file bind mount at the repo's container path. The session clone on disk is not modified — the overlay leaves `git status` clean. Always runs.
 
-Host files are never mutated; all patched copies live under `$SESSION/hook-policy/` and die with the session dir.
+Host files are never mutated; all patched copies live under `$SESSION/hook-policy/` and `$SESSION/plugin-policy/` and die with the session dir.
 
 ### Scope and limitations
 
 - **Identification is by `command` string alone.** No type/matcher/event-based targeting. Users who want to enable "all `python3` hooks but only in PreToolUse" should either encode intent in the command (common) or accept that `python3 *` keeps them all.
 - **No probing.** The CLI does not introspect the container image to decide which commands would work. Enabling a hook whose command is missing still fails at hook invocation; users who extend the Dockerfile are trusted to match their enable list to their image.
 - **Matcher and event structure is preserved.** Only inner hook entries are dropped; matcher groups and event arrays that become empty are then pruned to avoid `hooks: { PreToolUse: [] }` fragments.
-- **MCP hook sources** are not a distinct class in Claude Code's config — hooks live in user settings, project settings, or plugin `hooks.json`. Any MCP that registers hooks does so through one of those surfaces, all of which are covered.
+- **MCP hook sources** are not a distinct class in Claude Code's config — hooks live in user settings, project settings, or plugin hook files / manifests. Any MCP that registers hooks does so through one of those surfaces, all of which are covered.
 - **`statusLine` is not filtered.** The user-settings spread preserves it verbatim; the script runs on every refresh tick if its binary deps exist in the image. Users who don't want the host statusline running inside the sandbox should remove `statusLine` from their host settings (or unset it via a project-level `~/.claude/settings.json` overlay) — `--hook-enable` does not touch it.
 
 ### CLI surface
@@ -1021,7 +1018,7 @@ Host files are never mutated; all patched copies live under `$SESSION/hook-polic
 
 Claude Code MCP (Model Context Protocol) servers are external processes Claude Code starts and speaks to via stdio/SSE/HTTP. Host configs routinely declare servers that the container can't start cleanly — binaries missing from the image, env vars / credentials that aren't passed through, host-only transports. Left unfiltered, each broken server prints errors on startup; more importantly, running a server the user didn't intend in the sandbox is a silent capability expansion.
 
-**Default: all MCP servers disabled.** The CLI overlays `mcpServers: {}` at every MCP-bearing source (user `~/.claude.json` top-level, user-project `~/.claude.json` `projects[*].mcpServers`, project `<repo>/.mcp.json`, enabled plugin `.mcp.json` / `plugin.json#mcpServers`). No server starts.
+**Default: all MCP servers disabled.** The CLI overlays `mcpServers: {}` at every MCP-bearing source (user `~/.claude.json` top-level, user-project `~/.claude.json` `projects[*].mcpServers`, project `<repo>/.mcp.json`, enabled plugin `.mcp.json`, `.claude-plugin/plugin.json` `mcpServers`, and each `.json` file that manifest names). No server starts.
 
 **Opt-in: `--mcp-enable <glob>` (repeatable) or `mcp.enable: [<glob>, …]` in config.** Each glob is matched against the MCP server **name** (the key under `mcpServers`). Wildcard is `*` (anchored full match). Names matching any glob are kept; everything else is stripped. Project-scope servers (`<repo>/.mcp.json`) are additionally gated by host approval (see below).
 
@@ -1042,11 +1039,10 @@ User-scope (`~/.claude.json` top-level), user-project scope (`~/.claude.json` `p
 Same overlay pattern as §"Hook policy":
 
 - **`~/.claude.json` (user + user-project scope):** host file is read, `mcpServers` (top-level) and every `projects[*].mcpServers` are filtered, the patched copy is written to `$SESSION/mcp-policy/claude-json.json` and mounted RO at `/host-claude-patched-json`. The entrypoint `cp`s it over `~/.claude.json` before the jq onboarding patch. Always produced.
-- **Plugin `.mcp.json` / `plugin.json` (cache-backed):** for each `enabledPlugins[<plugin>@<market>] === true`, each file that exists under `~/.claude/plugins/cache/<market>/<plugin>/<ver>/` is filtered, written to `$SESSION/mcp-policy/plugins/<market>/<plugin>/<ver>/<fname>`, and mounted RO over the same path inside the container's plugin cache.
-- **Plugin `.mcp.json` / `plugin.json` (directory-sourced):** marketplaces with `source.source === "directory"` are loaded from the marketplace source tree (RO-mounted 1:1 by `discoverLocalMarketplaces`). For each enabled plugin the CLI filters `<pluginDir>/.mcp.json` and `<pluginDir>/plugin.json`, writes to `$SESSION/mcp-policy/dir-plugins/<market>/<plugin>/<fname>`, and mounts RO over the host path.
+- **Plugin MCP servers:** filtered by `applyPluginPolicy`. See §"Plugin policy".
 - **Project `<repo>/.mcp.json`:** for each repo (`--repo` + every `--extra-repo`), if the session clone has `.mcp.json` it is filtered by glob AND approval state, written to `$SESSION/mcp-policy/projects/<repo>/.mcp.json`, and mounted RO at the repo's container path. Approval is derived from the host paths (user settings, `<repo>/.claude/settings.json[.local]`, `~/.claude.json` `projects[<abs>]`) — same scopes as `enumerateMcpServers`, so what `ccairgap inspect` shows as `approved` is exactly what survives the filter.
 
-Host files are never mutated; all patched copies live under `$SESSION/mcp-policy/` and die with the session dir.
+Host files are never mutated; all patched copies live under `$SESSION/mcp-policy/` and `$SESSION/plugin-policy/` and die with the session dir.
 
 ### Scope and limitations
 
@@ -1062,6 +1058,33 @@ Host files are never mutated; all patched copies live under `$SESSION/mcp-policy
 - Config file key: `mcp.enable: [<glob>, …]` (nested map; kebab and camel both accepted at the top level, but `enable` is the only valid sub-key).
 - Merge: CLI values append to config values (same semantics as `hooks.enable` / `--ro` / `--extra-repo`).
 - Introspection: `ccairgap inspect` prints every server name and source; see §"Hook policy" CLI surface for the full shape.
+
+## Plugin policy
+
+Plugins carry hook and MCP config in several files. `applyPluginPolicy` (`src/pluginPolicy.ts`) filters all of them in one pass, with the `--hook-enable` globs for hooks and the `--mcp-enable` globs for MCP servers. One function owns every plugin file because one file can carry both kinds of config, and two overlays on one path would collide.
+
+**Plugin roots.** `listEnabledPluginRoots` (`src/pluginRoots.ts`) returns one root per enabled plugin (`enabledPlugins[<plugin>@<market>] === true` in user `settings.json`):
+
+- **Cache-backed:** each `installPath` in `~/.claude/plugins/installed_plugins.json` for that key, when the path resolves inside `~/.claude/plugins/cache/`. Claude Code loads only the recorded version. Older version dirs stay in the cache with an `.orphaned_at` marker until Claude Code removes them, and ccairgap ignores them. When `installed_plugins.json` is missing or unreadable, every version dir of the plugin counts as a root, so the filter fails closed.
+- **Directory-sourced:** marketplaces with `source.source === "directory"` in `extraKnownMarketplaces`. Each `plugins[]` entry of the marketplace's `.claude-plugin/marketplace.json` gives one root at its host source dir.
+
+**Files filtered per root.**
+
+| File | Filter |
+|------|--------|
+| `hooks/hooks.json` | `hooks` filtered by hook globs. Other keys kept. |
+| `.mcp.json` | `mcpServers` filtered by MCP globs, or the bare server map when the file has no `mcpServers` key. |
+| `.claude-plugin/plugin.json` | Inline `hooks` / `mcpServers` objects filtered. References to `.json` files inside the plugin root are kept, and each named file is filtered like the default file of the same kind. `.mcpb` / `.dxt` bundle entries (paths or URLs) are removed, because their server names cannot be read host-side. Entries that Claude Code would reject (absolute paths, `..` escapes, symlinks that leave the root, missing files) are removed. A scalar field with no surviving entry is deleted. An array field keeps its array shape. Other manifest keys are kept. |
+
+Each patched copy is written to `$SESSION/plugin-policy/<kind>/<market>/<plugin>[/<ver>]/<rel>` and mounted RO at every container path of the root (see §"Container mount manifest"). For cache-backed roots, those paths are the container-`$HOME` cache path and the host-absolute `installPath`. Claude Code reads the plugin at the host-absolute path, so the overlay at that path is the one that takes effect. Mount source kind is `plugin-override`.
+
+**Limitations.**
+
+- `hooks` / `mcpServers` declared in a marketplace entry (`marketplace.json` `plugins[]`, used when the entry sets `strict: false`) are not filtered.
+- Plugins loaded with `--plugin-url` are fetched at runtime inside the container and are not filtered.
+- An MCP server that ships only as a `.mcpb` / `.dxt` bundle cannot be enabled through `--mcp-enable`.
+
+`ccairgap inspect` enumerates the same roots and files (`enumerateHooks`, `enumerateMcpServers`), so what it lists matches what the filter sees.
 
 ## Plugins, skills, commands, CLAUDE.md
 

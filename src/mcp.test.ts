@@ -60,7 +60,7 @@ describe("enumerateMcpServers", () => {
     writeJSON(join(pluginsCache, "m", "p", "1.0.0", ".mcp.json"), {
       mcpServers: { "plugin-file": { command: "plugin-bin" } },
     });
-    writeJSON(join(pluginsCache, "m", "p", "1.0.0", "plugin.json"), {
+    writeJSON(join(pluginsCache, "m", "p", "1.0.0", ".claude-plugin", "plugin.json"), {
       mcpServers: { "plugin-inline": { command: "inline-bin" } },
     });
 
@@ -179,11 +179,11 @@ describe("enumerateMcpServers", () => {
         { name: "extra", source: "./plugins/extra" },
       ],
     });
-    // switchboard plugin carries both .mcp.json and plugin.json#mcpServers.
+    // switchboard plugin carries both .mcp.json and .claude-plugin/plugin.json#mcpServers.
     writeJSON(join(marketDir, ".mcp.json"), {
       mcpServers: { "sb-file": { command: "sb-bin" } },
     });
-    writeJSON(join(marketDir, "plugin.json"), {
+    writeJSON(join(marketDir, ".claude-plugin", "plugin.json"), {
       mcpServers: { "sb-inline": { command: "sb-inline-bin" } },
     });
     // extra plugin carries only .mcp.json.
@@ -337,7 +337,6 @@ describe("applyMcpPolicy", () => {
   let pluginsCache: string;
   let claudeJsonPath: string;
   let sessionDir: string;
-  const containerCache = "/home/claude/.claude/plugins/cache";
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "mcp-policy-"));
@@ -358,7 +357,7 @@ describe("applyMcpPolicy", () => {
     writeFileSync(path, JSON.stringify(data));
   }
 
-  it("empty enable → every mcpServers field is {} across all sources", () => {
+  it("empty enable → every ~/.claude.json mcpServers field is {}", () => {
     writeJSON(claudeJsonPath, {
       mcpServers: { "user-global": { command: "x" } },
       projects: {
@@ -381,8 +380,6 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [],
     });
 
@@ -392,13 +389,8 @@ describe("applyMcpPolicy", () => {
     // Non-mcp keys survive.
     expect(patched.projects["/some/repo"].hasTrustDialogAccepted).toBe(true);
 
-    // Plugin overlay produced, empty mcpServers.
-    const pluginMount = res.overrideMounts.find(
-      (m) => m.dst === `${containerCache}/m/p/1.0.0/.mcp.json`,
-    );
-    expect(pluginMount).toBeDefined();
-    const pluginPatched = JSON.parse(readFileSync(pluginMount!.src, "utf8"));
-    expect(pluginPatched.mcpServers).toEqual({});
+    // Plugin files are owned by applyPluginPolicy (src/pluginPolicy.test.ts).
+    expect(res.overrideMounts).toEqual([]);
   });
 
   it("glob matches user + user-project by name", () => {
@@ -423,108 +415,12 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [],
     });
 
     const patched = JSON.parse(readFileSync(res.patchedClaudeJsonPath, "utf8"));
     expect(Object.keys(patched.mcpServers)).toEqual(["grafana"]);
     expect(Object.keys(patched.projects["/r"].mcpServers)).toEqual(["grafana"]);
-  });
-
-  it("plugin filter: enabled plugin keeps glob-matching mcpServers, disabled plugin skipped", () => {
-    writeJSON(claudeJsonPath, {});
-    writeJSON(join(hostClaude, "settings.json"), {
-      enabledPlugins: { "on@m": true, "off@m": false },
-    });
-
-    mkdirSync(join(pluginsCache, "m", "on", "1.0.0"), { recursive: true });
-    writeJSON(join(pluginsCache, "m", "on", "1.0.0", ".mcp.json"), {
-      mcpServers: {
-        keep: { command: "k" },
-        drop: { command: "d" },
-      },
-    });
-    writeJSON(join(pluginsCache, "m", "on", "1.0.0", "plugin.json"), {
-      name: "on",
-      mcpServers: { inline: { command: "i" } },
-    });
-
-    mkdirSync(join(pluginsCache, "m", "off", "1.0.0"), { recursive: true });
-    writeJSON(join(pluginsCache, "m", "off", "1.0.0", ".mcp.json"), {
-      mcpServers: { keep: { command: "shouldnotappear" } },
-    });
-
-    const res = applyMcpPolicy({
-      policy: { enableGlobs: ["keep", "inline"] },
-      sessionDir,
-      hostClaudeDir: hostClaude,
-      hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
-      repos: [],
-    });
-
-    // Only the enabled plugin yields overlays (.mcp.json + plugin.json).
-    const dsts = res.overrideMounts.map((m) => m.dst);
-    expect(dsts).toContain(`${containerCache}/m/on/1.0.0/.mcp.json`);
-    expect(dsts).toContain(`${containerCache}/m/on/1.0.0/plugin.json`);
-    expect(dsts.some((d) => d.includes("/off/"))).toBe(false);
-
-    const fileMount = res.overrideMounts.find(
-      (m) => m.dst === `${containerCache}/m/on/1.0.0/.mcp.json`,
-    )!;
-    const filePatched = JSON.parse(readFileSync(fileMount.src, "utf8"));
-    expect(Object.keys(filePatched.mcpServers)).toEqual(["keep"]);
-
-    const inlineMount = res.overrideMounts.find(
-      (m) => m.dst === `${containerCache}/m/on/1.0.0/plugin.json`,
-    )!;
-    const inlinePatched = JSON.parse(readFileSync(inlineMount.src, "utf8"));
-    expect(Object.keys(inlinePatched.mcpServers)).toEqual(["inline"]);
-    // Non-mcp keys on plugin.json survive.
-    expect(inlinePatched.name).toBe("on");
-  });
-
-  it("directory-sourced plugin .mcp.json overlaid at the plugin host path", () => {
-    const marketDir = join(root, "markets", "sb");
-    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
-    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
-      name: "sb",
-      plugins: [{ name: "sb", source: "./" }],
-    });
-    writeJSON(join(marketDir, ".mcp.json"), {
-      mcpServers: {
-        grafana: { command: "g" },
-        other: { command: "o" },
-      },
-    });
-    writeJSON(claudeJsonPath, {});
-    writeJSON(join(hostClaude, "settings.json"), {
-      enabledPlugins: { "sb@sb": true },
-      extraKnownMarketplaces: {
-        sb: { source: { source: "directory", path: marketDir } },
-      },
-    });
-
-    const res = applyMcpPolicy({
-      policy: { enableGlobs: ["grafana"] },
-      sessionDir,
-      hostClaudeDir: hostClaude,
-      hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
-      repos: [],
-    });
-
-    const overlay = res.overrideMounts.find(
-      (m) => m.dst === join(realpathSync(marketDir), ".mcp.json"),
-    );
-    expect(overlay).toBeDefined();
-    expect(overlay!.mode).toBe("ro");
-    const patched = JSON.parse(readFileSync(overlay!.src, "utf8"));
-    expect(Object.keys(patched.mcpServers)).toEqual(["grafana"]);
   });
 
   it("project scope: glob match is NOT enough — host approval is also required", () => {
@@ -553,8 +449,6 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [
         {
           basename: "repo",
@@ -595,8 +489,6 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [
         {
           basename: "repo",
@@ -637,8 +529,6 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [
         {
           basename: "repo",
@@ -664,8 +554,6 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath, // file doesn't exist
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [],
     });
 
@@ -688,8 +576,6 @@ describe("applyMcpPolicy", () => {
       sessionDir,
       hostClaudeDir: hostClaude,
       hostClaudeJsonPath: claudeJsonPath,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [
         {
           basename: "repo",

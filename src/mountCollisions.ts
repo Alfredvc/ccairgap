@@ -78,6 +78,7 @@ function label(src: MountSource): string {
     case "alternates": return `git alternates for ${src.repoHostPath} (${src.category})`;
     case "hook-override": return `hook override (${src.description})`;
     case "mcp-override": return `mcp override (${src.description})`;
+    case "plugin-override": return `plugin policy override (${src.description})`;
     case "host-claude": return `~/.claude RO mount`;
     case "host-claude-json": return `~/.claude.json RO mount`;
     case "host-creds-dir": return `credentials RW dir mount`;

@@ -24,7 +24,7 @@ Defaulting to off lets ccairgap launch cleanly regardless of what the host has c
 - Match target: the MCP server **name** — the key under `mcpServers`.
 - Wildcard: `*`. Anchored full match (not substring).
 - Any server whose name matches **any** glob in the enable list is kept; everything else is stripped.
-- Sources covered uniformly: user `~/.claude.json`, user-project `~/.claude.json` `projects[<abs>].mcpServers`, project `<repo>/.mcp.json`, enabled plugin `.mcp.json` and `plugin.json#mcpServers`.
+- Sources covered uniformly: user `~/.claude.json`, user-project `~/.claude.json` `projects[<abs>].mcpServers`, project `<repo>/.mcp.json`, enabled plugin `.mcp.json`, `.claude-plugin/plugin.json` `mcpServers`, and each `.json` file that manifest names.
 
 Name is the identifier because MCPs come in three transports (stdio `command`, SSE `url`, HTTP `url`) — only name is universal.
 
@@ -103,9 +103,11 @@ Order doesn't matter; match is OR across entries.
 - **User scope** (`~/.claude.json` top-level `mcpServers`): filtered by glob. Written into the patched `~/.claude.json` that overlays via `/host-claude-patched-json`.
 - **User-project scope** (`~/.claude.json` `projects[<abs>].mcpServers`): filtered by glob per project key. Same patched file as user scope.
 - **Project scope** (`<repo>/.mcp.json`): filtered by glob AND approval state. Overlaid via single-file bind mount at the repo's container path.
-- **Plugin scope** (`<plugin>/.mcp.json`, `<plugin>/plugin.json#mcpServers`): for each `enabledPlugins[<plugin>@<market>] === true`, both files are filtered and overlaid via single-file bind mounts (cache-backed plugins over the plugin cache, directory-sourced plugins over the marketplace RO mount).
+- **Plugin scope** (`<plugin>/.mcp.json`, `<plugin>/.claude-plugin/plugin.json` `mcpServers`, and each `.json` file the manifest names): for each `enabledPlugins[<plugin>@<market>] === true`, every such file is filtered and overlaid via single-file bind mounts. For cache-backed plugins, ccairgap filters the version recorded in `~/.claude/plugins/installed_plugins.json`. Directory-sourced plugins are overlaid at their host path.
+  - `.mcpb` / `.dxt` bundle entries in the manifest are always removed, because ccairgap cannot read their server names host-side. A server that ships only as a bundle cannot be enabled.
+  - `mcpServers` declared in a marketplace entry (`marketplace.json`, `strict: false`) are not filtered.
 
-Host files are never mutated; patched copies live under `$SESSION/mcp-policy/` and die with the session.
+Host files are never mutated; patched copies live under `$SESSION/mcp-policy/` and `$SESSION/plugin-policy/` and die with the session.
 
 ## Quick decision guide
 

@@ -14,9 +14,9 @@ import {
   enumerateHooks,
   filterHooksField,
   globToRegex,
-  listDirectoryPlugins,
   matchesEnable,
 } from "./hooks.js";
+import { listDirectoryPlugins } from "./pluginRoots.js";
 
 describe("globToRegex", () => {
   it("converts * to greedy wildcard and anchors", () => {
@@ -146,7 +146,6 @@ describe("applyHookPolicy", () => {
   let hostClaude: string;
   let pluginsCache: string;
   let sessionDir: string;
-  const containerCache = "/home/claude/.claude/plugins/cache";
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "hooks-test-"));
@@ -166,7 +165,7 @@ describe("applyHookPolicy", () => {
     writeFileSync(path, JSON.stringify(data));
   }
 
-  it("empty enable list → disableAllHooks:false, hooks:{} at every source, statusLine preserved", () => {
+  it("empty enable list → disableAllHooks:false, hooks:{} in user settings, statusLine preserved", () => {
     writeJSON(join(hostClaude, "settings.json"), {
       hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "python3 x" }] }] },
       statusLine: { type: "command", command: "bash ~/.claude/statusline.sh" },
@@ -180,8 +179,6 @@ describe("applyHookPolicy", () => {
       policy: { enableGlobs: [] },
       sessionDir,
       hostClaudeDir: hostClaude,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [],
     });
     const patched = JSON.parse(readFileSync(res.patchedUserSettingsPath, "utf8"));
@@ -192,15 +189,11 @@ describe("applyHookPolicy", () => {
       type: "command",
       command: "bash ~/.claude/statusline.sh",
     });
-    // Plugin overlay still produced; its hooks field is empty.
-    expect(res.overrideMounts).toHaveLength(1);
-    const pm = res.overrideMounts[0]!;
-    expect(pm.dst).toBe(`${containerCache}/m/p/1.0.0/hooks/hooks.json`);
-    const patchedPlugin = JSON.parse(readFileSync(pm.src, "utf8"));
-    expect(patchedPlugin.hooks).toEqual({});
+    // Plugin files are owned by applyPluginPolicy (src/pluginPolicy.test.ts).
+    expect(res.overrideMounts).toEqual([]);
   });
 
-  it("non-empty enable filters user hooks and plugin hooks.json", () => {
+  it("non-empty enable filters user hooks; plugin files are left to applyPluginPolicy", () => {
     writeJSON(join(hostClaude, "settings.json"), {
       hooks: {
         PreToolUse: [
@@ -233,8 +226,6 @@ describe("applyHookPolicy", () => {
       policy: { enableGlobs: ["python3 *"] },
       sessionDir,
       hostClaudeDir: hostClaude,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [],
     });
 
@@ -245,108 +236,6 @@ describe("applyHookPolicy", () => {
       { type: "command", command: "python3 deny.py" },
     ]);
 
-    expect(res.overrideMounts).toHaveLength(1);
-    const pm = res.overrideMounts[0]!;
-    expect(pm.dst).toBe(`${containerCache}/m/p/1.0.0/hooks/hooks.json`);
-    expect(pm.mode).toBe("ro");
-    const patchedPlugin = JSON.parse(readFileSync(pm.src, "utf8"));
-    expect(patchedPlugin.hooks.PreToolUse[0].hooks).toEqual([
-      { type: "command", command: "python3 plugin-hook.py" },
-    ]);
-  });
-
-  it("disabled plugins (enabledPlugins[key] !== true) are ignored", () => {
-    writeJSON(join(hostClaude, "settings.json"), {
-      enabledPlugins: { "p@m": false },
-    });
-    mkdirSync(join(pluginsCache, "m", "p", "1.0.0", "hooks"), { recursive: true });
-    writeJSON(join(pluginsCache, "m", "p", "1.0.0", "hooks", "hooks.json"), {
-      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "python3 x" }] }] },
-    });
-    const res = applyHookPolicy({
-      policy: { enableGlobs: ["python3 *"] },
-      sessionDir,
-      hostClaudeDir: hostClaude,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
-      repos: [],
-    });
-    expect(res.overrideMounts).toEqual([]);
-  });
-
-  it("directory-sourced plugin hooks.json gets overlaid at the plugin host path", () => {
-    const marketDir = join(root, "markets", "switchboard");
-    const pluginDir = marketDir; // `source: "./"` convention
-    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
-    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
-      name: "switchboard",
-      plugins: [{ name: "switchboard", source: "./" }],
-    });
-    mkdirSync(join(pluginDir, "hooks"), { recursive: true });
-    writeJSON(join(pluginDir, "hooks", "hooks.json"), {
-      hooks: {
-        SessionStart: [
-          {
-            hooks: [
-              { type: "command", command: "switchboard-hook" },
-              { type: "command", command: "python3 keep.py" },
-            ],
-          },
-        ],
-      },
-    });
-    writeJSON(join(hostClaude, "settings.json"), {
-      enabledPlugins: { "switchboard@switchboard": true },
-      extraKnownMarketplaces: {
-        switchboard: { source: { source: "directory", path: marketDir } },
-      },
-    });
-
-    const res = applyHookPolicy({
-      policy: { enableGlobs: ["python3 *"] },
-      sessionDir,
-      hostClaudeDir: hostClaude,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
-      repos: [],
-    });
-
-    const dp = res.overrideMounts.find(
-      (m) => m.dst === join(realpathSync(pluginDir), "hooks", "hooks.json"),
-    );
-    expect(dp).toBeDefined();
-    expect(dp!.mode).toBe("ro");
-    const patched = JSON.parse(readFileSync(dp!.src, "utf8"));
-    expect(patched.hooks.SessionStart[0].hooks).toEqual([
-      { type: "command", command: "python3 keep.py" },
-    ]);
-  });
-
-  it("directory plugin overlay is skipped when plugin is not enabled", () => {
-    const marketDir = join(root, "markets", "off");
-    mkdirSync(join(marketDir, ".claude-plugin"), { recursive: true });
-    writeJSON(join(marketDir, ".claude-plugin", "marketplace.json"), {
-      name: "off",
-      plugins: [{ name: "off", source: "./" }],
-    });
-    mkdirSync(join(marketDir, "hooks"), { recursive: true });
-    writeJSON(join(marketDir, "hooks", "hooks.json"), {
-      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "python3 x" }] }] },
-    });
-    writeJSON(join(hostClaude, "settings.json"), {
-      enabledPlugins: { "off@off": false },
-      extraKnownMarketplaces: {
-        off: { source: { source: "directory", path: marketDir } },
-      },
-    });
-    const res = applyHookPolicy({
-      policy: { enableGlobs: ["python3 *"] },
-      sessionDir,
-      hostClaudeDir: hostClaude,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
-      repos: [],
-    });
     expect(res.overrideMounts).toEqual([]);
   });
 
@@ -371,8 +260,6 @@ describe("applyHookPolicy", () => {
       policy: { enableGlobs: ["python3 *"] },
       sessionDir,
       hostClaudeDir: hostClaude,
-      pluginsCacheDir: pluginsCache,
-      pluginsCacheContainerPath: containerCache,
       repos: [
         {
           basename: "myrepo",

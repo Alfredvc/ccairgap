@@ -1,14 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  isPluginEnabled,
-  listDirectoryPlugins,
-  listPluginsOnDisk,
-  matchesEnable,
-  readJsonOrNull,
-} from "./hooks.js";
+import { matchesEnable } from "./hooks.js";
 import type { Mount } from "./mounts.js";
 import { realpath } from "./paths.js";
+import { listEnabledPluginRoots, pluginMcpSources, readJsonOrNull } from "./pluginRoots.js";
 
 /**
  * Read-only enumeration of MCP server definitions the container would pick up at launch.
@@ -22,14 +17,15 @@ import { realpath } from "./paths.js";
  *                     resolves to the same absolute path.
  * - `project`       — `<repo>/.mcp.json` `mcpServers` (project scope, shared/committed).
  *                     Carries `approvalState` derived from approval config.
- * - `plugin`        — `<plugin-root>/.mcp.json` `mcpServers` AND
- *                     `<plugin-root>/plugin.json` `mcpServers` (inline). Only emitted
- *                     when the plugin is `enabledPlugins["<plugin>@<market>"] === true`.
- *                     Covers BOTH cache-backed plugins (under `~/.claude/plugins/cache/`)
- *                     AND directory-sourced marketplace plugins (from
+ * - `plugin`        — `<plugin-root>/.mcp.json` `mcpServers`, inline
+ *                     `<plugin-root>/.claude-plugin/plugin.json` `mcpServers`, and each
+ *                     `.json` file that manifest field names. Only emitted when the
+ *                     plugin is `enabledPlugins["<plugin>@<market>"] === true`. Covers
+ *                     BOTH cache-backed plugins (each `installed_plugins.json`
+ *                     `installPath`) AND directory-sourced marketplace plugins (from
  *                     `extraKnownMarketplaces[*].source.source === "directory"`, whose
  *                     plugin roots live outside the cache and mount into the container
- *                     1:1 via `discoverLocalMarketplaces`).
+ *                     1:1 via `discoverLocalMarketplaces`). See `src/pluginRoots.ts`.
  *
  * Managed MCP scope (/Library/Application Support/ClaudeCode/managed-mcp.json and peers)
  * is intentionally omitted — those paths are not mounted into the container.
@@ -207,57 +203,24 @@ export function enumerateMcpServers(input: EnumerateMcpInput): McpRecord[] {
     }
   }
 
-  // 4. plugin scope: enabled-plugin .mcp.json and plugin.json#mcpServers.
-  const enabledPlugins = userSettings?.enabledPlugins;
-
-  function collectPluginMcp(
-    hostDir: string,
-    pluginAttr: { marketplace: string; plugin: string; version: string },
-  ): void {
-    const mcpJsonPath = join(hostDir, ".mcp.json");
-    if (existsSync(mcpJsonPath)) {
-      const raw = readJsonOrNull(mcpJsonPath) as Record<string, unknown> | null;
-      if (raw) {
-        collectMcpServers(
-          raw.mcpServers,
-          { source: "plugin", sourcePath: mcpJsonPath, plugin: pluginAttr },
-          out,
-        );
-      }
+  // 4. plugin scope: every enabled plugin root's `.mcp.json`, manifest
+  //    `mcpServers`, and the `.json` files the manifest names.
+  for (const root of listEnabledPluginRoots({
+    hostClaudeDir,
+    pluginsCacheDir,
+    pluginsCacheContainerPath: "",
+  })) {
+    for (const src of pluginMcpSources(root)) {
+      collectMcpServers(
+        src.value,
+        {
+          source: "plugin",
+          sourcePath: src.sourcePath,
+          plugin: { marketplace: root.marketplace, plugin: root.plugin, version: root.version },
+        },
+        out,
+      );
     }
-    const pluginJsonPath = join(hostDir, "plugin.json");
-    if (existsSync(pluginJsonPath)) {
-      const raw = readJsonOrNull(pluginJsonPath) as Record<string, unknown> | null;
-      if (raw) {
-        collectMcpServers(
-          raw.mcpServers,
-          { source: "plugin", sourcePath: pluginJsonPath, plugin: pluginAttr },
-          out,
-        );
-      }
-    }
-  }
-
-  // Cache-backed plugins (containerCacheDir unused for enumeration; pass empty string).
-  for (const p of listPluginsOnDisk(pluginsCacheDir, "")) {
-    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
-    collectPluginMcp(p.hostDir, {
-      marketplace: p.marketplace,
-      plugin: p.plugin,
-      version: p.version,
-    });
-  }
-
-  // Directory-sourced plugins: loaded from the marketplace source tree (1:1 RO-mounted
-  // by `discoverLocalMarketplaces`), not from the cache. Without this branch, MCP
-  // servers declared in such plugins are invisible to `inspect` even though they run.
-  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
-    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
-    collectPluginMcp(dp.hostDir, {
-      marketplace: dp.marketplace,
-      plugin: dp.plugin,
-      version: "directory",
-    });
   }
 
   return out;
@@ -268,8 +231,9 @@ export function enumerateMcpServers(input: EnumerateMcpInput): McpRecord[] {
  * by a glob matched against the server `name` (key under `mcpServers`). Claude
  * Code has no native per-server disable, so we filter MCP JSON at four sources
  * (user `~/.claude.json` top-level, user-project `~/.claude.json` projects[*],
- * project `<repo>/.mcp.json`, enabled plugin `.mcp.json` + `plugin.json`) and
- * deliver the patched files as nested bind mounts (single-file overlays).
+ * project `<repo>/.mcp.json`, enabled plugins) and deliver the patched files as
+ * nested bind mounts (single-file overlays). This function owns the first three;
+ * `applyPluginPolicy` in `src/pluginPolicy.ts` owns plugin files.
  *
  * Project-scope `<repo>/.mcp.json` is additionally gated by the host approval
  * state (`enabledMcpjsonServers` / `enableAllProjectMcpServers` / absence of a
@@ -294,14 +258,10 @@ export interface McpPolicyRepo {
 export interface ApplyMcpPolicyInput {
   policy: McpPolicy;
   sessionDir: string;
-  /** Host ~/.claude/ (resolved). Read: settings.json (for approval scopes + enabledPlugins). */
+  /** Host ~/.claude/ (resolved). Read: settings.json (for approval scopes). */
   hostClaudeDir: string;
   /** Host path of `~/.claude.json`. Filtered and overlaid at `/host-claude-patched-json`. */
   hostClaudeJsonPath: string;
-  /** Host plugins cache. Read: each plugin's `.mcp.json` / `plugin.json`. */
-  pluginsCacheDir: string;
-  /** Container path where the plugins cache mounts. Used to build nested override mount dsts. */
-  pluginsCacheContainerPath: string;
   /** Session clones; used to find project `.mcp.json` (in the clone) and build override mount dsts at the container-facing repo path. */
   repos: McpPolicyRepo[];
 }
@@ -316,10 +276,8 @@ export interface ApplyMcpPolicyResult {
    */
   patchedClaudeJsonPath: string;
   /**
-   * Nested single-file bind mounts (RO):
-   * - plugin `.mcp.json` + `plugin.json` overrides (cache-backed and directory-sourced)
-   * - per-repo `<repo>/.mcp.json` overrides
-   * One entry per MCP-bearing source that exists on disk. With empty globs
+   * Nested single-file bind mounts (RO), one per per-repo `<repo>/.mcp.json`
+   * that exists on disk. Plugin files are overlaid by `applyPluginPolicy`. With empty globs
    * every `mcpServers` field is `{}`; with a non-empty list it's filtered
    * down to surviving entries (and project-scope further to approved ones).
    */
@@ -336,7 +294,7 @@ function writeJsonAtomic(path: string, data: unknown): void {
  * of the globs. If `approvedSet` is provided (project scope), the name must
  * ALSO be in the set. Returns a new object.
  */
-function filterMcpServers(
+export function filterMcpServers(
   servers: unknown,
   globs: string[],
   approvedSet?: Set<string>,
@@ -358,8 +316,6 @@ export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult
     sessionDir,
     hostClaudeDir,
     hostClaudeJsonPath,
-    pluginsCacheDir,
-    pluginsCacheContainerPath,
     repos,
   } = input;
   const globs = policy.enableGlobs;
@@ -395,65 +351,8 @@ export function applyMcpPolicy(input: ApplyMcpPolicyInput): ApplyMcpPolicyResult
   const userSettings = readJsonOrNull(join(hostClaudeDir, "settings.json")) as
     | Record<string, unknown>
     | null;
-  const enabledPlugins = userSettings?.enabledPlugins;
 
-  // 2) Plugin `.mcp.json` + `plugin.json` (cache-backed).
-  const plugins = listPluginsOnDisk(pluginsCacheDir, pluginsCacheContainerPath);
-  for (const p of plugins) {
-    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
-    for (const fname of [".mcp.json", "plugin.json"]) {
-      const srcPath = join(p.hostDir, fname);
-      if (!existsSync(srcPath)) continue;
-      const raw = readJsonOrNull(srcPath);
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
-      patched.mcpServers = filterMcpServers(
-        (raw as Record<string, unknown>).mcpServers,
-        globs,
-      );
-      const outPath = join(
-        policyDir,
-        "plugins",
-        p.marketplace,
-        p.plugin,
-        p.version,
-        fname,
-      );
-      writeJsonAtomic(outPath, patched);
-      overrideMounts.push({
-        src: outPath,
-        dst: join(p.containerDir, fname),
-        mode: "ro",
-        source: { kind: "mcp-override", description: `plugin ${p.marketplace}/${p.plugin}@${p.version} ${fname}` },
-      });
-    }
-  }
-
-  // 3) Plugin `.mcp.json` + `plugin.json` (directory-sourced).
-  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
-    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
-    for (const fname of [".mcp.json", "plugin.json"]) {
-      const srcPath = join(dp.hostDir, fname);
-      if (!existsSync(srcPath)) continue;
-      const raw = readJsonOrNull(srcPath);
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
-      patched.mcpServers = filterMcpServers(
-        (raw as Record<string, unknown>).mcpServers,
-        globs,
-      );
-      const outPath = join(policyDir, "dir-plugins", dp.marketplace, dp.plugin, fname);
-      writeJsonAtomic(outPath, patched);
-      overrideMounts.push({
-        src: outPath,
-        dst: srcPath,
-        mode: "ro",
-        source: { kind: "mcp-override", description: `dir-plugin ${dp.marketplace}/${dp.plugin} ${fname}` },
-      });
-    }
-  }
-
-  // 4) Project `<repo>/.mcp.json` — glob AND approved.
+  // 2) Project `<repo>/.mcp.json` — glob AND approved.
   for (const r of repos) {
     const mcpPath = join(r.sessionClonePath, ".mcp.json");
     if (!existsSync(mcpPath)) continue;

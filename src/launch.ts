@@ -47,6 +47,7 @@ import { executeCopies, resolveArtifacts } from "./artifacts.js";
 import { overlayProjectClaudeConfig } from "./projectClaudeOverlay.js";
 import { applyHookPolicy } from "./hooks.js";
 import { applyMcpPolicy } from "./mcp.js";
+import { applyPluginPolicy } from "./pluginPolicy.js";
 import { writeUserdb } from "./userdb.js";
 import { requireHostBinaries } from "./binaries.js";
 import {
@@ -790,17 +791,15 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   const homeInContainer = "/home/claude";
   const pluginsCacheContainerPath = join(homeInContainer, ".claude", "plugins", "cache");
 
-  // Hook policy: every hook source overlaid via nested single-file binds (user
-  // settings, each enabled plugin's hooks.json, each repo's .claude/settings.json
-  // [.local]). Empty enable list → filtered = {} so every hook is neutralized.
-  // Non-empty → filtered to surviving entries. `disableAllHooks: false` is forced
-  // either way so the user's custom statusLine keeps running.
+  // Hook policy: user settings + each repo's .claude/settings.json[.local]
+  // overlaid via nested single-file binds. Empty enable list → filtered = {} so
+  // every hook is neutralized. Non-empty → filtered to surviving entries.
+  // `disableAllHooks: false` is forced either way so the user's custom
+  // statusLine keeps running. Plugin hook files: see applyPluginPolicy below.
   const hookPolicyResult = applyHookPolicy({
     policy: { enableGlobs: opts.hookEnable },
     sessionDir: sessionPath,
     hostClaudeDir: hostClaude,
-    pluginsCacheDir: pluginsCache,
-    pluginsCacheContainerPath,
     repos: repoEntries.map((r) => ({
       basename: r.basename,
       sessionClonePath: r.sessionClonePath,
@@ -811,8 +810,8 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   // MCP policy: same overlay pattern as hooks. `~/.claude.json` (user + every
   // user-project `mcpServers`) produces one patched copy at
-  // `/host-claude-patched-json`. Plugin `.mcp.json` / `plugin.json` and per-repo
-  // `<repo>/.mcp.json` get per-file bind overlays. Project scope additionally
+  // `/host-claude-patched-json`. Per-repo `<repo>/.mcp.json` gets a per-file
+  // bind overlay. Project scope additionally
   // requires host approval state (`enabledMcpjsonServers` /
   // `enableAllProjectMcpServers`, absent a `disabledMcpjsonServers` entry) —
   // the approval dialog is unreachable inside the airgap container.
@@ -822,14 +821,27 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     sessionDir: sessionPath,
     hostClaudeDir: hostClaude,
     hostClaudeJsonPath: resolvedClaudeJson,
-    pluginsCacheDir: pluginsCache,
-    pluginsCacheContainerPath,
     repos: repoEntries.map((r) => ({
       basename: r.basename,
       sessionClonePath: r.sessionClonePath,
       hostPath: r.hostPath,
       alternatesName: r.alternatesName,
     })),
+  });
+
+  // Plugin policy: hook and MCP filters for every enabled plugin root (each
+  // `installed_plugins.json` installPath, plus directory-sourced plugins).
+  // Filters `hooks/hooks.json`, `.mcp.json`, `.claude-plugin/plugin.json`, and
+  // every `.json` file the manifest names, then overlays each copy at every
+  // container path of the root. Claude Code reads cache-backed plugins at the
+  // host-absolute installPath, so that path must carry the overlay.
+  const pluginPolicyResult = applyPluginPolicy({
+    hookEnableGlobs: opts.hookEnable,
+    mcpEnableGlobs: opts.mcpEnable,
+    sessionDir: sessionPath,
+    hostClaudeDir: hostClaude,
+    pluginsCacheDir: pluginsCache,
+    pluginsCacheContainerPath,
   });
 
   // Managed-policy: host dir resolved per host OS (macOS or Linux). Used both
@@ -954,6 +966,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         ...artifacts.extraMounts,
         ...hookPolicyResult.overrideMounts,
         ...mcpPolicyResult.overrideMounts,
+        ...pluginPolicyResult.overrideMounts,
         ...clipboard.mounts,
         ...claudeSymlinkOverlay,
         { src: userdb.passwdPath, dst: "/etc/passwd", mode: "ro", source: { kind: "userdb-passwd" } },

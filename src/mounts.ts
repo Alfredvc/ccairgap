@@ -41,7 +41,8 @@ export type MountSource =
   | { kind: "marketplace"; path: string }
   | { kind: "artifact"; flag: "cp" | "sync" | "mount"; raw: string }
   | { kind: "hook-override"; description: string }
-  | { kind: "mcp-override"; description: string };
+  | { kind: "mcp-override"; description: string }
+  | { kind: "plugin-override"; description: string };
 
 export type Mount = {
   src: string;

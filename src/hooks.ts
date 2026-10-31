@@ -1,22 +1,17 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Mount } from "./mounts.js";
+import { listEnabledPluginRoots, pluginHookSources, readJsonOrNull } from "./pluginRoots.js";
+
+export { readJsonOrNull };
 
 /**
  * Hook policy: default is "all hooks off, statusLine on". Users opt-in specific
  * hooks by a glob matched against the raw `command` string in each hook definition.
- * Claude Code has no native per-hook disable, so we filter hook JSON at four sources
- * (user settings, cache-backed plugin hooks.json, directory-sourced plugin hooks.json,
- * project settings) and deliver the patched files as nested bind mounts (single-file
- * overlays).
+ * Claude Code has no native per-hook disable, so we filter hook JSON at every source
+ * (user settings, project settings, and every enabled plugin) and deliver the patched
+ * files as nested bind mounts (single-file overlays). This module owns user and
+ * project settings; `applyPluginPolicy` in `src/pluginPolicy.ts` owns plugin files.
  *
  * Why not `disableAllHooks: true` for the empty-enable case: that flag also disables
  * the custom `statusLine` (per Claude Code docs), so the cheap catch-all path silently
@@ -42,10 +37,6 @@ export interface ApplyHookPolicyInput {
   sessionDir: string;
   /** Host ~/.claude/ (resolved). Read: settings.json. */
   hostClaudeDir: string;
-  /** Host plugins cache. Read: each plugin's hooks/hooks.json. */
-  pluginsCacheDir: string;
-  /** Container path where the plugins cache mounts. Used to build nested override mount dsts. */
-  pluginsCacheContainerPath: string;
   /** Session clones; used to find project `.claude/settings.json[.local]` and build override mount dsts at the container-facing repo path. */
   repos: HookPolicyRepo[];
 }
@@ -59,9 +50,8 @@ export interface ApplyHookPolicyResult {
    */
   patchedUserSettingsPath: string;
   /**
-   * Nested single-file bind mounts:
-   * - plugin hooks.json overrides (RO)
-   * - per-repo project settings.json[.local] overrides (RO)
+   * Nested single-file bind mounts (RO), one per per-repo project
+   * settings.json[.local]. Plugin files are overlaid by `applyPluginPolicy`.
    * Always populated (one per hook-bearing source), regardless of `enableGlobs`.
    * With empty globs the patched files carry `hooks: {}`; with a non-empty list
    * the hooks field is filtered down to surviving entries.
@@ -119,162 +109,9 @@ export function filterHooksField(hooks: unknown, globs: string[]): HooksField {
   return out;
 }
 
-export function readJsonOrNull(path: string): unknown {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 function writeJsonAtomic(path: string, data: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o644 });
-}
-
-/** True if settings.json `enabledPlugins` entry is a literal `true`. */
-export function isPluginEnabled(enabledPlugins: unknown, key: string): boolean {
-  if (!enabledPlugins || typeof enabledPlugins !== "object") return false;
-  const v = (enabledPlugins as Record<string, unknown>)[key];
-  return v === true;
-}
-
-/**
- * Enumerate `<cache>/<marketplace>/<plugin>/<version>/` subtrees on disk. Each yields
- * a `<plugin>@<marketplace>` enabledPlugins key and an absolute host path.
- *
- * Version dir picked = single subdir when there's one; deterministic-sorted first
- * otherwise. Matches how Claude Code's cache is typically written (one version per
- * plugin); the fallback covers stale dirs without being wrong in practice.
- */
-export interface PluginOnDisk {
-  marketplace: string;
-  plugin: string;
-  version: string;
-  /** Host path `<cache>/<marketplace>/<plugin>/<version>/`. */
-  hostDir: string;
-  /** Container path `<container-cache>/<marketplace>/<plugin>/<version>/`. */
-  containerDir: string;
-  /** Claude Code enabledPlugins key. */
-  key: string;
-}
-
-/**
- * Directory-sourced plugin: the marketplace entry in `settings.json` has
- * `source.source === "directory"`, so Claude Code resolves the plugin via
- * `<marketplaceDir>/.claude-plugin/marketplace.json` and reads `hooks/hooks.json`
- * from the plugin's own source tree — NOT from `~/.claude/plugins/cache/`.
- *
- * The source tree is RO-mounted 1:1 into the container by `discoverLocalMarketplaces`,
- * so the overlay dst = host path. Without this the cache-only filter in
- * `listPluginsOnDisk` misses these plugins entirely and their hooks fire verbatim.
- */
-export interface DirectoryPlugin {
-  marketplace: string;
-  plugin: string;
-  /** Absolute resolved host path to the plugin's root (where `hooks/hooks.json` lives). */
-  hostDir: string;
-  /** Absolute path to the plugin's hooks.json (may not exist). */
-  hooksJsonPath: string;
-  /** Claude Code enabledPlugins key. */
-  key: string;
-}
-
-export function listDirectoryPlugins(hostClaudeDir: string): DirectoryPlugin[] {
-  const out: DirectoryPlugin[] = [];
-  const settings = readJsonOrNull(join(hostClaudeDir, "settings.json")) as
-    | Record<string, unknown>
-    | null;
-  if (!settings) return out;
-  const extra = (settings as { extraKnownMarketplaces?: Record<string, unknown> })
-    .extraKnownMarketplaces;
-  if (!extra || typeof extra !== "object") return out;
-
-  for (const [marketName, entry] of Object.entries(extra)) {
-    const src = (entry as { source?: { source?: string; path?: string } })?.source;
-    if (!src || src.source !== "directory" || typeof src.path !== "string") continue;
-    let marketDir: string;
-    try {
-      marketDir = realpathSync(src.path);
-    } catch {
-      continue;
-    }
-    const mJsonPath = join(marketDir, ".claude-plugin", "marketplace.json");
-    const mJson = readJsonOrNull(mJsonPath) as { plugins?: unknown } | null;
-    if (!mJson || !Array.isArray(mJson.plugins)) continue;
-    for (const pRaw of mJson.plugins) {
-      const p = pRaw as { name?: string; source?: unknown };
-      if (typeof p?.name !== "string") continue;
-      // `source` is optional and conventionally `"./"`; treat missing/non-string as `"./"`.
-      const sourceRel = typeof p.source === "string" ? p.source : "./";
-      const joined = isAbsolute(sourceRel) ? sourceRel : join(marketDir, sourceRel);
-      let pluginDir: string;
-      try {
-        pluginDir = realpathSync(joined);
-      } catch {
-        continue;
-      }
-      out.push({
-        marketplace: marketName,
-        plugin: p.name,
-        hostDir: pluginDir,
-        hooksJsonPath: join(pluginDir, "hooks", "hooks.json"),
-        key: `${p.name}@${marketName}`,
-      });
-    }
-  }
-  return out;
-}
-
-export function listPluginsOnDisk(cacheDir: string, containerCacheDir: string): PluginOnDisk[] {
-  const out: PluginOnDisk[] = [];
-  if (!existsSync(cacheDir)) return out;
-  let markets: string[];
-  try {
-    markets = readdirSync(cacheDir);
-  } catch {
-    return out;
-  }
-  for (const market of markets) {
-    if (market.startsWith(".") || market.startsWith("temp_")) continue;
-    const marketDir = join(cacheDir, market);
-    let plugins: string[];
-    try {
-      if (!statSync(marketDir).isDirectory()) continue;
-      plugins = readdirSync(marketDir);
-    } catch {
-      continue;
-    }
-    for (const plugin of plugins) {
-      if (plugin.startsWith(".")) continue;
-      const pluginDir = join(marketDir, plugin);
-      let versions: string[];
-      try {
-        if (!statSync(pluginDir).isDirectory()) continue;
-        versions = readdirSync(pluginDir).filter((v) => {
-          try {
-            return statSync(join(pluginDir, v)).isDirectory();
-          } catch {
-            return false;
-          }
-        });
-      } catch {
-        continue;
-      }
-      if (versions.length === 0) continue;
-      versions.sort();
-      const version = versions[0]!;
-      out.push({
-        marketplace: market,
-        plugin,
-        version,
-        hostDir: join(pluginDir, version),
-        containerDir: join(containerCacheDir, market, plugin, version),
-        key: `${plugin}@${market}`,
-      });
-    }
-  }
-  return out;
 }
 
 /**
@@ -342,42 +179,25 @@ export function enumerateHooks(input: EnumerateHooksInput): HookRecord[] {
     );
   }
 
-  // Plugin hooks (only enabled plugins).
-  const enabledPlugins = userSettings?.enabledPlugins;
-  // Container path irrelevant here; pass empty string.
-  const plugins = listPluginsOnDisk(pluginsCacheDir, "");
-  for (const p of plugins) {
-    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
-    const hooksJsonPath = join(p.hostDir, "hooks", "hooks.json");
-    if (!existsSync(hooksJsonPath)) continue;
-    const raw = readJsonOrNull(hooksJsonPath);
-    if (!raw || typeof raw !== "object") continue;
-    collectHookRecords(
-      (raw as { hooks?: unknown }).hooks,
-      {
-        source: "plugin",
-        sourcePath: hooksJsonPath,
-        plugin: { marketplace: p.marketplace, plugin: p.plugin, version: p.version },
-      },
-      out,
-    );
-  }
-
-  // Directory-sourced plugins (loaded from the marketplace source tree, not cache).
-  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
-    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
-    if (!existsSync(dp.hooksJsonPath)) continue;
-    const raw = readJsonOrNull(dp.hooksJsonPath);
-    if (!raw || typeof raw !== "object") continue;
-    collectHookRecords(
-      (raw as { hooks?: unknown }).hooks,
-      {
-        source: "plugin",
-        sourcePath: dp.hooksJsonPath,
-        plugin: { marketplace: dp.marketplace, plugin: dp.plugin, version: "directory" },
-      },
-      out,
-    );
+  // Plugin hooks: every enabled cache-backed and directory-sourced plugin root,
+  // from `hooks/hooks.json` and the manifest `hooks` field. Container path is
+  // irrelevant here; pass empty string.
+  for (const root of listEnabledPluginRoots({
+    hostClaudeDir,
+    pluginsCacheDir,
+    pluginsCacheContainerPath: "",
+  })) {
+    for (const src of pluginHookSources(root)) {
+      collectHookRecords(
+        src.value,
+        {
+          source: "plugin",
+          sourcePath: src.sourcePath,
+          plugin: { marketplace: root.marketplace, plugin: root.plugin, version: root.version },
+        },
+        out,
+      );
+    }
   }
 
   // Project settings.
@@ -399,18 +219,18 @@ export function enumerateHooks(input: EnumerateHooksInput): HookRecord[] {
 }
 
 /**
- * Apply the hook policy. Writes a patched user settings file plus filtered
- * hooks.json / settings.json copies under `$SESSION/hook-policy/` for every
- * hook-bearing source, and returns single-file bind mounts that overlay them
- * on top of the RO plugin cache and the RW session clones.
+ * Apply the hook policy to user and project settings. Writes a patched user
+ * settings file plus filtered project settings.json copies under
+ * `$SESSION/hook-policy/`, and returns single-file bind mounts that overlay
+ * them on top of the RW session clones. Plugin hook files are filtered by
+ * `applyPluginPolicy` (`src/pluginPolicy.ts`).
  *
  * `disableAllHooks` is always set to `false` (so the custom `statusLine`
  * survives — see file-top comment). Hook neutralization happens by overlaying
  * filtered `hooks` fields at every source instead.
  */
 export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyResult {
-  const { policy, sessionDir, hostClaudeDir, pluginsCacheDir, pluginsCacheContainerPath, repos } =
-    input;
+  const { policy, sessionDir, hostClaudeDir, repos } = input;
   const globs = policy.enableGlobs;
   const policyDir = join(sessionDir, "hook-policy");
 
@@ -429,62 +249,6 @@ export function applyHookPolicy(input: ApplyHookPolicyInput): ApplyHookPolicyRes
   writeJsonAtomic(patchedUserSettingsPath, patchedUser);
 
   const overrideMounts: Mount[] = [];
-  const enabledPlugins = (hostUserSettings as { enabledPlugins?: unknown }).enabledPlugins;
-  const plugins = listPluginsOnDisk(pluginsCacheDir, pluginsCacheContainerPath);
-  for (const p of plugins) {
-    if (!isPluginEnabled(enabledPlugins, p.key)) continue;
-    const hooksJsonHost = join(p.hostDir, "hooks", "hooks.json");
-    if (!existsSync(hooksJsonHost)) continue;
-    const raw = readJsonOrNull(hooksJsonHost);
-    if (!raw || typeof raw !== "object") continue;
-    const rawHooks = (raw as { hooks?: unknown }).hooks;
-    const filtered = filterHooksField(rawHooks, globs);
-    const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
-    patched.hooks = filtered;
-    const outPath = join(
-      policyDir,
-      "plugins",
-      p.marketplace,
-      p.plugin,
-      p.version,
-      "hooks.json",
-    );
-    writeJsonAtomic(outPath, patched);
-    overrideMounts.push({
-      src: outPath,
-      dst: join(p.containerDir, "hooks", "hooks.json"),
-      mode: "ro",
-      source: { kind: "hook-override", description: `plugin ${p.marketplace}/${p.plugin}@${p.version} hooks.json` },
-    });
-  }
-
-  // Directory-sourced plugins: marketplace's source tree is RO-mounted 1:1, so
-  // overlay at the host path (= container path for these mounts). Claude Code
-  // reads hooks.json from here, not from the cache copy.
-  for (const dp of listDirectoryPlugins(hostClaudeDir)) {
-    if (!isPluginEnabled(enabledPlugins, dp.key)) continue;
-    if (!existsSync(dp.hooksJsonPath)) continue;
-    const raw = readJsonOrNull(dp.hooksJsonPath);
-    if (!raw || typeof raw !== "object") continue;
-    const rawHooks = (raw as { hooks?: unknown }).hooks;
-    const filtered = filterHooksField(rawHooks, globs);
-    const patched: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
-    patched.hooks = filtered;
-    const outPath = join(
-      policyDir,
-      "dir-plugins",
-      dp.marketplace,
-      dp.plugin,
-      "hooks.json",
-    );
-    writeJsonAtomic(outPath, patched);
-    overrideMounts.push({
-      src: outPath,
-      dst: dp.hooksJsonPath,
-      mode: "ro",
-      source: { kind: "hook-override", description: `dir-plugin ${dp.marketplace}/${dp.plugin} hooks.json` },
-    });
-  }
 
   // Project settings live inside each session clone. Overlay via nested file
   // bind mount targeting the container-facing repo path so the session clone on

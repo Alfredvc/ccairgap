@@ -11,7 +11,7 @@ Host hook configs routinely reference binaries that don't exist in the sandboxed
 - Match target: the raw `command` string of each hook entry.
 - Wildcard: `*`. Anchored full match (not substring).
 - Any hook whose command matches **any** glob in the enable list is kept; everything else is stripped.
-- Sources covered uniformly: user `~/.claude/settings.json`, enabled plugins' `hooks/hooks.json`, project `.claude/settings.json[.local]`.
+- Sources covered uniformly: user `~/.claude/settings.json`, enabled plugins' `hooks/hooks.json`, `.claude-plugin/plugin.json` `hooks`, and each hooks file that manifest names, project `.claude/settings.json[.local]`.
 
 The glob is deliberately thin — users see the exact `command` strings in their JSON, so substring-with-`*` is expressive enough.
 
@@ -41,7 +41,9 @@ jq '.hooks' <repo>/.claude/settings.local.json 2>/dev/null
 
 # Enabled plugins — must walk every `enabledPlugins[<key>] === true` entry
 jq '.enabledPlugins' ~/.claude/settings.json
+# <version> is the installPath recorded in ~/.claude/plugins/installed_plugins.json
 cat ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/hooks/hooks.json
+jq '.hooks' ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json
 ```
 
 The `command` field is the string you glob against.
@@ -80,10 +82,10 @@ Order doesn't matter; match is OR across entries.
 ## Per-source behavior
 
 - **User settings** (`~/.claude/settings.json`): always processed. `hooks` field replaced with the filtered set (empty `{}` when the enable list is empty); `disableAllHooks` always forced to `false` so the custom `statusLine` keeps running.
-- **Plugin hooks**: always processed. For each `enabledPlugins[<plugin>@<market>] === true`, the plugin's `hooks/hooks.json` is filtered and overlaid via a single-file bind mount (filtered = `{}` when the enable list is empty).
+- **Plugin hooks**: always processed. For each `enabledPlugins[<plugin>@<market>] === true`, the plugin's `hooks/hooks.json`, the `hooks` field of `.claude-plugin/plugin.json`, and each hooks file that manifest names are filtered and overlaid via single-file bind mounts (filtered = `{}` when the enable list is empty). For cache-backed plugins, ccairgap filters the version recorded in `~/.claude/plugins/installed_plugins.json`. `hooks` declared in a marketplace entry (`marketplace.json`, `strict: false`) are not filtered.
 - **Project settings** (in the workspace or any `--extra-repo`): always processed. Both `.claude/settings.json` and `.claude/settings.local.json` are filtered and overlaid.
 
-Host files are never mutated; patched copies live under `$SESSION/hook-policy/` and die with the session.
+Host files are never mutated; patched copies live under `$SESSION/hook-policy/` and `$SESSION/plugin-policy/` and die with the session.
 
 ## `statusLine` is not a hook here
 
