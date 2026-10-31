@@ -263,7 +263,7 @@ describe("doctor: selected agent", () => {
       ...(await importOriginal<typeof import("./image.js")>()),
       resolveAgentVersions: vi.fn(async () => {
         throw new Error(
-          "CODEX_VERSION latest could not resolve to an exact host version; pass an exact --docker-build-arg CODEX_VERSION=x.y.z",
+          "CODEX_VERSION could not resolve: no exact host version and no exact release pin in docker/agent-versions.env; pass an exact --docker-build-arg CODEX_VERSION=x.y.z",
         );
       }),
     }));
@@ -274,7 +274,7 @@ describe("doctor: selected agent", () => {
       await doctor();
       const lines = logSpy.mock.calls.map((c) => c[0] as string).join("\n");
 
-      expect(lines).toContain("[FAIL] image: CODEX_VERSION latest could not resolve to an exact host version");
+      expect(lines).toContain("[FAIL] image: CODEX_VERSION could not resolve: no exact host version");
       expect(lines).toContain("[OK] clipboard passthrough:");
     } finally {
       logSpy.mockRestore();

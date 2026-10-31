@@ -10,6 +10,8 @@ import {
   normalizeClaudeVersion,
   normalizeCodexVersion,
   registryRef,
+  parseAgentVersionsEnv,
+  readPinnedAgentVersions,
   resolveAgentVersions,
   validateExpectedCodexVersion,
 } from "./image.js";
@@ -197,18 +199,55 @@ describe("Codex image version helpers", () => {
     );
   });
 
-  it("rejects omitted versions when the host version cannot be resolved", async () => {
+  it("uses the release pin for an agent missing on the host (Claude-only host)", async () => {
     await expect(
       resolveAgentVersions(
         {},
-        {
-          claudeCodeVersion: async () => undefined,
-          codexVersion: async () => "0.134.0",
-        },
+        { claudeCodeVersion: async () => "2.1.316", codexVersion: async () => undefined },
+        () => ({ CLAUDE_CODE_VERSION: "2.1.300", CODEX_VERSION: "0.166.0" }),
+      ),
+    ).resolves.toEqual({ claudeCodeVersion: "2.1.316", codexVersion: "0.166.0" });
+  });
+
+  it("uses the release pin for an agent missing on the host (Codex-only host)", async () => {
+    await expect(
+      resolveAgentVersions(
+        {},
+        { claudeCodeVersion: async () => undefined, codexVersion: async () => "0.170.0" },
+        () => ({ CLAUDE_CODE_VERSION: "2.1.316", CODEX_VERSION: "0.166.0" }),
+      ),
+    ).resolves.toEqual({ claudeCodeVersion: "2.1.316", codexVersion: "0.170.0" });
+  });
+
+  it("prefers the host version over the release pin", async () => {
+    await expect(
+      resolveAgentVersions(
+        {},
+        { claudeCodeVersion: async () => "2.1.200", codexVersion: async () => "0.150.0" },
+        () => ({ CLAUDE_CODE_VERSION: "2.1.316", CODEX_VERSION: "0.166.0" }),
+      ),
+    ).resolves.toEqual({ claudeCodeVersion: "2.1.200", codexVersion: "0.150.0" });
+  });
+
+  it("rejects omitted versions when neither the host nor the pin gives an exact version", async () => {
+    await expect(
+      resolveAgentVersions(
+        {},
+        { claudeCodeVersion: async () => undefined, codexVersion: async () => "0.134.0" },
+        () => ({ CLAUDE_CODE_VERSION: "latest" }),
       ),
     ).rejects.toThrow(
-      "CLAUDE_CODE_VERSION latest could not resolve to an exact host version; pass an exact --docker-build-arg CLAUDE_CODE_VERSION=x.y.z",
+      "CLAUDE_CODE_VERSION could not resolve: no exact host version and no exact release pin in docker/agent-versions.env; pass an exact --docker-build-arg CLAUDE_CODE_VERSION=x.y.z",
     );
+  });
+
+  it("parses docker/agent-versions.env and reads the bundled pins", () => {
+    expect(
+      parseAgentVersionsEnv("# comment\nCLAUDE_CODE_VERSION=2.1.316\n\nCODEX_VERSION=0.166.0\nOTHER=x\n"),
+    ).toEqual({ CLAUDE_CODE_VERSION: "2.1.316", CODEX_VERSION: "0.166.0" });
+    const pins = readPinnedAgentVersions();
+    expect(pins.CLAUDE_CODE_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+    expect(pins.CODEX_VERSION).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it("exports a host Codex version reader", () => {

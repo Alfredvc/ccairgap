@@ -67,7 +67,7 @@ In print mode, `CODEX_API_KEY` from the host environment is forwarded into the c
 
 ccairgap sets `CCAIRGAP_AGENT=codex` and `CODEX_HOME=/home/claude/.codex` for the container. Interactive mode executes Codex through the unified entrypoint as `codex ...`; print mode executes `codex exec ...`. User passthrough tokens appear after the image tag in the Docker argv and are validated before Docker starts.
 
-Before Docker execution, ccairgap resolves exact host Claude Code and Codex versions, computes an image tag that includes both versions, and inspects the resolved image for both agent binaries, the expected Claude Code and Codex versions, and required Codex mount targets. Explicit non-exact `CODEX_VERSION` values fail before pull or build because `latest` is not an image identity.
+Before Docker execution, ccairgap resolves exact host Claude Code and Codex versions (an agent missing on the host uses its pin from the bundled `docker/agent-versions.env`, so Claude Code does not need to be installed on the host), computes an image tag that includes both versions, and inspects the resolved image for both agent binaries, the expected Claude Code and Codex versions, and required Codex mount targets. Explicit non-exact `CODEX_VERSION` values fail before pull or build because `latest` is not an image identity.
 
 ## `exec` command mode
 

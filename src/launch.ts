@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { execa } from "execa";
@@ -427,7 +427,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // Resolved up-front (was previously computed alongside marketplace discovery)
   // so the resume validation step below can reference it without re-resolving.
   // Both `hostClaudeDir(env)` and `realpath()` are pure — relocation is safe.
-  const hostClaude = realpath(hostClaudeDir(env));
+  // A host with only Codex may have no ~/.claude/. Readers then get the
+  // unresolved path and treat every file under it as missing; the
+  // `/host-claude` mount uses an empty session placeholder (see buildMounts).
+  const hostClaudeRaw = hostClaudeDir(env);
+  const hostClaudePresent = existsSync(hostClaudeRaw);
+  const hostClaude = hostClaudePresent ? realpath(hostClaudeRaw) : resolve(hostClaudeRaw);
 
   // Session id is computed below after repoPlans is built — generateId reuses
   // the workspace repo's realpath result rather than re-running realpath here.
@@ -815,7 +820,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // requires host approval state (`enabledMcpjsonServers` /
   // `enableAllProjectMcpServers`, absent a `disabledMcpjsonServers` entry) —
   // the approval dialog is unreachable inside the airgap container.
-  const resolvedClaudeJson = realpath(hostClaudeJson(env));
+  // Missing ~/.claude.json (host with only Codex): applyMcpPolicy reads it as
+  // `{}`; the `/host-claude-json` mount uses an empty session placeholder.
+  const hostClaudeJsonRaw = hostClaudeJson(env);
+  const hostClaudeJsonPresent = existsSync(hostClaudeJsonRaw);
+  const resolvedClaudeJson = hostClaudeJsonPresent
+    ? realpath(hostClaudeJsonRaw)
+    : resolve(hostClaudeJsonRaw);
   const mcpPolicyResult = applyMcpPolicy({
     policy: { enableGlobs: opts.mcpEnable },
     sessionDir: sessionPath,
@@ -926,13 +937,29 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     die(`failed to materialize ~/.claude/ symlink overlay: ${(e as Error).message}`);
   }
 
+  // Bind-mount sources must exist, and the host home is outside the writable
+  // set, so missing host Claude config is replaced by empty placeholders in
+  // session scratch. The entrypoint then sees an empty ~/.claude/ and `{}`.
+  const placeholderDir = join(sessionPath, "host-claude-placeholder");
+  let claudeDirMountSrc = hostClaude;
+  if (!hostClaudePresent) {
+    claudeDirMountSrc = join(placeholderDir, "claude");
+    mkdirSync(claudeDirMountSrc, { recursive: true });
+  }
+  let claudeJsonMountSrc = resolvedClaudeJson;
+  if (!hostClaudeJsonPresent) {
+    claudeJsonMountSrc = join(placeholderDir, "claude.json");
+    mkdirSync(placeholderDir, { recursive: true });
+    writeFileSync(claudeJsonMountSrc, "{}\n", { mode: 0o644 });
+  }
+
   let mounts: Mount[];
   // Anchor on primary repo host path so --bare --repo <other> resolves correctly.
   const ccairgapDir = resolveCcairgapDir(repoEntries[0]?.hostPath ?? process.cwd());
   try {
     mounts = buildMounts({
-      hostClaudeDir: hostClaude,
-      hostClaudeJson: resolvedClaudeJson,
+      hostClaudeDir: claudeDirMountSrc,
+      hostClaudeJson: claudeJsonMountSrc,
       hostCredsDir: join(sessionPath, "creds"),
       authWarningsDir: join(sessionPath, "auth-warnings"),
       hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,

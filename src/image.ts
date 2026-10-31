@@ -21,6 +21,12 @@ export interface AgentVersionHostReaders {
   codexVersion: () => Promise<string | undefined>;
 }
 
+/** Release pins from the bundled `docker/agent-versions.env`. Missing keys are undefined. */
+export interface PinnedAgentVersions {
+  CLAUDE_CODE_VERSION?: string;
+  CODEX_VERSION?: string;
+}
+
 export interface ImageBuildOptions {
   /** Absolute path to the Dockerfile to build. */
   dockerfile: string;
@@ -168,10 +174,40 @@ function validateExactAgentVersion(key: string, value: string): string {
   return value;
 }
 
+/**
+ * Parse `KEY=VALUE` lines of `docker/agent-versions.env`. Blank lines and
+ * `#` comments are ignored. The file stays shell-sourceable because the
+ * release workflow `source`s it.
+ */
+export function parseAgentVersionsEnv(text: string): PinnedAgentVersions {
+  const out: PinnedAgentVersions = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(CLAUDE_CODE_VERSION|CODEX_VERSION)\s*=\s*(\S+)\s*$/.exec(line);
+    if (m) out[m[1] as keyof PinnedAgentVersions] = m[2];
+  }
+  return out;
+}
+
+/** Read the release pins shipped with the package. Empty when the file is unreadable. */
+export function readPinnedAgentVersions(): PinnedAgentVersions {
+  try {
+    return parseAgentVersionsEnv(readFileSync(resolveBundledDockerAsset("agent-versions.env"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolve one agent version. Order: exact `--docker-build-arg`, then the
+ * exact host binary version, then the bundled release pin. The pin covers
+ * hosts that have only one of the two agents: the image always installs both,
+ * and the agent missing on the host gets the release version.
+ */
 async function resolveAgentVersion(
   key: "CLAUDE_CODE_VERSION" | "CODEX_VERSION",
   explicitValue: string | undefined,
   hostVersion: () => Promise<string | undefined>,
+  pinnedVersion: string | undefined,
 ): Promise<string> {
   if (explicitValue !== undefined) {
     return validateExactAgentVersion(key, explicitValue);
@@ -182,8 +218,12 @@ async function resolveAgentVersion(
     return resolved;
   }
 
+  if (pinnedVersion !== undefined && isExactAgentVersion(pinnedVersion)) {
+    return pinnedVersion;
+  }
+
   throw new Error(
-    `${key} latest could not resolve to an exact host version; ` +
+    `${key} could not resolve: no exact host version and no exact release pin in docker/agent-versions.env; ` +
       `pass an exact --docker-build-arg ${key}=x.y.z`,
   );
 }
@@ -222,16 +262,20 @@ export async function resolveAgentVersions(
     claudeCodeVersion: hostClaudeVersion,
     codexVersion: hostCodexVersion,
   },
+  pinned: () => PinnedAgentVersions = readPinnedAgentVersions,
 ): Promise<ResolvedAgentVersions> {
+  const pins = pinned();
   const claudeCodeVersion = await resolveAgentVersion(
     "CLAUDE_CODE_VERSION",
     buildArgs.CLAUDE_CODE_VERSION,
     hostReaders.claudeCodeVersion,
+    pins.CLAUDE_CODE_VERSION,
   );
   const codexVersion = await resolveAgentVersion(
     "CODEX_VERSION",
     buildArgs.CODEX_VERSION,
     hostReaders.codexVersion,
+    pins.CODEX_VERSION,
   );
   return { claudeCodeVersion, codexVersion };
 }

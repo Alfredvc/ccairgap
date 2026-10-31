@@ -974,6 +974,24 @@ exit 0
     expect(manifest.codex?.host_home).toBe(join(fakeHome, ".codex"));
   });
 
+  it("runs selected Codex on a host without ~/.claude/ or ~/.claude.json via session placeholders", async () => {
+    rmSync(join(fakeHome, ".claude"), { recursive: true, force: true });
+    rmSync(join(fakeHome, ".claude.json"), { force: true });
+    const { launch: isolatedLaunch } = await importLaunchWithMocks();
+
+    const result = await isolatedLaunch(baseOptions());
+
+    const argv = dockerRunArgv();
+    const placeholder = join(result.sessionDir, "host-claude-placeholder");
+    expect(argv).toContain(`${join(placeholder, "claude")}:/host-claude:ro`);
+    expect(argv).toContain(`${join(placeholder, "claude.json")}:/host-claude-json:ro`);
+    expect(readFileSync(join(placeholder, "claude.json"), "utf8")).toBe("{}\n");
+    expect(readdirSync(join(placeholder, "claude"))).toEqual([]);
+    // Host home stays untouched: the writable set excludes it.
+    expect(existsSync(join(fakeHome, ".claude"))).toBe(false);
+    expect(existsSync(join(fakeHome, ".claude.json"))).toBe(false);
+  });
+
   it("uses host-resolved versions for default image build args", async () => {
     const resolveAgentVersions = vi.fn(async () => ({
       claudeCodeVersion: "2.1.143",
