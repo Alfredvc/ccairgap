@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.6.3](https://github.com/Alfredvc/ccairgap/compare/v0.6.2...v0.6.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* **claude-args:** deny --bg/--background/--desktop and learn new value-taking flags ([d4402a9](https://github.com/Alfredvc/ccairgap/commit/d4402a9419084ba6a8f810af493c3a9bd310941c))
+* **cli:** honor subcommand options that share a name with root options ([11156f7](https://github.com/Alfredvc/ccairgap/commit/11156f74978f09b16b93d271a97531c2333fe1e8))
+* **entrypoint:** remove the bypass-immune paths advisory ([e125af5](https://github.com/Alfredvc/ccairgap/commit/e125af5788c26924943eff6f43ea606e421ded1f))
+* filter plugin hooks and MCP servers at the installed plugin path ([e94adee](https://github.com/Alfredvc/ccairgap/commit/e94adeef843853d3bae597e1bdaf9070e11743ce))
+* launch on hosts that have only Claude Code or only Codex ([c0c0856](https://github.com/Alfredvc/ccairgap/commit/c0c0856f13a223f9815b8196360f853fded267c3))
+* materialize relative ~/.claude symlinks whose target leaves ~/.claude ([aa29e90](https://github.com/Alfredvc/ccairgap/commit/aa29e90cf1f808de4716153a52746030772359dc))
+* reduce macOS clipboard watcher CPU ([9e6d8a4](https://github.com/Alfredvc/ccairgap/commit/9e6d8a45e76082ad83d27ab5f4daf810a957ccd6))
+
 ## [0.6.2](https://github.com/Alfredvc/ccairgap/compare/v0.6.1...v0.6.2) (2026-05-29)
 
 
