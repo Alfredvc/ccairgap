@@ -315,35 +315,6 @@ apply_ccairgap_overlay() {
 apply_ccairgap_overlay "$CCAIRGAP_USER_DIR"
 apply_ccairgap_overlay "$CCAIRGAP_DIR"
 
-# Bypass-immune paths advisory: baked-in every session (independent of .ccairgap/).
-# Upstream Claude Code enforces a safety gate (src/utils/permissions/permissions.ts
-# step 1g and src/utils/permissions/filesystem.ts checkPathSafetyForAutoEdit) that
-# ignores --dangerously-skip-permissions for these paths and fires an interactive
-# prompt the ccairgap session cannot answer. Inform the model of the consequence
-# (advisory, not prohibitive). Mirrors DANGEROUS_DIRECTORIES / DANGEROUS_FILES /
-# isClaudeSettingsPath upstream — grow when those change.
-# Per SPEC §"Entrypoint" step 9: appended after the .ccairgap/ overlay so it is
-# always the last block in ~/.claude/CLAUDE.md regardless of user-supplied content.
-cat >> "$CLAUDE_DIR/CLAUDE.md" <<'CAVEAT_EOF'
-
-# ccairgap sandbox — bypass-immune paths
-
-This session runs with `--dangerously-skip-permissions`, but Claude Code's
-upstream safety gate ignores bypass mode for the paths below: Edit/Write to
-them **will trigger an interactive permission prompt** to the host user,
-regardless of bypass.
-
-Paths that trigger the prompt:
-
-- Directories: `.git/`, `.vscode/`, `.idea/`, `.claude/`
-- Files: `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`,
-  `.zprofile`, `.profile`, `.ripgreprc`, `.mcp.json`, `.claude.json`
-- `.claude/settings.json`, `.claude/settings.local.json`
-
-Reading these paths is unaffected. Editing is allowed but requires the host
-user to approve each request.
-CAVEAT_EOF
-
 # Git identity from host (CLI reads host git config and passes via env).
 # Host-side fallback ensures these are set even when host has no config.
 if [ -n "${CCAIRGAP_GIT_USER_NAME:-}" ]; then

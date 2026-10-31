@@ -690,10 +690,9 @@ Steps:
    }
    ```
 8. Apply the `.ccairgap/` scope overlay — see §"`.ccairgap/` scope Claude config" for the full contract. `.ccairgap/CLAUDE.md` is appended to `~/.claude/CLAUDE.md`, `.ccairgap/settings.json` is deep-merged into `~/.claude/settings.json`, `.ccairgap/mcp.json` `mcpServers` are merged into `~/.claude.json`, and `.ccairgap/skills/` is rsynced into `~/.claude/skills/`. Overlay steps run after the hook-/MCP-policy passes so ccairgap-scope entries bypass `--hook-enable` / `--mcp-enable` by design.
-9. Append a baked-in bypass-immune-paths warning to `~/.claude/CLAUDE.md`. Informs the in-session model that Claude Code's upstream safety gate (`src/utils/permissions/permissions.ts` step 1g + `checkPathSafetyForAutoEdit` in `src/utils/permissions/filesystem.ts`) ignores `--dangerously-skip-permissions` for `.git/`, `.vscode/`, `.idea/`, `.claude/`, shell rc files, `.mcp.json`, `.claude.json`, and `.claude/{settings.json,settings.local.json}` — Edit/Write to any of those triggers an interactive prompt the sandbox cannot answer. The message is advisory (states the consequence, does not forbid the action). Appended after the `.ccairgap/` overlay so it is always the last block in `~/.claude/CLAUDE.md` regardless of user-supplied content. Mirrors the DANGEROUS_DIRECTORIES / DANGEROUS_FILES sets upstream — grow the warning when those lists change.
-10. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
-11. If `CCAIRGAP_ENTRYPOINT_MODE=exec`, set the final command to `"$@"` after setup. This is the production command-mode path. The CLI requires at least one command token and passes the command argv unchanged; the entrypoint performs no shell parsing. Missing mode defaults to `agent`; unknown mode exits with an error.
-12. Build the final selected-agent args:
+9. If no `--repo` was passed (ro-only session), cwd defaults to `/workspace` (simple fallback). Otherwise cwd = `--repo`'s preserved path (the workspace). `--extra-repo` entries are mounted at their preserved paths but never become cwd.
+10. If `CCAIRGAP_ENTRYPOINT_MODE=exec`, set the final command to `"$@"` after setup. This is the production command-mode path. The CLI requires at least one command token and passes the command argv unchanged; the entrypoint performs no shell parsing. Missing mode defaults to `agent`; unknown mode exits with an error.
+11. Build the final selected-agent args:
    - **Claude branch:** always `claude --dangerously-skip-permissions`; then label, resume, passthrough, and optionally print.
    - **Label (`-n`):** `CCAIRGAP_NAME` carries the session id (always set by the CLI). Use `-n "ccairgap $CCAIRGAP_NAME"`. Fallback to `-n "ccairgap"` only when `CCAIRGAP_NAME` is unset (i.e. the entrypoint was launched directly without the CLI env).
    - **Resume (`-r`):** if `CCAIRGAP_RESUME` is set, append `-r "$CCAIRGAP_RESUME"`.
@@ -702,7 +701,7 @@ Steps:
    - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`. `-p` stays the final positional so claude treats `$CCAIRGAP_PRINT` as the prompt argument (claude's prompt-positional convention).
    - **Codex interactive branch:** `codex --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@"`.
    - **Codex print branch:** `codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@" "$CCAIRGAP_PRINT"`.
-13. If `CCAIRGAP_ENTRYPOINT_DRY_RUN=1`, print the selected branch, cwd, `CCAIRGAP_ENTRYPOINT_MODE`, `CCAIRGAP_AGENT`, optional `CCAIRGAP_PRINT`, `CODEX_HOME`, home readiness, and final shell-quoted command, then exit before `exec`. This is test-only and differs from `CCAIRGAP_TEST_CMD`, which exits before branch selection.
+12. If `CCAIRGAP_ENTRYPOINT_DRY_RUN=1`, print the selected branch, cwd, `CCAIRGAP_ENTRYPOINT_MODE`, `CCAIRGAP_AGENT`, optional `CCAIRGAP_PRINT`, `CODEX_HOME`, home readiness, and final shell-quoted command, then exit before `exec`. This is test-only and differs from `CCAIRGAP_TEST_CMD`, which exits before branch selection.
 
 ## Auto-memory
 
