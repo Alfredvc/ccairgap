@@ -70,6 +70,9 @@ const HARD_DENY: Record<string, string> = {
   "--version": "would exit before the session starts; run `ccairgap doctor` for the in-image version",
   "--chrome": "no Chrome binary inside the container; the integration cannot run",
   "--no-chrome": "no Chrome binary inside the container; the integration cannot run",
+  "--bg": "background mode returns at once; the container's main process exits and the container stops. Use `ccairgap --print` or a second `ccairgap` session",
+  "--background": "background mode returns at once; the container's main process exits and the container stops. Use `ccairgap --print` or a second `ccairgap` session",
+  "--desktop": "no Claude Desktop app inside the container; run `claude --desktop` on the host",
 };
 
 const SOFT_DROP: Record<string, string> = {
@@ -122,6 +125,11 @@ const VALUE_TAKING = new Set<string>([
   "--json-schema",
   "--remote-control-session-name-prefix",
   "--file",
+  "--autocompact",
+  "--environment",
+  "--permission-prompts",
+  "--plugin-url",
+  "--system-prompt-snapshot",
 ]);
 
 /** Lookup a canonical long-form flag against the denylist. */

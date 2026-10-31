@@ -952,6 +952,8 @@ Each entry covers all canonical forms (`--flag`, `-f`, `--flag=val`, `-fval`).
 | `-h`, `--help` | would exit before the session starts; run `claude --help` on the host |
 | `-v`, `--version` | would exit before the session starts; run `ccairgap doctor` for the in-image version |
 | `--chrome`, `--no-chrome` | no Chrome binary inside the container; the integration cannot run |
+| `--bg`, `--background` | background mode returns at once; the container's main process exits and the container stops. Use `ccairgap --print` or a second `ccairgap` session |
+| `--desktop` | no Claude Desktop app inside the container; run `claude --desktop` on the host |
 
 #### SOFT drop (warn on stderr, strip)
 
@@ -962,7 +964,7 @@ Each entry covers all canonical forms (`--flag`, `-f`, `--flag=val`, `-fval`).
 
 #### Allow (implicit)
 
-Everything not above passes through unchanged. Examples: `--model`, `--effort`, `--agent`, `--agents`, `--permission-mode`, `--append-system-prompt`, `--system-prompt`, `--allowed-tools` / `--allowedTools`, `--disallowed-tools` / `--disallowedTools`, `--tools`, `--fallback-model`, `--verbose`, `--debug`, `--betas`, `--brief`, `--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, `--setting-sources`, plus print-mode companions (`--output-format`, `--input-format`, `--max-budget-usd`, `--json-schema`, `--no-session-persistence`, `--include-partial-messages`, `--include-hook-events`, `--replay-user-messages`) — print-mode companions only meaningfully combine with `ccairgap --print`.
+Everything not above passes through unchanged. Examples: `--model`, `--effort`, `--agent`, `--agents`, `--permission-mode`, `--append-system-prompt`, `--system-prompt`, `--allowed-tools` / `--allowedTools`, `--disallowed-tools` / `--disallowedTools`, `--tools`, `--fallback-model`, `--verbose`, `--debug`, `--betas`, `--brief`, `--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, `--setting-sources`, `--autocompact`, `--permission-prompts`, `--system-prompt-snapshot`, `--plugin-url` (fetches a plugin `.zip` over the network for the session; its hooks and MCP servers are not filtered by `--hook-enable` / `--mcp-enable`), and the cloud/remote flags `--cloud`, `--teleport`, `--environment`, `--remote-control` (they need network access to Anthropic's cloud-session service), plus print-mode companions (`--output-format`, `--input-format`, `--max-budget-usd`, `--json-schema`, `--no-session-persistence`, `--include-partial-messages`, `--include-hook-events`, `--replay-user-messages`) — print-mode companions only meaningfully combine with `ccairgap --print`.
 
 ### Tokenization
 

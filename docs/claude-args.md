@@ -40,6 +40,6 @@ A small denylist blocks:
 - Flags ccairgap owns: `--name`, `--resume`, `--print`.
 - The resume family: `--continue`, `--from-pr`, …
 - Host-path / policy-bypass flags: `--add-dir`, `--mcp-config`, `--settings`, …
-- Pointless-in-container flags: `--help`, `--version`, `--chrome`.
+- Pointless-in-container flags: `--help`, `--version`, `--chrome`, `--bg` / `--background`, `--desktop`.
 
 Hard-denied flags abort launch with a one-line pointer at the ccairgap equivalent. `--dangerously-skip-permissions` is soft-dropped (already set by the entrypoint). Full denylist: [SPEC.md](SPEC.md) §"Selected-agent arg passthrough".

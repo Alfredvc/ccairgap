@@ -139,6 +139,29 @@ describe("validateClaudeArgs — hard deny", () => {
     }
   });
 
+  it("flags background and Desktop launch modes (--bg, --background, --desktop)", () => {
+    for (const tok of ["--bg", "--background", "--desktop"]) {
+      const r = validateClaudeArgs([tok], "cli");
+      expect(r.hardDenied).toHaveLength(1);
+      expect(r.hardDenied[0]!.canonical).toBe(tok);
+    }
+  });
+
+  it("passes cloud, teleport, remote-control, environment, and plugin-url flags through", () => {
+    const args = [
+      "--cloud",
+      "--teleport",
+      "--remote-control",
+      "--environment",
+      "env_1",
+      "--plugin-url",
+      "https://example.com/p.zip",
+    ];
+    const r = validateClaudeArgs(args, "cli");
+    expect(r.hardDenied).toEqual([]);
+    expect(r.filtered).toEqual(args);
+  });
+
   it("error message attributes config source when source=config", () => {
     const r = validateClaudeArgs(["--name", "foo"], "config");
     expect(r.hardDenied[0]!.message).toMatch(/^ccairgap: config\.yaml: claude-args/);
@@ -177,6 +200,20 @@ describe("validateClaudeArgs — value-taking flag tokenization", () => {
     const r = validateClaudeArgs(["--unknown-new-flag", "--add-dir", "/host"], "cli");
     expect(r.hardDenied).toHaveLength(1);
     expect(r.hardDenied[0]!.canonical).toBe("--add-dir");
+  });
+
+  it("new value-taking flags consume their next token (no false-positive deny)", () => {
+    for (const flag of [
+      "--autocompact",
+      "--environment",
+      "--permission-prompts",
+      "--plugin-url",
+      "--system-prompt-snapshot",
+    ]) {
+      const r = validateClaudeArgs([flag, "--add-dir"], "cli");
+      expect(r.hardDenied).toEqual([]);
+      expect(r.filtered).toEqual([flag, "--add-dir"]);
+    }
   });
 
   it("--agents JSON value with --not-a-flag substring is left alone", () => {
