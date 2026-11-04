@@ -49,6 +49,9 @@ fi
 #  - host background-session state (/jobs, /daemon). The leading slash anchors
 #    the pattern at the transfer root, so a nested dir of the same name in a
 #    skill is kept.
+#  - top-level settings.local.json. Claude Code reads it only as project-local
+#    settings when the working directory is $HOME, so a copy would let `cd ~`
+#    load hooks that the hook policy did not filter.
 # Note: absolute symlinks under host ~/.claude/ would normally fail rsync -L
 # in the container namespace (their /Users/... targets don't exist). The CLI
 # pre-materializes each one in an allowlisted config path host-side and
@@ -75,6 +78,7 @@ if [ -d "$HOST_CLAUDE" ]; then
         --exclude='/daemon' \
         --exclude='/daemon.*' \
         --exclude='/daemon-*' \
+        --exclude='/settings.local.json' \
         --exclude='plugins/cache' \
         --exclude='.credentials.json' \
         --exclude='.DS_Store' \

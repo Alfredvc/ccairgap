@@ -34,6 +34,13 @@ describe("docker/entrypoint.sh ~/.claude copy invariants", () => {
     expect(ENTRYPOINT).toContain("--exclude='/daemon-*'");
   });
 
+  it("does not copy the user-level settings.local.json", () => {
+    // Claude Code reads it as project-local settings when cwd is $HOME, and the
+    // hook policy does not filter it. The anchor keeps nested files of that name.
+    expect(ENTRYPOINT).toContain("--exclude='/settings.local.json'");
+    expect(ENTRYPOINT).not.toContain("--exclude='settings.local.json'");
+  });
+
   it("runs the interactive Codex branch without the shared background server", () => {
     // The image has no `ps`, and the shared app-server fails without it.
     expect(ENTRYPOINT).toContain(

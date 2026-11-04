@@ -84,6 +84,7 @@ Order doesn't matter; match is OR across entries.
 - **User settings** (`~/.claude/settings.json`): always processed. `hooks` field replaced with the filtered set (empty `{}` when the enable list is empty); `disableAllHooks` always forced to `false` so the custom `statusLine` keeps running.
 - **Plugin hooks**: always processed. For each `enabledPlugins[<plugin>@<market>] === true`, the plugin's `hooks/hooks.json`, the `hooks` field of `.claude-plugin/plugin.json`, and each hooks file that manifest names are filtered and overlaid via single-file bind mounts (filtered = `{}` when the enable list is empty). For cache-backed plugins, ccairgap filters the version recorded in `~/.claude/plugins/installed_plugins.json`. `hooks` declared in a marketplace entry (`marketplace.json`, `strict: false`) are not filtered.
 - **Project settings** (in the workspace or any `--extra-repo`): always processed. Both `.claude/settings.json` and `.claude/settings.local.json` are filtered and overlaid.
+- **`~/.claude/settings.local.json`**: never copied into the container. Claude Code reads this file only as project-local settings when the working directory is `$HOME`, so its hooks do not run in a session, even after `cd ~`.
 
 Host files are never mutated; patched copies live under `$SESSION/hook-policy/` and `$SESSION/plugin-policy/` and die with the session.
 
