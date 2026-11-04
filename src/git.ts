@@ -1,4 +1,4 @@
-import { statSync, readFileSync, existsSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { execa } from "execa";
 
@@ -83,16 +83,29 @@ export async function gitBranchExists(repo: string, branch: string): Promise<boo
   }
 }
 
-/** `git -C <realRepo> fetch <sessionClone> <branch>:<branch>`. Returns true on success. */
+/**
+ * `git -C <realRepo> fetch <sessionClone> <branch>:<branch>`. Returns true on success.
+ * `--no-tags` matters: tag following would write agent-made tags into the real repo.
+ */
 export async function gitFetchSandbox(
   realRepo: string,
   sessionClone: string,
   branch: string,
 ): Promise<boolean> {
   try {
-    await execa("git", ["-C", realRepo, "fetch", sessionClone, `${branch}:${branch}`], {
-      stdio: "inherit",
-    });
+    await execa(
+      "git",
+      [
+        "-C",
+        realRepo,
+        "fetch",
+        "--no-tags",
+        "--no-recurse-submodules",
+        sessionClone,
+        `${branch}:${branch}`,
+      ],
+      { stdio: "inherit" },
+    );
     return true;
   } catch {
     return false;
@@ -113,7 +126,15 @@ export async function gitFetchBranchAs(
   try {
     await execa(
       "git",
-      ["-C", realRepo, "fetch", sessionClone, `refs/heads/${src}:refs/heads/${dst}`],
+      [
+        "-C",
+        realRepo,
+        "fetch",
+        "--no-tags",
+        "--no-recurse-submodules",
+        sessionClone,
+        `refs/heads/${src}:refs/heads/${dst}`,
+      ],
       { stdio: "inherit" },
     );
     return true;
@@ -175,6 +196,12 @@ export type DirtyStatus =
  * `.gitignore`. A scan failure (git crashes, `.git/` missing) is returned
  * as a distinct `scan-failed` kind — callers err on preserve.
  *
+ * Callers must pass a sanitized clone or a worktree of one (see
+ * `sanitizeSessionClone`). `--ignore-submodules=dirty` is required even then:
+ * plain `git status` runs a command from a submodule's own config, and a
+ * container wrote that config. It hides changes inside a submodule, so a
+ * populated gitlink directory counts as one modified entry.
+ *
  * Paths excluded from the scan via pathspec:
  *   .claude/ | .mcp.json | CLAUDE.md | AGENTS.md | AGENTS.override.md
  *   .codex/ | .agents/skills/
@@ -187,6 +214,21 @@ export type DirtyStatus =
  * install flows) are also discarded on exit. Acceptable — sandbox shouldn't
  * evolve Claude config across sessions.
  */
+async function populatedGitlinks(dir: string): Promise<number> {
+  const { stdout } = await execa("git", ["-C", dir, "ls-files", "--stage", "-z"]);
+  let count = 0;
+  for (const entry of stdout.split("\0")) {
+    if (!entry.startsWith("160000 ")) continue;
+    const path = join(dir, entry.slice(entry.indexOf("\t") + 1));
+    try {
+      if (lstatSync(path).isDirectory() && readdirSync(path).length > 0) count++;
+    } catch {
+      // absent: nothing to lose
+    }
+  }
+  return count;
+}
+
 export async function dirtyTree(dir: string): Promise<DirtyStatus> {
   try {
     const { stdout } = await execa("git", [
@@ -194,6 +236,7 @@ export async function dirtyTree(dir: string): Promise<DirtyStatus> {
       dir,
       "status",
       "--porcelain",
+      "--ignore-submodules=dirty",
       "--",
       ".",
       ":(exclude).claude",
@@ -205,8 +248,9 @@ export async function dirtyTree(dir: string): Promise<DirtyStatus> {
       ":(exclude).agents/skills",
     ]);
     const lines = stdout.split("\n").filter((l) => l.length > 0);
-    if (lines.length === 0) return { kind: "clean" };
-    let modified = 0;
+    const populatedSubmodules = await populatedGitlinks(dir);
+    if (lines.length === 0 && populatedSubmodules === 0) return { kind: "clean" };
+    let modified = populatedSubmodules;
     let untracked = 0;
     for (const l of lines) {
       if (l.startsWith("??")) untracked++;

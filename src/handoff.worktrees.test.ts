@@ -226,7 +226,9 @@ describe("handoff — agent-controlled worktree data", () => {
 
     expect(readFileSync(victim, "utf8")).toBe("safe\n");
     expect(r.preserved).toBe(true);
-    expect(log.text()).toContain("not a regular file");
+    // Sanitization moved the symlink away, so the worktree has no `.git`.
+    expect(existsSync(join(wt, ".git"))).toBe(false);
+    expect(log.text()).toContain("ENOENT");
   });
 
   it("does not write through a symlinked admin gitdir file", async () => {
@@ -271,7 +273,7 @@ describe("handoff — agent-controlled worktree data", () => {
     const r = await handoff(sessionDir, "test", log.logger);
 
     expect(r.preserved).toBe(true);
-    expect(log.text()).toContain("invalid worktree branch name");
+    expect(log.text()).toContain("invalid HEAD");
     expect(git(hostRepo, "rev-parse", "main")).toBe(mainBefore);
   });
 });

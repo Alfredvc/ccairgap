@@ -145,4 +145,14 @@ describe("dirtyTree", () => {
       expect(r.error.length).toBeGreaterThan(0);
     }
   });
+
+  it("counts a populated gitlink directory as modified", async () => {
+    mkdirSync(join(clone, "sub"));
+    git(["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},sub`], clone);
+    git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "sub"], clone);
+    expect(await dirtyTree(clone)).toEqual({ kind: "clean" });
+
+    writeFileSync(join(clone, "sub", "f"), "x\n");
+    expect(await dirtyTree(clone)).toEqual({ kind: "dirty", modified: 1, untracked: 0 });
+  });
 });

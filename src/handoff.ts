@@ -9,10 +9,9 @@ import {
   gitBranchExists,
   gitFetchBranchAs,
   gitFetchSandbox,
-  resolveGitDir,
 } from "./git.js";
 import { prepareLinkedWorktrees, type LinkedWorktree } from "./worktrees.js";
-import { writeAlternates } from "./alternates.js";
+import { sanitizeSessionClone } from "./sessionCloneTrust.js";
 import { outputDir } from "./paths.js";
 import { copyCodexSessions } from "./codexSessions.js";
 
@@ -165,17 +164,19 @@ export async function scanDirtyRepos(
     return out;
   }
   for (const repo of manifest.repos) {
-    const sessionClone = join(
-      sessionDirPath,
-      "repos",
-      repo.alternates_name ?? repo.basename,
-    );
+    const name = repo.alternates_name ?? repo.basename;
+    const sessionClone = join(sessionDirPath, "repos", name);
     if (!existsSync(repo.host_path) || !existsSync(sessionClone)) continue;
     try {
-      const realGitDir = resolveGitDir(repo.host_path);
-      writeAlternates(sessionClone, join(realGitDir, "objects"));
+      await sanitizeSessionClone({
+        sessionDir: sessionDirPath,
+        name,
+        sessionClone,
+        hostPath: repo.host_path,
+      });
     } catch {
-      // best-effort — dirtyTree below will surface scan-failed if relevant
+      // handoff reports this as a scan failure. No host git may run in this clone.
+      continue;
     }
     const status = await dirtyTree(sessionClone);
     if (status.kind === "dirty") {
@@ -308,11 +309,8 @@ export async function handoff(
   }> = [];
 
   for (const repo of manifest.repos) {
-    const sessionClone = join(
-      sessionDirPath,
-      "repos",
-      repo.alternates_name ?? repo.basename,
-    );
+    const name = repo.alternates_name ?? repo.basename;
+    const sessionClone = join(sessionDirPath, "repos", name);
     if (!existsSync(repo.host_path)) {
       warnings.push(`host repo path gone, skipping fetch: ${repo.host_path}`);
       fetched.push({ hostPath: repo.host_path, branch, status: "failed" });
@@ -324,15 +322,24 @@ export async function handoff(
       continue;
     }
 
-    // Rewrite alternates back to the real host objects path. Required before
-    // dirtyTree()'s `git status` and the fetch below.
+    // Rebuild the container-written `.git` before any other host git command.
+    // This also points alternates at the real host objects, which dirtyTree()
+    // and the fetch below need. On failure no host git may run in this clone.
     try {
-      const realGitDir = resolveGitDir(repo.host_path);
-      writeAlternates(sessionClone, join(realGitDir, "objects"));
+      await sanitizeSessionClone({
+        sessionDir: sessionDirPath,
+        name,
+        sessionClone,
+        hostPath: repo.host_path,
+      });
     } catch (e) {
-      warnings.push(
-        `alternates rewrite failed for ${repo.host_path}: ${(e as Error).message}`,
-      );
+      scanFailedRepos.push({
+        hostPath: repo.host_path,
+        sessionClone,
+        error: `cannot sanitize session clone: ${(e as Error).message}`,
+      });
+      fetched.push({ hostPath: repo.host_path, branch, status: "failed" });
+      continue;
     }
 
     // Dirty-tree detection — runs for every repo (not only empty-sandbox).

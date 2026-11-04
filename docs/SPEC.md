@@ -1209,8 +1209,8 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
 
 1. Read `$SESSION/<id>/manifest.json`. Check the top-level `"version"` field; if it is unknown to the current CLI, abort with a clear message (`"manifest v<N> requires ccairgap ≥ <X.Y.Z>"`). Otherwise extract the repo→host-path mapping.
 2. For each entry in the manifest:
-   - Rewrite the session clone's `.git/objects/info/alternates` back to `<real-host-path>/.git/objects/` so host `git` can traverse history (the container-side path `/host-git-alternates/...` is meaningless on the host).
-   - Prepare linked worktrees. Read each `.git/worktrees/<name>/` admin dir in the session clone. Map the recorded path to the session clone: a worktree under `<real-host-path>` maps to the same relative path under the session clone. Rewrite the worktree's `.git` file and the admin dir's `gitdir` file to those host paths, so host `git` reaches the session clone and never the real repo's admin dir with the same name. Agent-controlled input is untrusted: a symlink in any of these places, or a target outside the session clone, counts as a scan failure and no file is written. A worktree recorded outside the session clone is lost with the container, so handoff warns and scans only its branch.
+   - **Sanitize the session clone before any other host `git` command.** The container wrote the clone's `.git`, and `git(1)` §SECURITY says that running Git commands in an untrusted `.git` can run arbitrary commands, through config, hooks and pointer files. Handoff follows the documented answer and reads that `.git` only through `upload-pack`. See §"Session clone sanitization".
+   - Prepare linked worktrees. Read each `.git/worktrees/<name>/` admin dir that sanitization rebuilt. Map the recorded path to the session clone: a worktree under `<real-host-path>` maps to the same relative path under the session clone. Rewrite the worktree's `.git` file and the admin dir's `gitdir` file to those host paths, so host `git` reaches the session clone and never the real repo's admin dir with the same name. The worktree's contents are untrusted: a symlink there, or a target outside the session clone, counts as a scan failure and no file is written. A worktree recorded outside the session clone is lost with the container, so handoff warns and scans only its branch.
    - For each linked worktree that is checked out on a branch other than the sandbox branch: validate the name with `git check-ref-format`, then count commits not reachable from `origin/*` or the sandbox branch. If the count is > 0, run `git -C <real-host-path> fetch <session-clone> refs/heads/<branch>:refs/heads/ccairgap/<id>-worktrees/<branch>`. This runs whether or not the sandbox branch has commits. The commits on a detached HEAD are not delivered.
    - Count commits on `ccairgap/<id>` not reachable from any `origin/*` ref in the session clone: `git -C <session-clone> rev-list --count ccairgap/<id> --not --remotes=origin`.
      - If the count is 0, **skip the fetch** — the sandbox branch has no new work, and creating an empty ref on the host would be noise. Record the repo as `empty`.
@@ -1235,6 +1235,29 @@ Used by both the exit trap and `ccairgap recover`. Takes a `$SESSION/<id>/` dir 
 
    Known limitation: edits to files matched by `.gitignore` (e.g. `.env.local`) are not detected and are lost on exit. Workaround: launch with `--sync <path>`.
 7. `rm -rf $SESSION/<id>` unless step 6 preserved it.
+
+### Session clone sanitization
+
+`sanitizeSessionClone` in `src/sessionCloneTrust.ts` runs once per clone, on the host, after the container has stopped. All its state is under `$SESSION/sanitized-git/<alternates_name>/`, which the container cannot see.
+
+1. Reject a `.git` that is not a real directory, a `commondir` file, and a symlink at `objects` or `objects/info`. A rejection counts as a scan failure, and handoff runs no other `git` command for that repo.
+2. Move `.git` to `untrusted-git/`, and replace its `objects/info/alternates` with `<real-host-path>/.git/objects/`. No git command may run in `untrusted-git/`. It stays until the session dir is removed.
+3. Create a new `.git` with `git init --bare --template=`, so it has no hooks. Set its alternates to the host objects, and set only `core.bare`, `core.logAllRefUpdates` and `remote.origin.*` in its config.
+4. Run `git fetch --no-tags --no-recurse-submodules --update-shallow --update-head-ok <untrusted-git> +refs/*:refs/*` in the new `.git`. The clone's `upload-pack` is the only git process that opens the untrusted directory.
+5. Copy the `HEAD` text after validation, and build the index with `git read-tree HEAD`. Rebuild each linked worktree's admin dir in the same way.
+6. Move the new `.git` into the clone.
+7. Walk the working tree without following symlinks, and clear every other `.git`, in any letter case. A regular `.git` file at a path that a rebuilt worktree admin dir names stays, and the host writes its `gitdir:` line. Any other `.git` moves to `nested-git/<hash>`, and a `.ccairgap-moved-git` note takes its place. The note names the new path and keeps a directory that held only a `.git` visible to the dirty scan. An unreadable directory fails the walk, and the failure counts as a scan failure.
+8. Write the `done` marker.
+
+Step 7 is required because plain `git status` and `git add -A` in the clone run the config of a repo at a gitlink path, and `git add -A` records an untracked nested repo as a gitlink. A new `.git` at the clone root does not stop either route.
+
+The result is that every later host `git` command in the clone is safe, including the commands that the preservation warning prints for the user. A command run from inside `nested-git/` or `untrusted-git/` is not safe. Reflogs, stash history below the top entry, staged-versus-unstaged differences, and merge or rebase state do not survive the rebuild. `git status` reports all uncommitted changes as working tree changes. Nested repos lose their `.git` in the clone, so `git add -A` records their files as ordinary files, and it also records the note. A `--sync` copy of a path inside the clone runs after this walk, so the copy has the note and no nested `.git`.
+
+`scanOrphans` runs from `list`, from shell completion and at every launch, so a session could still be starting when it runs. It therefore never sanitizes. It runs host `git` only in a clone with the `done` marker, and `list` shows other clones as `not-scanned`.
+
+The dirty scan passes `--ignore-submodules=dirty`, so it never starts a process inside a submodule. Step 7 also removes the submodule's `.git`, so Git cannot see inside a submodule. A populated gitlink directory therefore counts as one modified entry, and a session with an initialized submodule is always preserved unless `--no-preserve-dirty` applies.
+
+Fetches into a real host repo pass `--no-tags`, because tag following would write refs outside §"Host writable paths", and `--no-recurse-submodules`.
 
 Failure at any step does not cause the routine to skip subsequent steps. Goal is best-effort preservation of work.
 

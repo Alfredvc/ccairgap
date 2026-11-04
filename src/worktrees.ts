@@ -29,22 +29,29 @@ function readRegularFile(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+/** Host path in the session clone for a path that a worktree recorded. Null when it is outside the clone. */
+export function mapRecordedPath(sessionClone: string, hostPath: string, recorded: string): string | null {
+  // Check the session clone first: a rewritten admin dir records that path.
+  if (isInside(sessionClone, recorded)) return recorded;
+  return isInside(hostPath, recorded) ? join(sessionClone, relative(hostPath, recorded)) : null;
+}
+
 function writeIfChanged(path: string, content: string): void {
   if (readRegularFile(path) !== content) writeFileSync(path, content);
 }
 
 /**
- * Enumerate the linked worktrees of a session clone and repoint them at the host.
+ * Enumerate the linked worktrees of a sanitized session clone and repoint them
+ * at the host. Call `sanitizeSessionClone` first.
  *
  * The container records absolute paths under `hostPath`, where it mounts the
  * clone. On the host, those paths are the real repo: its `.git/worktrees/<name>`
  * can exist with the same name. This rewrite makes `git -C <worktree>` safe on
- * the host, in the same way as the alternates rewrite. It is idempotent.
+ * the host. It is idempotent.
  *
- * Throws on a symlink in the admin data, or on a worktree that resolves outside
- * the clone. Callers treat a throw as a scan failure and preserve the session.
- * Do not call this while the session's container runs: the container needs the
- * recorded paths.
+ * Throws on a symlink in the worktree data, or on a worktree that resolves
+ * outside the clone. Callers treat a throw as a scan failure and preserve the
+ * session.
  */
 export function prepareLinkedWorktrees(sessionClone: string, hostPath: string): LinkedWorktree[] {
   const adminRoot = join(sessionClone, ".git", "worktrees");
@@ -70,12 +77,7 @@ export function prepareLinkedWorktrees(sessionClone: string, hostPath: string): 
     const head = readRegularFile(join(adminDir, "HEAD")).trim();
     const branch = head.match(/^ref: refs\/heads\/(.+)$/)?.[1] ?? null;
 
-    // Check the session clone first: a rewritten admin dir records that path.
-    const mapped = isInside(sessionClone, recordedPath)
-      ? recordedPath
-      : isInside(hostPath, recordedPath)
-        ? join(sessionClone, relative(hostPath, recordedPath))
-        : null;
+    const mapped = mapRecordedPath(sessionClone, hostPath, recordedPath);
 
     if (mapped === null || basename(dotGit) !== ".git" || !existsSync(mapped)) {
       out.push({ recordedPath, path: null, branch });

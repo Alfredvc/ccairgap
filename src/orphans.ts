@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { sessionsDir } from "./paths.js";
 import { readManifest } from "./manifest.js";
 import { countCommitsAhead, dirtyTree } from "./git.js";
+import { isSessionCloneSanitized } from "./sessionCloneTrust.js";
 import { prepareLinkedWorktrees } from "./worktrees.js";
 import { runningContainerNames } from "./sessionId.js";
 
@@ -17,6 +18,12 @@ export interface Orphan {
    * scan-failed repos are absent from the map.
    */
   dirty: Record<string, { modified: number; untracked: number }>;
+  /**
+   * Basenames of clones with no completed handoff. Their `.git` is untrusted,
+   * and this scan may run before a session's container starts, so it must not
+   * sanitize them and must not run host git in them.
+   */
+  notScanned: string[];
 }
 
 /** Scan sessions dir; return sessions whose container is not running. */
@@ -35,6 +42,7 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
     let repos: string[] = [];
     const commits: Record<string, number> = {};
     const dirty: Record<string, { modified: number; untracked: number }> = {};
+    const notScanned: string[] = [];
     try {
       const m = readManifest(sd, cliVer);
       repos = m.repos.map((r) => r.host_path);
@@ -44,8 +52,11 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
       // their `id`, so the substitution remains correct.
       const branch = m.branch ?? `sandbox/${id}`;
       for (const r of m.repos) {
-        const sessionClone = join(sd, "repos", r.alternates_name ?? r.basename);
-        if (existsSync(sessionClone)) {
+        const name = r.alternates_name ?? r.basename;
+        const sessionClone = join(sd, "repos", name);
+        if (existsSync(sessionClone) && !isSessionCloneSanitized(sd, name)) {
+          notScanned.push(r.basename);
+        } else if (existsSync(sessionClone)) {
           commits[r.basename] = await countCommitsAhead(
             sessionClone,
             branch,
@@ -60,7 +71,6 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
             }
           };
           await addIfDirty(sessionClone);
-          // The caller's `running` check protects a live container's paths.
           for (const wt of prepareLinkedWorktrees(sessionClone, r.host_path)) {
             if (wt.path !== null) await addIfDirty(wt.path);
           }
@@ -71,7 +81,7 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
       // unreadable manifest: still list as orphan
     }
 
-    out.push({ id, sessionDir: sd, repos, commits, dirty });
+    out.push({ id, sessionDir: sd, repos, commits, dirty, notScanned });
   }
 
   return out;

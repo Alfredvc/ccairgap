@@ -77,6 +77,7 @@ export async function listOrphans(): Promise<void> {
     const parts = [`${o.id}`, `repos=${o.repos.join(",") || "(none)"}`];
     if (commits) parts.push(`commits=${commits}`);
     if (dirty) parts.push(`dirty=${dirty}`);
+    if (o.notScanned.length > 0) parts.push(`not-scanned=${o.notScanned.join(",")}`);
     console.log(parts.join("  "));
   }
 }

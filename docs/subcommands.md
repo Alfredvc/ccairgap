@@ -2,7 +2,7 @@
 
 | Subcommand | Description |
 |------------|-------------|
-| `list` | List orphaned sessions on disk. |
+| `list` | List orphaned sessions on disk. A session with no completed handoff shows `not-scanned=<repo>`, because its `.git` is not safe to scan. `recover` makes it scannable. |
 | `recover [<id>]` | Run handoff (fetch sandbox branch and linked-worktree branches, copy transcripts, rm session dir if clean). Idempotent. Preserves session on dirty tree, dirty linked worktree, orphan-branch commits, or scan failure — commit or discard the work, then re-run. Aborts if the container is still running; stop it first. With no `<id>`, falls back to `list`. |
 | `discard <id>` | Delete a session dir without running handoff. |
 | `attach <id>` | **Advanced.** Spawn a second interactive selected agent inside the running container `ccairgap-<id>` via `docker exec`. Defaults to the session manifest agent; old manifests without `agent` default to Claude. `--agent claude\|codex` overrides when the matching in-container state exists. `attach` is the only subcommand that accepts a selected-agent `--` tail: Claude uses the Claude denylist and Codex uses the interactive Codex allowlist. Lifecycle: exiting the attached agent does **not** stop the container (only the PID-1 exit does), so handoff fires only when the original session ends. Resume is not supported on attach — use `ccairgap -r <id-or-name>` to start a new session that resumes a transcript instead. |

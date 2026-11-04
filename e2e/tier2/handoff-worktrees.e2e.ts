@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { execa } from "execa";
@@ -91,5 +92,53 @@ describe.skipIf(!(await dockerAvailable()))("linked worktree handoff tier2", () 
     expect(await readFile(join(wt, "u.txt"), "utf8")).toBe("hi\n");
     const { stdout } = await execa("git", ["-C", wt, "status", "--short"]);
     expect(stdout).toContain("u.txt");
+  });
+
+  describe("container-written git data", () => {
+    const hostile = (marker: string) => {
+      const hook = `{ echo "#!/bin/sh"; echo "touch ${marker}"; }`;
+      return (
+        `git config core.fsmonitor "touch ${marker}; true"` +
+        ` && ${hook} > .git/hooks/post-index-change && ${hook} > .git/hooks/pre-commit` +
+        " && chmod +x .git/hooks/post-index-change .git/hooks/pre-commit" +
+        " && mkdir nested && git -C nested init -q" +
+        ` && git -C nested config core.fsmonitor "touch ${marker}; true"`
+      );
+    };
+
+    it("runs no container-written command on the host during handoff or the printed rescue", async () => {
+      // The container does not mount this directory, so only the host can create the marker.
+      const marker = join(home, "MARKER");
+      const result = await run(
+        "echo hi > work.txt && git add work.txt" +
+          ` && git ${IDENTITY} commit -qm work && git tag evil` +
+          ` && ${hostile(marker)} && echo u > u.txt`,
+      );
+      sessionId = result.sessionId;
+
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+      const delivered = `ccairgap/${sessionId}`;
+      expect(await hostBranches()).toContain(delivered);
+      const tags = await execa("git", ["-C", repo, "tag", "--list"]);
+      expect(tags.stdout).not.toContain("evil");
+
+      const repos = join(ccairgapHome, "sessions", sessionId!, "repos");
+      const [name] = await readdir(repos);
+      const clone = join(repos, name!);
+      await execa("git", ["-C", clone, "status"]);
+      await execa("git", ["-C", clone, "add", "-A"]);
+      await execa("git", ["-C", clone, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "rescued"]);
+      await execa("git", ["-C", clone, "status"]);
+      const recovered = await runCli(["recover", sessionId!], {
+        env: { HOME: home, CCAIRGAP_HOME: ccairgapHome, NODE_OPTIONS: TIER2_NODE_OPTIONS },
+      });
+
+      expect(recovered.exitCode).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+      const rescued = await execa("git", ["-C", repo, "show", `${delivered}:u.txt`]);
+      expect(rescued.stdout).toBe("u");
+      expect(await readdir(join(ccairgapHome, "sessions"))).toEqual([]);
+    });
   });
 });

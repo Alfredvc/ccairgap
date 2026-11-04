@@ -52,6 +52,7 @@ Explicitly NOT risks in v2 (they were in v1):
 - Container runs as the host UID/GID directly. There is no in-container privilege step, no `usermod`/`chown`, no `gosu`. `--cap-drop=ALL` plus `no-new-privileges` is preserved end-to-end.
 - No `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount
 - Host repos RO-mounted; container-written copies live in a session clone
+- Host `git` never runs in a container-written `.git`. Handoff rebuilds it through `git fetch` first, following `git(1)` §SECURITY. This relies on `upload-pack` being safe for untrusted repositories, which Git documents as carrying some risk
 - Credentials surface via a single RO bind (`/host-claude-creds`); `~/.claude/.credentials.json` is excluded from the general `/host-claude` mount
 - macOS credentials materialized from Keychain to session scratch at mode `0600`, deleted with the session on exit
 
