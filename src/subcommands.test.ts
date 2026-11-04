@@ -415,6 +415,7 @@ describe("attach", () => {
     const argv = readFileSync(argvSink, "utf8").trimEnd().split("\n");
     expect(argv).toContain("codex");
     expect(argv).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(argv).toContain("--no-daemon");
     expect(argv).not.toContain("claude");
   });
 

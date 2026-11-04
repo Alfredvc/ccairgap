@@ -34,6 +34,13 @@ describe("docker/entrypoint.sh ~/.claude copy invariants", () => {
     expect(ENTRYPOINT).toContain("--exclude='/daemon-*'");
   });
 
+  it("runs the interactive Codex branch without the shared background server", () => {
+    // The image has no `ps`, and the shared app-server fails without it.
+    expect(ENTRYPOINT).toContain(
+      'FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd "$CWD" "$@")',
+    );
+  });
+
   it("tolerates rsync exits 23 and 24 in every copy block", () => {
     // Exit 24 fires when host Claude Code deletes a file during the copy.
     const tolerant = ENTRYPOINT.match(/if \[ "\$rc" -eq 23 \] \|\| \[ "\$rc" -eq 24 \]; then/g);

@@ -34,7 +34,7 @@ describe.skipIf(!(await dockerAvailable()))("entrypoint selected-agent dry-run",
     expect(out).toContain("CCAIRGAP_ENTRYPOINT_MODE=agent");
     expect(out).not.toContain("CCAIRGAP_PRINT=");
     expect(out).toContain(
-      "command=codex --dangerously-bypass-approvals-and-sandbox --cd /workspace/repo\\ with\\ spaces --model gpt-5.5 inspect\\ this",
+      "command=codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd /workspace/repo\\ with\\ spaces --model gpt-5.5 inspect\\ this",
     );
   });
 

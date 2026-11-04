@@ -230,6 +230,7 @@ export async function attach(id: string, opts: {
         : [
             "codex",
             "--dangerously-bypass-approvals-and-sandbox",
+            "--no-daemon",
             "--cd",
             cwd,
             ...commandTail,

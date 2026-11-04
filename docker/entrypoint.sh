@@ -434,7 +434,9 @@ case "$ENTRYPOINT_MODE" in
                     FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" -)
                     CODEX_PRINT_STDIN=1
                 else
-                    FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@")
+                    # --no-daemon: the image has no `ps`, which the shared
+                    # app-server needs, and ccairgap keeps background servers off.
+                    FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd "$CWD" "$@")
                 fi
                 ;;
             *)

@@ -45,7 +45,7 @@ RUN printf '%s\n' \
     'case "$ENTRYPOINT_MODE" in' \
     '  agent) case "$ENTRYPOINT_AGENT" in' \
     '    claude) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(claude --dangerously-skip-permissions "$@" -p "$CCAIRGAP_PRINT"); else FINAL_CMD=(claude --dangerously-skip-permissions "$@"); fi ;;' \
-    '    codex) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT"); else FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@"); fi ;;' \
+    '    codex) if [ -n "${CCAIRGAP_PRINT:-}" ]; then FINAL_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CWD" "$@" "$CCAIRGAP_PRINT"); else FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd "$CWD" "$@"); fi ;;' \
     '    *) echo "ccairgap: unsupported CCAIRGAP_AGENT: $ENTRYPOINT_AGENT" >&2; exit 2 ;;' \
     '  esac; DRY_RUN_BRANCH="$ENTRYPOINT_AGENT" ;;' \
     '  exec) if [ "$#" -eq 0 ]; then echo "ccairgap: CCAIRGAP_ENTRYPOINT_MODE=exec requires a command" >&2; exit 2; fi; FINAL_CMD=("$@"); DRY_RUN_BRANCH="exec" ;;' \
