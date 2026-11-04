@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.6.4](https://github.com/Alfredvc/ccairgap/compare/v0.6.3...v0.6.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* **entrypoint:** turn off agent view and stop copying host daemon state ([7addd07](https://github.com/Alfredvc/ccairgap/commit/7addd07f24ed4d20c249f64ce13e25242d69a1a6))
+* **handoff:** deliver and preserve work in linked worktrees ([917d83d](https://github.com/Alfredvc/ccairgap/commit/917d83de2871bfbb38382455fb41095bc08bddd6))
+* **handoff:** rebuild the session clone's git data before host git runs ([183edfa](https://github.com/Alfredvc/ccairgap/commit/183edfacd0eecd7b1de197286e0bb72cd3e91045))
+* **launch:** scan only allowlisted ~/.claude paths for symlinks ([8443308](https://github.com/Alfredvc/ccairgap/commit/8443308fd16079ce11e2fbf2957fd117dfff71b6))
+
 ## [0.6.3](https://github.com/Alfredvc/ccairgap/compare/v0.6.2...v0.6.3) (2026-10-31)
 
 
