@@ -205,7 +205,7 @@ Scalars: higher-precedence layer wins. Arrays: lower-precedence first, then appe
 | `<name>.config.yaml` | **Reserved.** User-wide profiles are not loaded. Writing one emits a stderr warning and an informational `doctor` row. Profiles (`--profile <name>`) only swap the project layer. |
 | `integrations/*.yaml` | Per-tool drop-ins; see "Integration drop-ins" below. |
 | `CLAUDE.md` | Appended to in-container `~/.claude/CLAUDE.md` before the project `.ccairgap/CLAUDE.md` block. |
-| `settings.json` | Deep-merged into `~/.claude/settings.json` after policy filtering; bypasses `--hook-enable` by design. |
+| `settings.json` | Deep-merged into `~/.claude/settings.json` after policy filtering; bypasses `--hook-enable` by design. ccairgap turns off Claude Code background sessions and agent view by default and does not support them. `"disableAgentView": false` here turns them on at your own risk: background sessions stop when the container stops, and `/bg` ends the container. |
 | `mcp.json` | `mcpServers` merged into `~/.claude.json`; bypasses `--mcp-enable` by design. |
 | `skills/` | Rsynced into `~/.claude/skills/`. |
 | `Dockerfile` | Custom Dockerfile sidecar; opt-in via `dockerfile: Dockerfile` in `config.yaml`. |

@@ -196,7 +196,7 @@ For Codex, ccairgap resolves `$CODEX_HOME`, filters config, sanitizes auth, copi
 
 Hooks and MCP servers are disabled by default, because most of them reach for host binaries the container doesn't ship. Opt them in by glob — and if a binary is missing, extend the provided Dockerfile. Your real settings are never edited; the filter runs on copies.
 
-On exit, if the selected agent committed, you get a branch. If it committed to a side branch or left uncommitted work behind, ccairgap preserves the session dir so you can recover it. If it did nothing, nothing changes.
+On exit, if the selected agent committed, you get a branch. Commits on a branch in a linked worktree, for example a subagent with `isolation: worktree`, arrive as `ccairgap/<id>-worktrees/<branch>`. If it committed to another side branch or left uncommitted work behind, including in a linked worktree, ccairgap preserves the session dir so you can recover it. If it did nothing, nothing changes.
 
 For command-mode automation, `ccairgap exec -- <command...>` uses the same container preparation and handoff path but runs the exact argv after `--` with no shell parsing. `--print` and `--resume` are not supported in command mode.
 
