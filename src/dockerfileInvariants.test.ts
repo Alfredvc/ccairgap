@@ -18,6 +18,38 @@ const RELEASE_AGENT_VERSIONS = readFileSync(
   "utf8",
 );
 
+describe("docker/entrypoint.sh ~/.claude copy invariants", () => {
+  const ENTRYPOINT = readFileSync(
+    join(__dirname, "..", "docker", "entrypoint.sh"),
+    "utf8",
+  );
+
+  it("excludes top-level jobs and daemon with anchored patterns", () => {
+    // Unanchored `--exclude='jobs'` also drops a nested jobs/ dir in a skill.
+    expect(ENTRYPOINT).toContain("--exclude='/jobs'");
+    expect(ENTRYPOINT).not.toContain("--exclude='jobs'");
+    expect(ENTRYPOINT).toContain("--exclude='/daemon'");
+    expect(ENTRYPOINT).not.toContain("--exclude='daemon'");
+    expect(ENTRYPOINT).toContain("--exclude='/daemon.*'");
+    expect(ENTRYPOINT).toContain("--exclude='/daemon-*'");
+  });
+
+  it("tolerates rsync exits 23 and 24 in every copy block", () => {
+    // Exit 24 fires when host Claude Code deletes a file during the copy.
+    const tolerant = ENTRYPOINT.match(/if \[ "\$rc" -eq 23 \] \|\| \[ "\$rc" -eq 24 \]; then/g);
+    expect(tolerant).toHaveLength(2);
+    expect(ENTRYPOINT).not.toMatch(/if \[ "\$rc" -eq 23 \]; then/);
+  });
+
+  it("turns off agent view before the .ccairgap overlay runs", () => {
+    // The overlay must run later, so `"disableAgentView": false` there opts in.
+    const patch = ENTRYPOINT.indexOf(".disableAgentView = true");
+    const overlay = ENTRYPOINT.indexOf("apply_ccairgap_overlay()");
+    expect(patch).toBeGreaterThan(-1);
+    expect(overlay).toBeGreaterThan(patch);
+  });
+});
+
 describe("docker/Dockerfile clipboard invariants", () => {
   it("does NOT install xclip", () => {
     // xclip in the container breaks v2 clipboard passthrough: Claude Code

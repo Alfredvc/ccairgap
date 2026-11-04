@@ -140,8 +140,10 @@ describe("entrypoint.sh ~/.claude rsync venv handling", () => {
     expect(entrypoint).toContain("skipping host Python virtualenvs");
   });
 
-  it("tolerates rsync exit code 23 with a warning, aborts on others", () => {
-    // Block guards that any rc != 23 propagates via `exit "$rc"`.
-    expect(entrypoint).toMatch(/if \[ "\$rc" -eq 23 \]; then[\s\S]*?else[\s\S]*?exit "\$rc"/);
+  it("tolerates rsync exit codes 23 and 24 with a warning, aborts on others", () => {
+    // Block guards that any other rc propagates via `exit "$rc"`.
+    expect(entrypoint).toMatch(
+      /if \[ "\$rc" -eq 23 \] \|\| \[ "\$rc" -eq 24 \]; then[\s\S]*?else[\s\S]*?exit "\$rc"/,
+    );
   });
 });

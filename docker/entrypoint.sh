@@ -46,14 +46,20 @@ fi
 #  - .credentials.json (handled via /host-claude-creds-dir)
 #  - macOS .DS_Store files at any depth
 #  - Python venvs (see VENVS_FOUND block above)
+#  - host background-session state (/jobs, /daemon). The leading slash anchors
+#    the pattern at the transfer root, so a nested dir of the same name in a
+#    skill is kept.
 # Note: absolute symlinks under host ~/.claude/ would normally fail rsync -L
 # in the container namespace (their /Users/... targets don't exist). The CLI
-# pre-materializes each one host-side and overlay-mounts the result at
-# /host-claude/<rel>, so by the time we get here those symlinks have been
-# replaced with real files/dirs. See src/claudeSymlinkOverlay.ts.
-# Exit code 23 ("some files/attrs not transferred") is still tolerated with
-# a warning to cover any stragglers (e.g. a relative symlink pointing into
-# an excluded subtree). Other exit codes still abort.
+# pre-materializes each one in an allowlisted config path host-side and
+# mounts the result at /host-claude/<rel>. Docker follows the symlink, so the
+# copy lands at the link's target path and rsync -L can read it. See
+# src/claudeSymlinkOverlay.ts.
+# Exit codes 23 ("some files/attrs not transferred") and 24 ("some source
+# files vanished", because host Claude Code keeps writing here) are tolerated
+# with a warning to cover any stragglers (e.g. a relative symlink pointing into
+# an excluded subtree, or a symlink outside the overlay allowlist). Other
+# exit codes still abort.
 if [ -d "$HOST_CLAUDE" ]; then
     rsync -rL --chmod=u+w \
         --exclude='projects' \
@@ -65,6 +71,10 @@ if [ -d "$HOST_CLAUDE" ]; then
         --exclude='paste-cache' \
         --exclude='session-env' \
         --exclude='file-history' \
+        --exclude='/jobs' \
+        --exclude='/daemon' \
+        --exclude='/daemon.*' \
+        --exclude='/daemon-*' \
         --exclude='plugins/cache' \
         --exclude='.credentials.json' \
         --exclude='.DS_Store' \
@@ -72,8 +82,8 @@ if [ -d "$HOST_CLAUDE" ]; then
         --exclude='**/venv/' \
         "$HOST_CLAUDE/" "$CLAUDE_DIR/" || {
             rc=$?
-            if [ "$rc" -eq 23 ]; then
-                echo "ccairgap: warning — some files in ~/.claude/ could not be copied (likely broken symlinks). Continuing." >&2
+            if [ "$rc" -eq 23 ] || [ "$rc" -eq 24 ]; then
+                echo "ccairgap: warning — some files in ~/.claude/ could not be copied (broken symlinks or files that changed during the copy). Continuing." >&2
             else
                 exit "$rc"
             fi
@@ -207,6 +217,9 @@ HOOK_EOF
 chmod +x "$TITLE_HOOK"
 
 # Inject env vars + session title hook into settings.json (preserve existing entries).
+# disableAgentView: background sessions stop when PID 1 exits, and handoff does
+# not deliver their worktree branches. The .ccairgap overlay below runs later,
+# so `"disableAgentView": false` there opts in.
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 chmod u+w "$SETTINGS"
 TMP_SETTINGS="$(mktemp)"
@@ -215,6 +228,7 @@ jq --arg hook "$TITLE_HOOK" '.env = (.env // {}) + {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1"
 } | .skipDangerousModePermissionPrompt = true
+  | .disableAgentView = true
   | .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) + [
       {"hooks": [{"type": "command", "command": $hook, "timeout": 5}]}
     ]' "$SETTINGS" > "$TMP_SETTINGS"
@@ -244,18 +258,20 @@ apply_ccairgap_overlay() {
     # Arrays concatenated (existing first, overlay appended).
     # Scalars/objects: overlay wins. null in overlay is a no-op (existing wins).
     # Requires jq >= 1.6 (node:24-slim ships 1.6).
+    # The parameters must be values ($a), not closures (a). jq evaluates a
+    # closure against the current input, which inside reduce is the accumulator.
     if [ -f "$SRC/settings.json" ]; then
         local TMP_S
         TMP_S="$(mktemp)"
         jq -s '
-          def mergecc(a; b):
-            if b == null then a
-            elif a == null then b
-            elif ((a | type) == "array" and (b | type) == "array") then (a + b)
-            elif ((a | type) == "object" and (b | type) == "object") then
-              (((a | keys) + (b | keys)) | unique) as $keys |
-              reduce $keys[] as $k ({}; . + {($k): mergecc(a[$k]; b[$k])})
-            else b
+          def mergecc($a; $b):
+            if $b == null then $a
+            elif $a == null then $b
+            elif (($a | type) == "array" and ($b | type) == "array") then ($a + $b)
+            elif (($a | type) == "object" and ($b | type) == "object") then
+              ((($a | keys) + ($b | keys)) | unique) as $keys |
+              reduce $keys[] as $k ({}; . + {($k): mergecc($a[$k]; $b[$k])})
+            else $b
             end;
           mergecc(.[0]; .[1])
         ' "$SETTINGS" "$SRC/settings.json" > "$TMP_S"
@@ -280,7 +296,7 @@ apply_ccairgap_overlay() {
     # Claude Code's skills scanner reads one level deep: each immediate subdirectory of
     # ~/.claude/skills/ must contain a SKILL.md to be registered as a skill.
     # Name collision: overlay wins (rsync overwrites existing dir).
-    # Venv excludes + exit-23 tolerance mirror the main ~/.claude/ rsync block above.
+    # Venv excludes + exit-23/24 tolerance mirror the main ~/.claude/ rsync block above.
     if [ -d "$SRC/skills" ]; then
         mkdir -p "$CLAUDE_DIR/skills"
         # Detect Python virtualenvs inside overlay skills — same rationale as the
@@ -303,8 +319,8 @@ apply_ccairgap_overlay() {
             --exclude='**/venv/' \
             "$SRC/skills/" "$CLAUDE_DIR/skills/" || rc=$?
         if [ "$rc" -ne 0 ]; then
-            if [ "$rc" -eq 23 ]; then
-                echo "ccairgap: warning — some files in overlay skills ($SRC) could not be copied (likely broken symlinks). Continuing." >&2
+            if [ "$rc" -eq 23 ] || [ "$rc" -eq 24 ]; then
+                echo "ccairgap: warning — some files in overlay skills ($SRC) could not be copied (broken symlinks or files that changed during the copy). Continuing." >&2
             else
                 exit "$rc"
             fi
