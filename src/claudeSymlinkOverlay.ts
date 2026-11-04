@@ -11,27 +11,46 @@ import { execa } from "execa";
 import type { Mount } from "./mounts.js";
 
 /**
- * Top-level entries inside `~/.claude/` that the entrypoint rsync excludes.
- * Walking into them produces noise and copies state we'd discard anyway.
- * Mirrors the exclude list in `docker/entrypoint.sh`.
+ * Top-level entries inside `~/.claude/` that the overlay scan may enter.
+ * These are the user-scope config paths listed at
+ * https://code.claude.com/docs/en/claude-directory, plus `hooks` and
+ * `statusline.sh`, which `settings.json` commonly references, and `plugins`.
+ *
+ * The scan uses an allowlist because application data can hold symlinks to
+ * whole repositories (`jobs/<id>/tmp/src/<repo>`), and a denylist has to grow
+ * with every new Claude Code data directory. Grow this list when Claude Code
+ * ships a new user-scope config path.
  */
-const TOP_LEVEL_EXCLUDES = new Set([
-  "projects",
-  "sessions",
-  "history.jsonl",
-  "todos",
-  "shell-snapshots",
-  "debug",
-  "paste-cache",
-  "session-env",
-  "file-history",
+export const CLAUDE_OVERLAY_ALLOWLIST: ReadonlySet<string> = new Set([
+  "CLAUDE.md",
+  "settings.json",
+  "keybindings.json",
+  "statusline.sh",
+  "agents",
+  "agent-memory",
+  "commands",
+  "hooks",
+  "output-styles",
+  "plugins",
+  "rules",
+  "skills",
+  "themes",
+  "workflows",
 ]);
 
 /** Path segments excluded anywhere in the tree. */
 const ANYWHERE_EXCLUDED_SEGMENTS = new Set([".venv", "venv", ".git"]);
 
+/**
+ * rsync exit codes that leave a usable partial copy: 23 (partial transfer,
+ * e.g. a dangling symlink or an unreadable file) and 24 (source files vanished
+ * during the transfer). macOS openrsync reports a vanished file as 23, and GNU
+ * rsync reports it as 24. The host uses whichever `rsync` is on PATH.
+ */
+const RSYNC_PARTIAL_EXIT_CODES = new Set([23, 24]);
+
 function isExcludedRelPath(relPath: string): boolean {
-  if (TOP_LEVEL_EXCLUDES.has(relPath)) return true;
+  if (!CLAUDE_OVERLAY_ALLOWLIST.has(relPath.split("/")[0]!)) return true;
   if (relPath === "plugins/cache" || relPath.startsWith("plugins/cache/")) return true;
   for (const seg of relPath.split("/")) {
     if (ANYWHERE_EXCLUDED_SEGMENTS.has(seg)) return true;
@@ -62,15 +81,16 @@ function targetEscapesRoot(relPath: string, target: string): boolean {
 }
 
 /**
- * Walk the host `~/.claude/` tree and return every symlink whose target is
- * outside `~/.claude/` (see `targetEscapesRoot`). Relative symlinks that stay
- * inside `~/.claude/` are skipped — they resolve correctly inside the
- * container (rsync `-L` resolves them from the link's location, and the tree
- * under `/host-claude` matches the host tree).
+ * Walk the `CLAUDE_OVERLAY_ALLOWLIST` paths of the host `~/.claude/` tree and
+ * return every symlink whose target is outside `~/.claude/` (see
+ * `targetEscapesRoot`). Relative symlinks that stay inside `~/.claude/` are
+ * skipped — they resolve correctly inside the container (rsync `-L` resolves
+ * them from the link's location, and the tree under `/host-claude` matches the
+ * host tree).
  *
- * Excluded subtrees match the entrypoint rsync excludes plus `.git/`. This
- * keeps the overlay minimal and avoids materializing huge dirs (build output,
- * full repos symlinked under `~/.claude/agents/`, etc.).
+ * The allowlist does not limit the size of a target. A symlink at
+ * `skills/foo` that points at a large repository is still copied, minus the
+ * names `materializeEscapingSymlinks` excludes.
  */
 export function scanEscapingSymlinks(hostClaudeDir: string): EscapingSymlinkEntry[] {
   const out: EscapingSymlinkEntry[] = [];
@@ -123,6 +143,9 @@ export interface MaterializedSymlink {
  * Directory targets go through `rsync -rL` with the same exclude set the
  * entrypoint uses, plus `.git`, so we don't drag node_modules / venv / git
  * history into the overlay. File targets use `cp -L`.
+ *
+ * rsync exit codes in `RSYNC_PARTIAL_EXIT_CODES` produce a warning, and the
+ * partial copy is still mounted. Every other failure throws.
  */
 export async function materializeEscapingSymlinks(
   hostClaudeDir: string,
@@ -155,17 +178,25 @@ export async function materializeEscapingSymlinks(
 
     if (targetStat.isDirectory()) {
       mkdirSync(stagePath, { recursive: true });
-      await execa("rsync", [
-        "-rL",
-        "--chmod=u+w",
-        "--exclude=.DS_Store",
-        "--exclude=.git",
-        "--exclude=.venv",
-        "--exclude=venv",
-        "--exclude=node_modules",
-        `${realTarget}/`,
-        `${stagePath}/`,
-      ]);
+      try {
+        await execa("rsync", [
+          "-rL",
+          "--chmod=u+w",
+          "--exclude=.DS_Store",
+          "--exclude=.git",
+          "--exclude=.venv",
+          "--exclude=venv",
+          "--exclude=node_modules",
+          `${realTarget}/`,
+          `${stagePath}/`,
+        ]);
+      } catch (err) {
+        const exitCode = (err as { exitCode?: number }).exitCode;
+        if (exitCode === undefined || !RSYNC_PARTIAL_EXIT_CODES.has(exitCode)) throw err;
+        console.error(
+          `ccairgap: warning — some files in ${realTarget} could not be copied for ~/.claude/${e.relPath} (rsync exit ${exitCode}). Continuing with a partial copy.`,
+        );
+      }
       out.push({ relPath: e.relPath, stagePath, isDir: true });
     } else {
       await execa("cp", ["-L", realTarget, stagePath]);
@@ -192,7 +223,7 @@ export function symlinkOverlayMounts(materialized: MaterializedSymlink[]): Mount
 
 /**
  * Convenience wrapper: scan, materialize, return mounts. Returns an empty
- * list when `~/.claude/` has no symlinks that point outside it (the common case).
+ * list when the allowlisted paths have no symlinks that point outside `~/.claude/`.
  */
 export async function buildClaudeSymlinkOverlay(
   hostClaudeDir: string,

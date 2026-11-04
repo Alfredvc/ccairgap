@@ -918,9 +918,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     enabled: opts.clipboard && opts.print === undefined,
   });
 
-  // Symlink overlay: walk host ~/.claude/, materialize the target of each
-  // symlink that points outside ~/.claude/ (absolute, or relative with `..`
-  // past the root) into $SESSION/claude-symlink-overlay/<rel>, and emit one
+  // Symlink overlay: walk the allowlisted config paths of host ~/.claude/,
+  // materialize the target of each symlink that points outside ~/.claude/
+  // (absolute, or relative with `..` past the root) into
+  // $SESSION/claude-symlink-overlay/<rel>, and emit one
   // RO bind mount per entry at /host-claude/<rel>. Required because the
   // entrypoint's `rsync -L` runs inside the container — those targets resolve
   // against the container's namespace, where host paths like
@@ -934,6 +935,15 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       join(sessionPath, "claude-symlink-overlay"),
     );
   } catch (e) {
+    // No container has run, so the session dir holds no user work. The partial
+    // overlay can be many GB. Stop the clipboard watcher first because it
+    // writes into the session dir.
+    await clipboard.cleanup();
+    try {
+      rmSync(sessionPath, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
     die(`failed to materialize ~/.claude/ symlink overlay: ${(e as Error).message}`);
   }
 

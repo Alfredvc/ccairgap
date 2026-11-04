@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildClaudeSymlinkOverlay,
+  CLAUDE_OVERLAY_ALLOWLIST,
   scanEscapingSymlinks,
 } from "./claudeSymlinkOverlay.js";
 
@@ -62,7 +63,7 @@ describe("scanEscapingSymlinks", () => {
 
   it("skips relative symlinks that stay inside ~/.claude/", () => {
     mkdirSync(join(claudeDir, "real"));
-    symlinkSync("real", join(claudeDir, "alias"));
+    symlinkSync("real", join(claudeDir, "agents"));
     mkdirSync(join(claudeDir, "skills"));
     symlinkSync("../real", join(claudeDir, "skills", "inside"));
     expect(scanEscapingSymlinks(claudeDir)).toEqual([]);
@@ -71,16 +72,45 @@ describe("scanEscapingSymlinks", () => {
   it("finds relative symlinks whose target leaves ~/.claude/", () => {
     mkdirSync(join(claudeDir, "skills"));
     symlinkSync("../../.agents/skills/stop-slop", join(claudeDir, "skills", "stop-slop"));
-    symlinkSync("../outside", join(claudeDir, "top"));
+    symlinkSync("../outside", join(claudeDir, "CLAUDE.md"));
     // Re-enters ~/.claude/ by its host name. The container mounts the root at
     // /host-claude, so this target does not resolve there either.
-    symlinkSync("../.claude/real", join(claudeDir, "reenter"));
+    symlinkSync("../.claude/real", join(claudeDir, "settings.json"));
     const out = scanEscapingSymlinks(claudeDir).sort((a, b) => a.relPath.localeCompare(b.relPath));
     expect(out).toEqual([
-      { relPath: "reenter", rawTarget: "../.claude/real" },
+      { relPath: "CLAUDE.md", rawTarget: "../outside" },
+      { relPath: "settings.json", rawTarget: "../.claude/real" },
       { relPath: "skills/stop-slop", rawTarget: "../../.agents/skills/stop-slop" },
-      { relPath: "top", rawTarget: "../outside" },
     ]);
+  });
+
+  it("does not enter application data such as jobs/ (symlinks to whole repos)", () => {
+    const repo = join(externalDir, "repo");
+    mkdirSync(repo);
+    mkdirSync(join(claudeDir, "jobs", "f780ca2f", "tmp", "src"), { recursive: true });
+    mkdirSync(join(claudeDir, "tasks"));
+    symlinkSync(repo, join(claudeDir, "jobs", "f780ca2f", "tmp", "src", "repo"));
+    symlinkSync(repo, join(claudeDir, "tasks", "repo"));
+    symlinkSync(repo, join(claudeDir, "unknown-top-level"));
+    expect(scanEscapingSymlinks(claudeDir)).toEqual([]);
+  });
+
+  it("finds a symlink at every allowlisted top-level name", () => {
+    const target = join(externalDir, "tgt");
+    mkdirSync(target);
+    for (const name of CLAUDE_OVERLAY_ALLOWLIST) {
+      symlinkSync(target, join(claudeDir, name));
+    }
+    const found = scanEscapingSymlinks(claudeDir).map((e) => e.relPath).sort();
+    expect(found).toEqual([...CLAUDE_OVERLAY_ALLOWLIST].sort());
+  });
+
+  it("keeps a nested dir named like a non-allowlisted top-level entry", () => {
+    const target = join(externalDir, "tgt");
+    mkdirSync(target);
+    mkdirSync(join(claudeDir, "skills", "jobs"), { recursive: true });
+    symlinkSync(target, join(claudeDir, "skills", "jobs", "x"));
+    expect(scanEscapingSymlinks(claudeDir).map((e) => e.relPath)).toEqual(["skills/jobs/x"]);
   });
 
   it("does not descend into excluded top-level dirs (projects/, sessions/, plugins/cache)", () => {
@@ -196,10 +226,10 @@ describe("buildClaudeSymlinkOverlay", () => {
     mkdirSync(join(target, "node_modules"));
     writeFileSync(join(target, "node_modules", "x"), "x");
     writeFileSync(join(target, ".DS_Store"), "x");
-    symlinkSync(target, join(claudeDir, "skill"));
+    symlinkSync(target, join(claudeDir, "skills"));
 
     await buildClaudeSymlinkOverlay(claudeDir, stageDir);
-    const staged = join(stageDir, "skill");
+    const staged = join(stageDir, "skills");
     expect(readFileSync(join(staged, "keep.md"), "utf8")).toBe("k");
     // Existence of excluded paths in stage:
     const fs = await import("node:fs");
@@ -211,7 +241,7 @@ describe("buildClaudeSymlinkOverlay", () => {
   });
 
   it("warns and skips broken symlinks", async () => {
-    symlinkSync("/nonexistent/path", join(claudeDir, "broken"));
+    symlinkSync("/nonexistent/path", join(claudeDir, "CLAUDE.md"));
     const errors: string[] = [];
     const orig = console.error;
     console.error = (msg: string) => errors.push(msg);
@@ -219,6 +249,29 @@ describe("buildClaudeSymlinkOverlay", () => {
       const mounts = await buildClaudeSymlinkOverlay(claudeDir, stageDir);
       expect(mounts).toEqual([]);
       expect(errors.some((e) => e.includes("missing on host"))).toBe(true);
+    } finally {
+      console.error = orig;
+    }
+  });
+
+  it("warns and mounts the partial copy when a target contains a dangling symlink", async () => {
+    // Real rsync: a dangling symlink under -L exits 23 on openrsync and GNU rsync.
+    const target = join(externalDir, "skill");
+    mkdirSync(target);
+    writeFileSync(join(target, "SKILL.md"), "partial\n");
+    symlinkSync("/nonexistent/path", join(target, "dangling"));
+    symlinkSync(target, join(claudeDir, "skills"));
+
+    const errors: string[] = [];
+    const orig = console.error;
+    console.error = (msg: string) => errors.push(msg);
+    try {
+      const mounts = await buildClaudeSymlinkOverlay(claudeDir, stageDir);
+      expect(mounts.map((m) => m.dst)).toEqual(["/host-claude/skills"]);
+      expect(readFileSync(join(stageDir, "skills", "SKILL.md"), "utf8")).toBe("partial\n");
+      expect(errors.some((e) => e.includes("rsync exit 23") && e.includes("~/.claude/skills"))).toBe(
+        true,
+      );
     } finally {
       console.error = orig;
     }
