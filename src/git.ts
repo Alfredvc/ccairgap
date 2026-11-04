@@ -99,6 +99,29 @@ export async function gitFetchSandbox(
   }
 }
 
+/**
+ * `git -C <realRepo> fetch <sessionClone> refs/heads/<src>:refs/heads/<dst>`.
+ * Full ref names stop a branch name from selecting a tag or another destination.
+ * Returns true on success.
+ */
+export async function gitFetchBranchAs(
+  realRepo: string,
+  sessionClone: string,
+  src: string,
+  dst: string,
+): Promise<boolean> {
+  try {
+    await execa(
+      "git",
+      ["-C", realRepo, "fetch", sessionClone, `refs/heads/${src}:refs/heads/${dst}`],
+      { stdio: "inherit" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface GitIdentity {
   name?: string;
   email?: string;

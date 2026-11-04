@@ -3,7 +3,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
 import { readManifest, UnknownManifestVersionError } from "./manifest.js";
-import { gitFetchSandbox, resolveGitDir, dirtyTree } from "./git.js";
+import {
+  checkRefFormat,
+  dirtyTree,
+  gitBranchExists,
+  gitFetchBranchAs,
+  gitFetchSandbox,
+  resolveGitDir,
+} from "./git.js";
+import { prepareLinkedWorktrees, type LinkedWorktree } from "./worktrees.js";
 import { writeAlternates } from "./alternates.js";
 import { outputDir } from "./paths.js";
 import { copyCodexSessions } from "./codexSessions.js";
@@ -47,14 +55,14 @@ async function sandboxCommitCount(sessionClone: string, branch: string): Promise
 }
 
 /**
- * Local branches (other than `excludeBranch`) that carry commits not present on
- * any `origin/*` ref. Used to detect work the user made on side branches when
- * the sandbox branch itself is empty — handoff only fetches ccairgap/<id>, so
- * those commits would be lost on rm -rf.
+ * Local branches (other than `exclude`) that carry commits not present on any
+ * `origin/*` ref. Used to detect work the user made on side branches when the
+ * sandbox branch itself is empty — handoff fetches only ccairgap/<id> and
+ * worktree branches, so those commits would be lost on rm -rf.
  */
 async function orphanBranches(
   sessionClone: string,
-  excludeBranch: string,
+  exclude: ReadonlySet<string>,
 ): Promise<Array<{ branch: string; count: number }>> {
   let names: string[];
   try {
@@ -68,7 +76,7 @@ async function orphanBranches(
     names = stdout
       .split("\n")
       .map((s) => s.trim())
-      .filter((s) => s.length > 0 && s !== excludeBranch);
+      .filter((s) => s.length > 0 && !exclude.has(s));
   } catch {
     return [];
   }
@@ -94,12 +102,45 @@ async function orphanBranches(
 }
 
 /**
- * Pre-scan a session dir for dirty (uncommitted) repos. Used by `recover`'s
- * pre-check so a dirty session aborts before any side effects run. Mirrors
- * the per-repo alternates rewrite + dirtyTree probe in `handoff()` so the
- * scan sees the same state handoff would. Best-effort: missing/unreadable
- * manifest, or a repo whose host path or session clone is gone, is silently
- * skipped — those cases also don't trip handoff's dirty preservation.
+ * Commits on a worktree branch that neither `origin/*` nor the sandbox branch
+ * holds. Returns null when git cannot count them: the caller must not treat an
+ * error as "no work".
+ */
+async function worktreeBranchAhead(
+  sessionClone: string,
+  worktreeBranch: string,
+  sandboxBranch: string,
+): Promise<number | null> {
+  const exclusions = ["--remotes=origin"];
+  if (await gitBranchExists(sessionClone, sandboxBranch)) {
+    exclusions.push(`refs/heads/${sandboxBranch}`);
+  }
+  try {
+    const { stdout } = await execa("git", [
+      "-C",
+      sessionClone,
+      "rev-list",
+      "--count",
+      `refs/heads/${worktreeBranch}`,
+      "--not",
+      ...exclusions,
+    ]);
+    const count = parseInt(stdout.trim(), 10);
+    return Number.isNaN(count) ? null : count;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pre-scan a session dir for dirty (uncommitted) repos and linked worktrees.
+ * Used by `recover`'s pre-check so a dirty session aborts before any side
+ * effects run. Mirrors the per-repo alternates rewrite + dirtyTree probe in
+ * `handoff()` so the scan sees the same state handoff would. Best-effort:
+ * missing/unreadable manifest, or a repo whose host path or session clone is
+ * gone, is silently skipped — those cases also don't trip handoff's dirty
+ * preservation. A worktree preparation failure is skipped here because handoff
+ * reports it as a scan failure.
  */
 export async function scanDirtyRepos(
   sessionDirPath: string,
@@ -145,6 +186,24 @@ export async function scanDirtyRepos(
         untracked: status.untracked,
       });
     }
+    let worktrees: LinkedWorktree[] = [];
+    try {
+      worktrees = prepareLinkedWorktrees(sessionClone, repo.host_path);
+    } catch {
+      // handoff reports this as a scan failure
+    }
+    for (const wt of worktrees) {
+      if (wt.path === null) continue;
+      const wtStatus = await dirtyTree(wt.path);
+      if (wtStatus.kind === "dirty") {
+        out.push({
+          hostPath: repo.host_path,
+          sessionClone: wt.path,
+          modified: wtStatus.modified,
+          untracked: wtStatus.untracked,
+        });
+      }
+    }
   }
   return out;
 }
@@ -154,8 +213,11 @@ export async function scanDirtyRepos(
  * Fails open: each step runs independently, errors are logged to warnings.
  *
  * Preservation triggers (any one prevents the terminal `rm -rf`):
- *  - dirty working tree in any session clone (skipped if `noPreserveDirty`)
- *  - dirty scan failed for any repo (unknown state → err on preserve)
+ *  - dirty working tree in any session clone or linked worktree (skipped if
+ *    `noPreserveDirty`)
+ *  - dirty scan or worktree preparation failed for any repo (unknown state →
+ *    err on preserve)
+ *  - a worktree branch could not be delivered to the host
  *  - the sandbox branch is empty AND another local branch carries commits not
  *    on `origin/*` (existing orphan-branch logic)
  */
@@ -232,6 +294,7 @@ export async function handoff(
     sessionClone: string;
     modified: number;
     untracked: number;
+    isWorktree: boolean;
   }> = [];
   const orphanRepos: Array<{
     hostPath: string;
@@ -283,6 +346,7 @@ export async function handoff(
         sessionClone,
         modified: status.modified,
         untracked: status.untracked,
+        isWorktree: false,
       });
     } else if (status.kind === "scan-failed") {
       scanFailedRepos.push({
@@ -292,16 +356,97 @@ export async function handoff(
       });
     }
 
-    const sandboxCount = await sandboxCommitCount(sessionClone, branch);
-    if (sandboxCount === 0) {
-      const orphans = await orphanBranches(sessionClone, branch);
-      if (orphans.length > 0) {
-        orphanRepos.push({
-          hostPath: repo.host_path,
-          sessionClone,
-          branches: orphans,
-        });
+    // Linked worktrees. `dirtyTree` above excludes `.claude/`, which holds
+    // `.claude/worktrees/`, and the sandbox fetch below covers only one branch.
+    let worktrees: LinkedWorktree[] = [];
+    try {
+      worktrees = prepareLinkedWorktrees(sessionClone, repo.host_path);
+    } catch (e) {
+      scanFailedRepos.push({
+        hostPath: repo.host_path,
+        sessionClone,
+        error: (e as Error).message,
+      });
+    }
+    const delivered = new Set<string>([branch]);
+    const undelivered: Array<{ branch: string; count: number }> = [];
+    for (const wt of worktrees) {
+      if (wt.path === null) {
+        warnings.push(
+          `${repo.host_path}: linked worktree ${wt.recordedPath} was outside the session clone. Its uncommitted files are gone.`,
+        );
+      } else {
+        const wtStatus = await dirtyTree(wt.path);
+        if (wtStatus.kind === "dirty" && !opts.noPreserveDirty) {
+          dirtyRepos.push({
+            hostPath: repo.host_path,
+            sessionClone: wt.path,
+            modified: wtStatus.modified,
+            untracked: wtStatus.untracked,
+            isWorktree: true,
+          });
+        } else if (wtStatus.kind === "scan-failed") {
+          scanFailedRepos.push({
+            hostPath: repo.host_path,
+            sessionClone: wt.path,
+            error: wtStatus.error,
+          });
+        }
       }
+
+      if (wt.branch === null || wt.branch === branch) continue;
+      // The container wrote this name, and it goes into a host refspec.
+      if (!(await checkRefFormat(`refs/heads/${wt.branch}`))) {
+        scanFailedRepos.push({
+          hostPath: repo.host_path,
+          sessionClone: wt.path ?? sessionClone,
+          error: `invalid worktree branch name: ${JSON.stringify(wt.branch)}`,
+        });
+        continue;
+      }
+      const ahead = await worktreeBranchAhead(sessionClone, wt.branch, branch);
+      if (ahead === null) {
+        scanFailedRepos.push({
+          hostPath: repo.host_path,
+          sessionClone: wt.path ?? sessionClone,
+          error: `cannot count commits on worktree branch ${wt.branch}`,
+        });
+        continue;
+      }
+      if (ahead === 0) {
+        delivered.add(wt.branch);
+        continue;
+      }
+      const target = `${branch}-worktrees/${wt.branch}`;
+      const ok = await gitFetchBranchAs(repo.host_path, sessionClone, wt.branch, target);
+      fetched.push({
+        hostPath: repo.host_path,
+        branch: target,
+        status: ok ? "fetched" : "failed",
+      });
+      if (ok) {
+        delivered.add(wt.branch);
+        logger(`[handoff] worktree branch ${wt.branch} (+${ahead}) is on the host as ${target}`);
+      } else {
+        warnings.push(`fetch failed for ${repo.host_path} (branch ${wt.branch} to ${target})`);
+        undelivered.push({ branch: wt.branch, count: ahead });
+      }
+    }
+
+    const sandboxCount = await sandboxCommitCount(sessionClone, branch);
+    const orphans = [...undelivered];
+    if (sandboxCount === 0) {
+      const exclude = new Set([...delivered, ...undelivered.map((u) => u.branch)]);
+      orphans.push(...(await orphanBranches(sessionClone, exclude)));
+    }
+    if (orphans.length > 0) {
+      orphanRepos.push({
+        hostPath: repo.host_path,
+        sessionClone,
+        branches: orphans,
+      });
+    }
+    if (sandboxCount === 0) {
       fetched.push({ hostPath: repo.host_path, branch, status: "empty" });
       continue;
     }
@@ -440,8 +585,10 @@ export async function handoff(
  * Format the preservation message into `warnings[]` (one entry per line, so
  * the logger prefix `[handoff] ` lands on each rendered line).
  *
- * Three shapes:
+ * Four shapes:
  *  - dirty-only (no orphan, no scan-fail): full discard hint OK.
+ *  - orphan-only: `recover` does not deliver these branches, so the guidance
+ *    prints the fetch command for each one.
  *  - combined (dirty or scan-fail + orphan): discard hint suppressed —
  *    discarding would lose orphan-branch commits.
  *  - scan-failed alone: warning says "state unknown, session preserved out
@@ -457,6 +604,7 @@ function emitPreservationWarnings(arg: {
     sessionClone: string;
     modified: number;
     untracked: number;
+    isWorktree: boolean;
   }>;
   orphanRepos: Array<{
     hostPath: string;
@@ -482,7 +630,7 @@ function emitPreservationWarnings(arg: {
       parts.push(`${d.untracked} untracked entr${d.untracked === 1 ? "y" : "ies"}`);
     }
     warnings.push(
-      `${d.hostPath}: uncommitted changes in session clone (${parts.join(", ")}).`,
+      `${d.hostPath}: uncommitted changes in ${d.isWorktree ? "linked worktree" : "session clone"} (${parts.join(", ")}).`,
     );
   }
   for (const sf of scanFailedRepos) {
@@ -524,7 +672,14 @@ function emitPreservationWarnings(arg: {
     }
   }
   if (clones.length > 0) {
-    warnings.push("Your uncommitted work is at:");
+    const hasUncommitted = dirtyRepos.length > 0 || scanFailedRepos.length > 0;
+    warnings.push(
+      hasOrphan
+        ? hasUncommitted
+          ? "Your work is at:"
+          : "Your committed work is at:"
+        : "Your uncommitted work is at:",
+    );
     for (const c of clones) warnings.push(`  ${c}`);
   }
   warnings.push("");
@@ -547,6 +702,16 @@ function emitPreservationWarnings(arg: {
     warnings.push(`  ${scanFailedRepos[0]!.sessionClone}`);
     warnings.push("");
     warnings.push(`If there is nothing to rescue: ccairgap discard ${id}`);
+  } else if (hasOrphan && dirtyRepos.length === 0) {
+    // Orphan-only: `recover` does not deliver these branches.
+    warnings.push(`To save the commits, fetch each branch into the host repo:`);
+    for (const o of orphanRepos) {
+      for (const b of o.branches) {
+        warnings.push(`  git -C ${o.hostPath} fetch ${o.sessionClone} ${b.branch}:${b.branch}`);
+      }
+    }
+    warnings.push("");
+    warnings.push(`When you have the commits, or to drop them: ccairgap discard ${id}`);
   } else {
     // Dirty-only (or dirty + scan-failed + no orphan — still safe to discard).
     warnings.push(`To save the work:`);

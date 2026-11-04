@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { sessionsDir } from "./paths.js";
 import { readManifest } from "./manifest.js";
 import { countCommitsAhead, dirtyTree } from "./git.js";
+import { prepareLinkedWorktrees } from "./worktrees.js";
 import { runningContainerNames } from "./sessionId.js";
 
 export interface Orphan {
@@ -50,13 +51,20 @@ export async function scanOrphans(cliVer: string): Promise<Orphan[]> {
             branch,
             r.base_ref ?? "HEAD",
           );
-          const status = await dirtyTree(sessionClone);
-          if (status.kind === "dirty") {
-            dirty[r.basename] = {
-              modified: status.modified,
-              untracked: status.untracked,
-            };
+          const counts = { modified: 0, untracked: 0 };
+          const addIfDirty = async (dir: string): Promise<void> => {
+            const status = await dirtyTree(dir);
+            if (status.kind === "dirty") {
+              counts.modified += status.modified;
+              counts.untracked += status.untracked;
+            }
+          };
+          await addIfDirty(sessionClone);
+          // The caller's `running` check protects a live container's paths.
+          for (const wt of prepareLinkedWorktrees(sessionClone, r.host_path)) {
+            if (wt.path !== null) await addIfDirty(wt.path);
           }
+          if (counts.modified > 0 || counts.untracked > 0) dirty[r.basename] = counts;
         }
       }
     } catch {
