@@ -49,6 +49,7 @@ export function reservedContainerPaths(
       "/host-git-alternates",
       "/run/ccairgap-clipboard",
       "/run/ccairgap-auth-warnings",
+      "/run/ccairgap-network",
       "/etc/claude-code",
       "/host-ca-certs",
       "/host-codex",
@@ -102,6 +103,7 @@ function label(src: MountSource): string {
     case "agents-skills": return `$HOME/.agents/skills RO mount`;
     case "userdb-passwd": return `/etc/passwd RO mount`;
     case "userdb-group": return `/etc/group RO mount`;
+    case "host-credentials-mask": return `host credentials mask RO mount`;
     case "claude-symlink-overlay": return `~/.claude/${src.relPath} symlink overlay`;
   }
 }

@@ -124,6 +124,165 @@ describe("startRuntimeAuthRefresh", () => {
     await handle.stop();
   });
 
+  it("reports each host-driven write before the session file changes", async () => {
+    // The network policy adds the token hash in this callback. The hash must
+    // exist before the agent can read the new token from the session file.
+    const longTtl = Date.now() + 60 * 60_000;
+    const credsPath = join(session, "creds", ".credentials.json");
+    const oldJson = JSON.stringify({
+      claudeAiOauth: { accessToken: "old-at", expiresAt: longTtl, scopes: ["user:inference"] },
+    });
+    writeFileSync(credsPath, oldJson, { mode: 0o600 });
+    const refreshFn = vi.fn(async (): Promise<RefreshResult> => ({
+      ok: true,
+      action: "fresh",
+      finalJson: JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "new-at",
+          refreshToken: "new-rt",
+          expiresAt: longTtl,
+          scopes: ["user:inference"],
+        },
+      }),
+      finalTtlMs: 60 * 60_000,
+    }));
+    const seen: Array<{ token: string; hasRefresh: boolean; fileAtCall: string }> = [];
+    const handle = startRuntimeAuthRefresh({
+      sessionDir: session,
+      lockPath: session,
+      readHostCreds: async () => "",
+      refreshFn,
+      now: () => Date.now(),
+      onHostDrivenWrite: (stripped) => {
+        const parsed = JSON.parse(stripped);
+        seen.push({
+          token: parsed.claudeAiOauth.accessToken,
+          hasRefresh: "refreshToken" in parsed.claudeAiOauth,
+          fileAtCall: readFileSync(credsPath, "utf8"),
+        });
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(seen).toEqual([{ token: "new-at", hasRefresh: false, fileAtCall: oldJson }]);
+    await handle.stop();
+  });
+
+  it("keeps the old token and retries when the host-driven write callback throws", async () => {
+    const longTtl = Date.now() + 60 * 60_000;
+    const credsPath = join(session, "creds", ".credentials.json");
+    writeFileSync(
+      credsPath,
+      JSON.stringify({ claudeAiOauth: { accessToken: "old-at", expiresAt: longTtl, scopes: [] } }),
+      { mode: 0o600 },
+    );
+    const refreshFn = vi.fn(async (): Promise<RefreshResult> => ({
+      ok: true,
+      action: "fresh",
+      finalJson: JSON.stringify({
+        claudeAiOauth: { accessToken: "new-at", expiresAt: longTtl, scopes: [] },
+      }),
+      finalTtlMs: 60 * 60_000,
+    }));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let calls = 0;
+    const handle = startRuntimeAuthRefresh({
+      sessionDir: session,
+      lockPath: session,
+      readHostCreds: async () => "",
+      refreshFn,
+      now: () => Date.now(),
+      onHostDrivenWrite: () => {
+        calls += 1;
+        if (calls === 1) throw new Error("disk full");
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // The proxy would deny a new token with no hash, so the old token stays.
+    expect(JSON.parse(readFileSync(credsPath, "utf8")).claudeAiOauth.accessToken).toBe("old-at");
+    expect(errors.mock.calls.flat().join(" ")).toContain("network credential update failed");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(calls).toBe(2);
+    expect(JSON.parse(readFileSync(credsPath, "utf8")).claudeAiOauth.accessToken).toBe("new-at");
+    errors.mockRestore();
+    await handle.stop();
+  });
+
+  it("never reports a token that appeared in the session file", async () => {
+    // The agent has RW on this file, and the proxy accepts a token with a hash. A
+    // write without a refresh token looks like a host write, so the watcher adopts
+    // it as a baseline, but only a token from the host may reach the callback.
+    const longTtl = Date.now() + 60 * 60_000;
+    const credsPath = join(session, "creds", ".credentials.json");
+    const hostJson = JSON.stringify({
+      claudeAiOauth: { accessToken: "host-at", expiresAt: longTtl, scopes: [] },
+    });
+    writeFileSync(credsPath, hostJson, { mode: 0o600 });
+    const reported: string[] = [];
+    const handle = startRuntimeAuthRefresh({
+      sessionDir: session,
+      lockPath: session,
+      readHostCreds: async () => "",
+      refreshFn: async (): Promise<RefreshResult> => ({
+        ok: true,
+        action: "fresh",
+        finalJson: hostJson,
+        finalTtlMs: 60 * 60_000,
+      }),
+      now: () => Date.now(),
+      onHostDrivenWrite: (stripped) => {
+        reported.push(JSON.parse(stripped).claudeAiOauth.accessToken);
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    writeFileSync(
+      credsPath,
+      JSON.stringify({ claudeAiOauth: { accessToken: "agent-at", expiresAt: longTtl, scopes: [] } }),
+    );
+    const future = new Date(Date.now() + 5_000);
+    utimesSync(credsPath, future, future);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(reported).not.toContain("agent-at");
+    // The host token replaces what the agent wrote.
+    expect(JSON.parse(readFileSync(credsPath, "utf8")).claudeAiOauth.accessToken).toBe("host-at");
+    await handle.stop();
+  });
+
+  it("names the host in the failure banner under a network policy", async () => {
+    const credsPath = join(session, "creds", ".credentials.json");
+    writeFileSync(credsPath, FRESH(Date.now() + 60 * 60_000), { mode: 0o600 });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const banner = async (networkPolicy: boolean): Promise<string> => {
+      const handle = startRuntimeAuthRefresh({
+        sessionDir: session,
+        lockPath: session,
+        readHostCreds: async () => "",
+        refreshFn: async (): Promise<RefreshResult> => ({
+          ok: false,
+          classification: "network",
+          reason: "down",
+          finalJson: "",
+          finalTtlMs: Number.NaN,
+        }),
+        now: () => Date.now(),
+        networkPolicy,
+      });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await handle.stop();
+      return readFileSync(join(session, "auth-warnings", "current.txt"), "utf8");
+    };
+    expect(await banner(true)).toContain("run /login in claude on the host");
+    expect(await banner(false)).toContain("run /login in Claude.");
+    errors.mockRestore();
+  });
+
   it("calls refresh when ttl drops under the 30-min window", async () => {
     const shortTtl = Date.now() + 20 * 60_000; // 20 min
     writeFileSync(join(session, "creds", ".credentials.json"), FRESH(shortTtl), { mode: 0o600 });

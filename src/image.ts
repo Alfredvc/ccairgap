@@ -65,7 +65,7 @@ export function defaultEntrypoint(): string {
   return resolveBundledDockerAsset("entrypoint.sh");
 }
 
-function resolveBundledDockerAsset(name: string): string {
+export function resolveBundledDockerAsset(name: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
   for (const pkgRoot of [resolve(here, ".."), resolve(here)]) {
     const candidate = join(pkgRoot, "docker", name);
@@ -333,7 +333,8 @@ export function registryRef(localTag: string): string | undefined {
  */
 export async function tryPullImage(localTag: string, ref: string): Promise<boolean> {
   try {
-    await execa("docker", ["pull", ref], { stdio: "inherit" });
+    // Progress goes to stderr, because stdout carries the agent output in print mode.
+    await execa("docker", ["pull", ref], { stdio: ["ignore", 2, 2] });
     await execa("docker", ["tag", ref, localTag], { stdio: "ignore" });
     return true;
   } catch {

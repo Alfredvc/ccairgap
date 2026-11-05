@@ -180,6 +180,7 @@ describe("resolveMountCollisions", () => {
       expect.arrayContaining([
         "/host-git-alternates",
         "/run/ccairgap-auth-warnings",
+        "/run/ccairgap-network",
         "/host-codex",
         "/host-codex-auth",
         "/host-codex-sessions",

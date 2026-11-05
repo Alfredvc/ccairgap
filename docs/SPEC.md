@@ -1,6 +1,6 @@
 # ccairgap — Spec
 
-Run `claude --dangerously-skip-permissions` in a Docker container so you can hand it a task and walk away. Exfiltration is an accepted risk; host state destruction is not.
+Run `claude --dangerously-skip-permissions` in a Docker container so you can hand it a task and walk away. Without a network policy, exfiltration is an accepted risk. Host state destruction is never accepted.
 
 ## Goal
 
@@ -11,7 +11,8 @@ Run `claude --dangerously-skip-permissions` in a Docker container so you can han
 
 ## Threat model
 
-- **Accepted:** full exfiltration. Anything the container can read may be sent over the network.
+- **Accepted without a network policy:** full exfiltration. Anything the container can read may be sent over the network.
+- **Reduced with a network policy:** the `network` config key limits outbound traffic to the hosts, ports, methods and paths that the policy allows. See §"Network policy" for what the policy enforces and what stays open.
 - **Not accepted:** any write to host filesystem outside the small set of explicitly writable paths listed in §"Host writable paths". Specifically: real git repositories, host `~/.claude/`, host `~/.claude.json`, and anything else on disk must survive the session byte-for-byte.
 - **Container escape:** not part of the threat model. The CLI's built-in docker invocation does not lower default Docker isolation (no `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount). Users can opt into any docker flag via `--docker-run-arg` (see §"Raw docker run args"); that surface is user-foot-gun territory, not a defense claim.
 
@@ -72,7 +73,7 @@ When `CLAUDE_CONFIG_DIR` is set on the host, ccairgap reads that directory inste
 
 A session may cause writes to:
 
-1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` (always materialized; **rewritten atomically by the runtime auth-refresh watcher; see §"Authentication flow"**), `$SESSION/auth-warnings/current.txt` (runtime-watcher banner — atomic tmp+rename), `$SESSION/auth-refresh-state.json` (per-tick status for `ccairgap doctor`), `$SESSION/hook-policy/` (patched user settings + per-repo hook overlays; see §"Hook policy"), `$SESSION/plugin-policy/` (filtered plugin hook / MCP files; see §"Plugin policy"), `$SESSION/host-claude-placeholder/` (empty `~/.claude/` and `{}` `~/.claude.json` mount sources, written only when the host has no Claude config, e.g. a host with only Codex), `$SESSION/claude-symlink-overlay/` (host-side materialization of symlinks under `~/.claude/` whose targets are outside `~/.claude/`; see §"Container mount manifest"), and session-local Codex state under `$SESSION/codex-home/`, `$SESSION/codex-auth/`, and `$SESSION/codex-sessions/`.
+1. `$XDG_STATE_HOME/ccairgap/sessions/<id>/` — session scratch, created fresh, deleted on exit after transcripts copy. Includes `$SESSION/creds/.credentials.json` (always materialized; **rewritten atomically by the runtime auth-refresh watcher; see §"Authentication flow"**), `$SESSION/auth-warnings/current.txt` (runtime-watcher banner — atomic tmp+rename), `$SESSION/auth-refresh-state.json` (per-tick status for `ccairgap doctor`), `$SESSION/hook-policy/` (patched user settings + per-repo hook overlays; see §"Hook policy"), `$SESSION/plugin-policy/` (filtered plugin hook / MCP files; see §"Plugin policy"), `$SESSION/host-claude-placeholder/` (empty `~/.claude/` and `{}` `~/.claude.json` mount sources, written only when the host has no Claude config, e.g. a host with only Codex), `$SESSION/claude-symlink-overlay/` (host-side materialization of symlinks under `~/.claude/` whose targets are outside `~/.claude/`; see §"Container mount manifest"), session-local Codex state under `$SESSION/codex-home/`, `$SESSION/codex-auth/`, and `$SESSION/codex-sessions/`, and `$SESSION/network/` (network policy files; see §"Network policy").
 2. `$XDG_STATE_HOME/ccairgap/output/` — `/output` mount inside container, plus `output/<id>/<abs-src>/` subtrees written by the exit-trap for every `--sync` path.
 3. `~/.claude/projects/<path-encoded-cwd>/` — transcript copy-back on exit.
 4. Real host repos passed to `--repo` and `--extra-repo`: **only** the refs `ccairgap/<id>` and `ccairgap/<id>-worktrees/<branch>` are created via `git fetch` on exit. No other mutations. `.git/objects` is RO-mounted into the container.
@@ -115,8 +116,8 @@ Default (no subcommand): start a new session.
 | `-r, --resume <id-or-name>` | no | Resume an existing Claude session inside the sandbox. Accepts **either** a session UUID **or** the session's custom title (what `claude` prints on exit). Titles are matched case-insensitively and must be exact; 0 or >1 matches abort launch with a candidate list. The CLI copies `~/.claude/projects/<encoded-workspace-cwd>/<uuid>.jsonl` (plus the optional `<uuid>/` subagents dir) into `$SESSION/transcripts/` before `docker run`. Inside the container, `claude -r "$CCAIRGAP_RESUME"` always uses the resolved UUID (not the raw name). Requires a workspace repo; errors under `--bare` / ro-only. Works with both host-born and ccairgap-born sessions — no separate UX per origin. Config key: `resume: <id-or-name>` (scalar). Not supported for `exec`, including config-sourced `resume`. |
 | `-n, --name <name>` | no | Session id **prefix**. The CLI always appends a 4-hex suffix, so the final `<id>` is `<name>-<4hex>`. Drives the sandbox branch (`ccairgap/<id>`), docker container (`ccairgap-<id>`), session dir, and Claude's session label (`-n "<name>"`, rewritten to `[ccairgap] <name>` by the UserPromptSubmit hook on first prompt; see §"Container entrypoint" for the full precedence). Validated once via `git check-ref-format refs/heads/ccairgap/<id>`; the CLI aborts before any side effects if `<name>` would produce an invalid ref. On collision with an existing session dir, container (running or stopped), or branch in the workspace repo (`--repo`), the hex suffix is re-rolled up to 8 times before aborting. `--extra-repo` branches are not pre-checked, so a stale branch in one of them surfaces at fetch time on exit. Omitted, a random `<adj>-<noun>` prefix is generated — see §"Session identifier". |
 | `--hook-enable <glob>` | yes | Opt-in a Claude Code hook whose raw `command` string matches `<glob>`. All hooks are **disabled by default** inside the sandbox — the host's hook commands typically reference host binaries (`afplay`, project-local `python3` scripts, etc.) that don't exist in the container and would fail every tool call. Each `--hook-enable` adds one glob; the full set is matched against hooks from every source (user settings, enabled plugins, project settings). See §"Hook policy". Repeatable. |
-| `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--network`, `--cap-drop`, etc.). Repeatable. See §"Raw docker run args". |
-| `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only; never blocks. |
+| `--docker-run-arg <args>` | yes | Extra args appended to the `docker run` command. Value is shell-split via `shell-quote`, so `--docker-run-arg "-p 8080:8080"` expands to two tokens. Appended after all built-in args so docker's last-wins semantics let user args override defaults (`--cap-drop` and others, and `--network` without a network policy). Repeatable. See §"Raw docker run args". |
+| `--no-warn-docker-args` | no | Suppress the "dangerous token" warning emitted when `--docker-run-arg` contains flags known to weaken isolation (`--privileged`, `--cap-add`, `--network=host`, `docker.sock`, …). Warning-only without a network policy. With a policy, the CLI rejects conflicting tokens, and this flag does not change that. See §"Network policy". |
 | `--no-auto-memory` | no | Kill switch for the auto-memory RO mount + `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` env var. When set, ccairgap does not surface the host auto-memory directory into the container; Claude Code falls back to its in-container default path under `~/.claude/projects/<sanitized>/memory/` which only exists for the current session (discarded on exit). Config key: `no-auto-memory: true`. |
 | `--bare` | no | Launch a "naked" container: no config-file loading, no workspace-repo inference from cwd. User mounts whatever they need via `--repo` / `--extra-repo` / `--ro` / `--cp` / `--sync` / `--mount`. All Claude config flow is unchanged (`~/.claude` RO mount, credentials, plugins cache, etc.). See §"Bare mode". |
 | `-- <selected-agent-args…>` | no | Tokens after `--` are the selected-agent passthrough tail for the default launch command. With `--agent claude`, they are forwarded verbatim to the in-container `claude` invocation, subject to the Claude denylist (see §"Selected-agent arg passthrough"). With `--agent codex`, they are forwarded to Codex after fail-closed allowlist validation and container-visible `--image` checks. For `ccairgap exec -- <command...>`, the tail is instead the exact command argv. |
@@ -144,7 +145,7 @@ For `ccairgap exec --agent codex -- <command...>`, Codex still controls the prep
 |------------|-------------|
 | `list` | List orphaned sessions (session dirs on disk with no running container). Prints timestamp, repos involved, and commit counts on `ccairgap/<id>`. |
 | `recover [<id>]` | Run the handoff routine against `$SESSION/<id>/`. Idempotent. With no `<id>` argument, equivalent to `list`. |
-| `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. |
+| `discard <id>` | Delete `$SESSION/<id>/` without running handoff. Use when you don't want the sandbox branch in your real repo. Refuses a session whose container is running. |
 | `attach <id>` | Spawn a second selected agent inside the running container `ccairgap-<id>` via `docker exec`. Advanced. Defaults to the session manifest agent, with absent `agent` in old manifests treated as `claude`; `--agent claude\|codex` can override when that agent's in-container state exists. `attach` is the only subcommand that accepts a selected-agent `--` passthrough tail. See §"Attach". |
 | `exec -- <command...>` | Prepare the selected-agent environment and run an arbitrary command as exact argv. `--` is required before the command; no shell parsing is performed. `--agent` selects the prepared environment, not the final binary. `--print` and `--resume` are rejected, including config-sourced values. Config `claude-args` / `codex-args` are ignored with a warning in exec mode. Canonical usage: `ccairgap exec -- aharness recipe-driven-design.fsm.ts` or `ccairgap exec --agent codex -- aharness recipe-driven-design.fsm.ts`. |
 | `doctor` | Agent-aware preflight checks. Defaults to config `agent`, then `claude`; `--agent claude\|codex` overrides config. Shared checks include Docker, state dir, host binaries, image freshness, clipboard, sidecar drift, and user-wide config. The image row resolves the same exact agent versions launch would use from config/CLI `docker-build-arg` values and `CCAIRGAP_CC_VERSION`. Claude checks host Claude credentials and auth-refresh state; Codex checks sanitized `$CODEX_HOME/auth.json` without printing secrets. |
@@ -214,7 +215,7 @@ In order:
     - `--name ccairgap-<id>`
     - Mount list per §"Container mount manifest"
     - Env vars pushed via `-e`:
-        - `NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>` if the host env var is set and points at an existing file. The file is RO-bind-mounted at that neutral container path (never at the same host absolute path — that risks overmounting the base image's CA trust store).
+        - `NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>` if the host env var is set and points at an existing file. The file is RO-bind-mounted at that neutral container path (never at the same host absolute path — that risks overmounting the base image's CA trust store). A network policy disables this forwarding, because the sidecar trusts public CAs only.
     - User-supplied `--docker-run-arg` tokens appended after all built-ins (see §"Raw docker run args")
     - Image: `ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh+exact agent versions)[:8]>` by default, or `ccairgap:custom-<sha256(dockerfile+exact agent versions+managed base identity when used)[:12]>` if `--dockerfile` was passed. Build if the tag is missing locally, or if `--rebuild` was passed.
 13. Install exit trap: run §"Handoff routine" against `$SESSION/<id>/`.
@@ -338,7 +339,7 @@ User-wide files:
 
 | Path | Role |
 |---|---|
-| `config.yaml` | Persistent defaults (every `ConfigFile` key allowed). |
+| `config.yaml` | Persistent defaults (every `ConfigFile` key except `network` allowed). |
 | `<name>.config.yaml` | Reserved (user-wide profiles not loaded). |
 | `integrations/*.yaml` | Per-tool drop-ins; `hooks.enable` / `mcp.enable` / `docker-run-arg` only. |
 | `CLAUDE.md` | Appended to in-container `~/.claude/CLAUDE.md` before the project block. |
@@ -406,6 +407,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | Host source | Container path | Mode | Notes |
 |-------------|----------------|------|-------|
 | `~/.claude/` (resolved; `$SESSION/host-claude-placeholder/claude/` — an empty dir — when the host has none) | `/host-claude` | ro | Entrypoint rsyncs contents to `~/.claude/` (settings, plugins minus cache, skills, commands, CLAUDE.md, statusline). `.credentials.json` and `.DS_Store` are excluded from the copy — see the `/host-claude-creds-dir` row for credentials. |
+| `$SESSION/host-claude-placeholder/credentials-mask` (empty file; only when host `~/.claude/` holds `.credentials.json`) | `/host-claude/.credentials.json`, or the symlink target inside `~/.claude/` | ro | Hides the host refresh token from the agent. See §"Authentication flow". |
 | `$SESSION/claude-symlink-overlay/<rel>/` (host-side materialized) | `/host-claude/<rel>` | ro | One mount per symlink in an allowlisted config path under host `~/.claude/` whose target is outside `~/.claude/`: every absolute symlink, and every relative symlink whose target, resolved lexically from the link's directory, leaves the root (e.g. `skills/foo → ../../.agents/skills/foo`). The container's rsync `-L` runs in the container's mount namespace, where those targets (`/Users/<user>/src/<repo>/skills/foo`, or a path above `/host-claude`) don't exist — the rsync would skip them with "symlink has no referent" warnings. The CLI walks `~/.claude/` host-side, resolves each such symlink via `realpath`, copies the target into `$SESSION/claude-symlink-overlay/<rel>/` with a fixed exclude set (`.git`, `.venv`, `venv`, `node_modules`, `.DS_Store`), and bind-mounts the staged path at `/host-claude/<rel>`. Docker follows the symlink when it creates the mount, so the staged copy lands at the link's target path and `/host-claude/<rel>` stays a symlink. Relative symlinks whose targets stay inside `~/.claude/` need no overlay — they resolve correctly inside `/host-claude`. The scan enters only the top-level names in `CLAUDE_OVERLAY_ALLOWLIST`: `CLAUDE.md`, `settings.json`, `keybindings.json`, `statusline.sh`, `agents`, `agent-memory`, `commands`, `hooks`, `output-styles`, `plugins`, `rules`, `skills`, `themes`, `workflows`. Application data such as `jobs/` can hold symlinks to whole repositories, so the scan does not walk it. `plugins/cache/` is also excluded. A symlink outside the allowlist is not materialized, and its target is absent in the container. rsync exit codes 23 (partial transfer) and 24 (source files vanished) produce a stderr warning, and the launch continues with the partial copy. Other non-zero exit codes abort the launch and remove the session directory. See `src/claudeSymlinkOverlay.ts`. |
 | `~/.claude.json` (resolved; `$SESSION/host-claude-placeholder/claude.json` containing `{}` when the host has none) | `/host-claude-json` | ro | Fallback source only — used when the MCP-policy patched copy is absent. Entrypoint normally overlays `/host-claude-patched-json` over this and then applies the jq onboarding patch. |
 | `$SESSION/creds/` (always) | `/host-claude-creds-dir` | rw | Directory mount. CLI materializes `.credentials.json` (mode 0600, stripped of `claudeAiOauth.refreshToken`) on every launch and atomically rewrites it on each runtime refresh tick. Entrypoint `ln -sf`s `~/.claude/.credentials.json` to the mounted file so Claude Code's mtime-cache invalidation picks up host-driven rewrites. RW so atomic `rename(2)` succeeds; container writes to anything else in this dir are discarded on exit. See §"Authentication flow". |
@@ -429,7 +431,7 @@ ccairgap --bare --config ~/my-cfg.yaml
 | macOS: `/Library/Application Support/ClaudeCode/` / Linux: `/etc/claude-code/` | `/etc/claude-code/` | ro | Managed-policy directory: managed `CLAUDE.md`, `.claude/rules/*.md`, `managed-settings.json`, `managed-settings.d/*.json`, `managed-mcp.json`. Only present when the host dir exists (MDM / enterprise). macOS host path translates to Linux container path — the in-container binary always runs Linux and consults only `/etc/claude-code/`. Skipped on Linux when the dir is absent; skipped entirely on Windows hosts. Interaction with ccairgap's MCP policy: `managed-mcp.json` is **not** filtered by `--mcp-enable`, matching Claude Code's precedence where managed policy overrides user flags. |
 | `~/.config/ccairgap/` (resolved) | `/ccairgap-user-dir` | ro | User-wide ccairgap-scope Claude config dir. Skipped when absent. Entrypoint applies its CLAUDE.md / settings.json / mcp.json / skills/ before the project `/ccairgap-dir` overlay. |
 | `<workspace-root>/.ccairgap/` | `/ccairgap-dir` | ro | ccairgap-scope Claude config dir. Skipped when absent. |
-| `$NODE_EXTRA_CA_CERTS` on host (when set + file exists) | `/host-ca-certs/<basename>` | ro | Corporate TLS CA bundle. The env var is forwarded as `-e NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>`. Mounted at a neutral container path rather than the host-absolute path so it does not overmount the base image's own CA trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). Symlinks resolved via `realpath()`. Stderr warning + skip when the env var points at a missing file. |
+| `$NODE_EXTRA_CA_CERTS` on host (when set + file exists) | `/host-ca-certs/<basename>` | ro | Corporate TLS CA bundle. Not forwarded under a network policy. The env var is forwarded as `-e NODE_EXTRA_CA_CERTS=/host-ca-certs/<basename>`. Mounted at a neutral container path rather than the host-absolute path so it does not overmount the base image's own CA trust store (`/etc/ssl/certs/*`, `/etc/pki/*`). Symlinks resolved via `realpath()`. Stderr warning + skip when the env var points at a missing file. |
 | `$XDG_STATE_HOME/ccairgap/output/` | `/output` | rw | Artifact drop. |
 | `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` | `<original-host-path>` | rw | Session clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. |
 | `<resolved-git-dir>/objects/` | `/host-git-alternates/<basename>-<sha256(hostPath)[:8]>/objects/` | ro | Alternates target for `--shared` clone. The `<sha256>` suffix disambiguates multi-repo sessions where two `--repo`/`--extra-repo` paths share a basename. The session clone's `.git/objects/info/alternates` is rewritten to this container path so new commits write to the session clone's own RW `objects/` while historical reads resolve through here. See §"Repository access mechanism". |
@@ -439,6 +441,8 @@ ccairgap --bare --config ~/my-cfg.yaml
 | `$SESSION/artifacts/<abs-src>/` (pre-copied from host) | `<original-host-path>` | rw | `--cp` / `--sync` with an absolute source **outside** any repo. Source outside any repo has no covering mount, so the pre-launch copy needs its own bind. For `--cp`/`--sync` sources **inside** a repo, the copy lands inside the session clone and rides on the existing `$SESSION/repos/<basename>-<sha256(hostPath)[:8]>/` mount — no extra entry here. Appended after repo mounts. |
 | `<--mount path>` | `<original-host-path>` | rw | User-declared RW bind. Appended after repo mounts so it overrides any session-clone or `--cp`/`--sync` copy at the same path. |
 | `$SESSION/clipboard-bridge/` (directory) | `/run/ccairgap-clipboard/` | ro | Host clipboard bridge dir. Omitted when `--no-clipboard` or unsupported host. |
+| `$SESSION/network/agent/` | `/run/ccairgap-network/agent` | ro | Network policy only. Holds the forwarder script and the session CA certificate. See §"Network policy". |
+| Docker volume `ccairgap-<id>-network` | `/run/ccairgap-network/sock` | ro | Network policy only. Holds the proxy Unix socket. A read-only mount still allows connections to the socket. |
 
 Absolute paths are preserved between host and container so `settings.json` references resolve identically.
 
@@ -449,7 +453,7 @@ Before invoking `docker run`, ccairgap resolves mount conflicts in two passes:
 1. **Marketplace pre-filter (`filterSubsumedMarketplaces`).** If a plugin marketplace path from `extraKnownMarketplaces` equals or is nested inside any `--repo`/`--extra-repo` `hostPath`, the marketplace mount is dropped. The repo's session-clone RW mount serves those files at the same container path. A stderr warning notes the drop and reminds users that the container sees HEAD-only content (uncommitted files in the marketplace tree are not visible).
 2. **Collision resolver (`resolveMountCollisions`).** Defense-in-depth at the end of `buildMounts`:
    - Any two surviving mounts sharing a container `dst` throw with both source labels (`--repo/--extra-repo`, `--ro`, `--mount`, `plugin marketplace`, etc.).
-   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds-dir`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `/host-codex`, `/host-codex-auth`, `/host-codex-sessions`, `/host-codex-mcp-credentials`, `/ccairgap-dir`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, `<home>/.codex`, `<home>/.codex/auth.json`, `<home>/.codex/sessions`, `<home>/.agents/skills`, anything under `/host-git-alternates/`, `/run/ccairgap-auth-warnings/`, `/etc/claude-code/`, `/host-ca-certs/`, `/host-codex/`, `/host-codex-auth/`, `/host-codex-sessions/`, `/host-codex-mcp-credentials/`, `<home>/.codex/`, or `<home>/.agents/skills/`.
+   - User-source mounts may not use reserved container paths: `/output`, `/host-claude`, `/host-claude-json`, `/host-claude-creds-dir`, `/host-claude-patched-settings.json`, `/host-claude-patched-json`, `/host-claude-memory`, `/host-codex`, `/host-codex-auth`, `/host-codex-sessions`, `/host-codex-mcp-credentials`, `/ccairgap-dir`, `<home>/.claude/projects`, `<home>/.claude/plugins/cache`, `<home>/.codex`, `<home>/.codex/auth.json`, `<home>/.codex/sessions`, `<home>/.agents/skills`, anything under `/host-git-alternates/`, `/run/ccairgap-auth-warnings/`, `/run/ccairgap-network/`, `/etc/claude-code/`, `/host-ca-certs/`, `/host-codex/`, `/host-codex-auth/`, `/host-codex-sessions/`, `/host-codex-mcp-credentials/`, `<home>/.codex/`, or `<home>/.agents/skills/`.
 
 Nested mounts with distinct `dst` strings (hook/MCP single-file overlays on top of a repo, `--mount` paths inside a repo) are **allowed** — they're the intended overlay mechanism.
 
@@ -659,7 +663,7 @@ Two supported paths to change what's inside the image:
 1. **`--docker-build-arg KEY=VAL`** — optional escape hatch. The bundled Dockerfile exposes `CLAUDE_CODE_VERSION` and `CODEX_VERSION`, but normal launches resolve both from the host. Pin either agent only when intentionally diverging from the host.
 2. **Sidecar Dockerfile via `ccairgap init`** — materialize a small Dockerfile that starts with `ARG CCAIRGAP_RUNTIME_BASE_IMAGE=ccairgap:runtime-base-required` / `FROM ${CCAIRGAP_RUNTIME_BASE_IMAGE}` and installs/checks `CLAUDE_CODE_VERSION` / `CODEX_VERSION` at the end into the config dir (default `<git-root>/.ccairgap/`, or `dirname(--config)` if `--config` is passed). Edit in place by adding only project-specific packages before the generated agent install block. The generated `config.yaml` wires `dockerfile: Dockerfile` so subsequent launches build from the sidecar copy (image tag becomes `ccairgap:custom-<sha256[:12]>` per §"Container image"). No need to fork the repo or copy the raw bundled Dockerfile.
 
-`ccairgap init` writes two files: `Dockerfile` and `config.yaml`. If either exists, `init` aborts with an error listing it; `--force` overwrites both unconditionally (no merge — any prior edits to `config.yaml` are lost). Legacy `entrypoint.sh` sidecars from older versions are ignored by the generated Dockerfile unless the user edits the Dockerfile to reference them.
+`ccairgap init` writes two files: `Dockerfile` and `config.yaml`. The `config.yaml` sets `dockerfile: Dockerfile` and holds a commented-out `network` block, so a new config has no network policy until the user uncomments it. If either exists, `init` aborts with an error listing it; `--force` overwrites both unconditionally (no merge — any prior edits to `config.yaml` are lost). Legacy `entrypoint.sh` sidecars from older versions are ignored by the generated Dockerfile unless the user edits the Dockerfile to reference them.
 
 `ccairgap doctor` treats the current generated extension Dockerfile as up to date, and hash-compares any other sidecar `Dockerfile` / `entrypoint.sh` files against the bundled copies shipped with the installed CLI version. Divergence warns so the user can decide whether to re-run `ccairgap init --force` (destructive; overwrites local `Dockerfile` and `config.yaml`) or keep custom changes.
 
@@ -670,7 +674,7 @@ Runs at container start. `CCAIRGAP_ENTRYPOINT_MODE` selects the final branch: mi
 Steps:
 
 1. `mkdir -p /home/claude/.claude "$CODEX_HOME" "$CODEX_HOME/sessions"`, with `CODEX_HOME` defaulting to `/home/claude/.codex`.
-2. Copy `/host-claude/` → `/home/claude/.claude/` with `rsync -rL --chmod=u+w` (transform symlinks into files, ensure writable in destination). Exclude these session-local entries so we don't drag host state into the container's fresh session view: `projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`. Also exclude top-level `jobs/`, `daemon/`, `daemon.*` and `daemon-*` (host background-session state, including `daemon/control.key`, `daemon/roster.json` and `daemon.lock`, anchored as `/jobs`, `/daemon`, `/daemon.*` and `/daemon-*` so nested entries of the same name in a skill are kept), `plugins/cache/` (RO-mounted separately at the same container path), `.credentials.json` (handled in the next step), `.DS_Store` (macOS metadata at any depth — often has ACLs that break copies), and `**/.venv/` + `**/venv/` (Python virtualenvs whose `bin/python*` are absolute symlinks into the host interpreter — following them with `-L` fails in-container, and the binaries are host-OS/arch anyway). Before the rsync, scan up to depth 5 for `.venv/`/`venv/` dirs and emit a stderr warning naming each one so the user knows which skills/agents will load with non-functional venvs. Symlinks in allowlisted config paths under `~/.claude/` whose targets are outside `~/.claude/` (absolute, or relative with `..` past the root) would also fail rsync `-L` in the container namespace (their targets don't exist there), so the CLI pre-materializes each one host-side and mounts the result at `/host-claude/<rel>`. Docker follows that symlink when it creates the mount, so the materialized copy lands at the link's target path (for example `/Users/<user>/src/<repo>/skills/foo` or `/.agents/skills/foo`) and `/host-claude/<rel>` stays a symlink. The target now exists in the container, so the entrypoint rsync `-L` copies the materialized content. See §"Container mount manifest" and `src/claudeSymlinkOverlay.ts`. rsync exit codes 23 ("some files/attrs not transferred") and 24 ("some source files vanished") are tolerated with a warning to cover any remaining stragglers (e.g. a relative symlink pointing into an excluded subtree, or a symlink outside the overlay allowlist); other exit codes still abort.
+2. Copy `/host-claude/` → `/home/claude/.claude/` with `rsync -rL --chmod=u+w` (transform symlinks into files, ensure writable in destination). Exclude these session-local entries so we don't drag host state into the container's fresh session view: `projects/`, `sessions/`, `history.jsonl`, `todos/`, `shell-snapshots/`, `debug/`, `paste-cache/`, `session-env/`, `file-history/`. Also exclude top-level `settings.local.json`, anchored as `/settings.local.json` (Claude Code reads it only as project-local settings when the working directory is `$HOME`, so a copy would let `cd ~` load hooks that the hook policy did not filter), and top-level `jobs/`, `daemon/`, `daemon.*` and `daemon-*` (host background-session state, including `daemon/control.key`, `daemon/roster.json` and `daemon.lock`, anchored as `/jobs`, `/daemon`, `/daemon.*` and `/daemon-*` so nested entries of the same name in a skill are kept), `plugins/cache/` (RO-mounted separately at the same container path), `.credentials.json` (handled in the next step), `.DS_Store` (macOS metadata at any depth — often has ACLs that break copies), and `**/.venv/` + `**/venv/` (Python virtualenvs whose `bin/python*` are absolute symlinks into the host interpreter — following them with `-L` fails in-container, and the binaries are host-OS/arch anyway). Before the rsync, scan up to depth 5 for `.venv/`/`venv/` dirs and emit a stderr warning naming each one so the user knows which skills/agents will load with non-functional venvs. Symlinks in allowlisted config paths under `~/.claude/` whose targets are outside `~/.claude/` (absolute, or relative with `..` past the root) would also fail rsync `-L` in the container namespace (their targets don't exist there), so the CLI pre-materializes each one host-side and mounts the result at `/host-claude/<rel>`. Docker follows that symlink when it creates the mount, so the materialized copy lands at the link's target path (for example `/Users/<user>/src/<repo>/skills/foo` or `/.agents/skills/foo`) and `/host-claude/<rel>` stays a symlink. The target now exists in the container, so the entrypoint rsync `-L` copies the materialized content. See §"Container mount manifest" and `src/claudeSymlinkOverlay.ts`. rsync exit codes 23 ("some files/attrs not transferred") and 24 ("some source files vanished") are tolerated with a warning to cover any remaining stragglers (e.g. a relative symlink pointing into an excluded subtree, or a symlink outside the overlay allowlist); other exit codes still abort.
 3. If `/host-claude-creds-dir/.credentials.json` exists, `ln -sf /host-claude-creds-dir/.credentials.json /home/claude/.claude/.credentials.json`. The symlink (rather than `cp`) lets upstream's mtime-cache invalidation (`auth.ts:1320`) observe host-driven runtime rewrites of the bind-mounted file.
 4. Copy `~/.claude.json` source → `/home/claude/.claude.json`. The MCP-policy overlay wins: if `/host-claude-patched-json` is mounted (strips user + user-project `mcpServers` per `--mcp-enable`), use it as the source; otherwise fall back to `/host-claude-json`. See §"MCP policy".
 5. Patch `/home/claude/.claude.json` via `jq` to ensure:
@@ -700,7 +704,7 @@ Steps:
    - **Passthrough (`"$@"`):** the CLI appends filtered claude-args as positional args to `docker run`; they arrive at the entrypoint as `"$@"` and are spliced verbatim. Filtered host-side; the entrypoint does not re-validate. See §"Selected-agent arg passthrough".
    - The `-n` value (`"ccairgap <id>"`) is intentionally **not** the same as the UserPromptSubmit hook's `sessionTitle` output (`"[ccairgap] <id>"`): Claude Code's hook layer dedups against the current title, so if `-n` already matched the hook output, the rename would skip and the TUI's "session renamed" side effects (TextInput border recolor, top-border label) would never fire.
    - Then either `-p "$CCAIRGAP_PRINT"` for non-interactive print mode, or nothing for the interactive REPL. `exec claude …`. `-p` stays the final positional so claude treats `$CCAIRGAP_PRINT` as the prompt argument (claude's prompt-positional convention).
-   - **Codex interactive branch:** `codex --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@"`.
+   - **Codex interactive branch:** `codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd "$CCAIRGAP_CWD" "$@"`. `--no-daemon` runs Codex without its shared background server. That server needs `ps`, which the image does not contain, and ccairgap keeps background servers off.
    - **Codex print branch:** `codex exec --dangerously-bypass-approvals-and-sandbox --cd "$CCAIRGAP_CWD" "$@" "$CCAIRGAP_PRINT"`.
 12. If `CCAIRGAP_ENTRYPOINT_DRY_RUN=1`, print the selected branch, cwd, `CCAIRGAP_ENTRYPOINT_MODE`, `CCAIRGAP_AGENT`, optional `CCAIRGAP_PRINT`, `CODEX_HOME`, home readiness, and final shell-quoted command, then exit before `exec`. This is test-only and differs from `CCAIRGAP_TEST_CMD`, which exits before branch selection.
 
@@ -787,7 +791,7 @@ The unconditional per-tick host read serves a second purpose: **host-driven acco
 
 **In-container behavior.** Claude Code's refresh path short-circuits at `!tokens?.refreshToken` (upstream `src/utils/auth.ts:1459`) so it never contacts Anthropic's token endpoint. Mid-session expiry: the next API request returns 401 and the upstream 401 handler returns `false` (`auth.ts:1380-1382`) because there is no refresh token to rotate — `withRetry` cycles up to 10× then throws. The user types `/login` in the TUI, completes the paste-code OAuth flow, and Claude Code writes a fresh container-scoped token pair into `~/.claude/.credentials.json`. The session continues with that new chain until exit.
 
-The `/host-claude` RO mount (the rest of `~/.claude/`) still excludes `.credentials.json` — the stripped session file is the only creds source the container sees.
+The `/host-claude` RO mount covers all of `~/.claude/`, so a host credentials file is inside it. The CLI mounts an empty session-scratch file over that path, and over the target when the file is a symlink inside `~/.claude/`. The stripped session file is the only creds source the container sees. A symlink target outside `~/.claude/` has no path in the container. The entrypoint rsync also excludes `.credentials.json`.
 
 **Operator notes.**
 
@@ -880,7 +884,7 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 
 - Built-in args come first: `docker run --rm -it --cap-drop=ALL --name … -e … -v …`.
 - User tokens are appended after all built-ins, before the image tag.
-- Docker resolves repeatable flags with last-wins semantics, so `--docker-run-arg "--network my-net"` overrides no built-in network flag (there is none), while `--docker-run-arg "--cap-drop NET_ADMIN"` narrows the earlier `--cap-drop=ALL`.
+- Docker resolves repeatable flags with last-wins semantics, so `--docker-run-arg "--network my-net"` overrides no built-in network flag (there is none without a network policy), while `--docker-run-arg "--cap-drop NET_ADMIN"` narrows the earlier `--cap-drop=ALL`.
 
 **Danger warning:**
 
@@ -888,6 +892,8 @@ Container needs `user.name` / `user.email` or `git commit` fails (`Author identi
 - Each hit prints one stderr warning naming the token and the broad reason. The launch still proceeds — this is a nudge, not a gate.
 - Scan is best-effort; users can construct equivalent effects via args the scan does not know about. The CLI makes no claim of completeness.
 - Silence the warning with `--no-warn-docker-args` (or `warn-docker-args: false` in config).
+
+**Relation to a network policy:** when the `network` key is active, the CLI rejects network and isolation flags. See §"Network policy".
 
 **Relation to the host-writable-paths invariant:**
 
@@ -1158,9 +1164,134 @@ Entrypoint dispatches through `CCAIRGAP_ENTRYPOINT_MODE`: missing or `agent` lau
 
 ## Network
 
-- Default Docker bridge network. Full outbound.
-- Capabilities: `--cap-drop=ALL` (no Linux capabilities granted). Container runs as a non-root user, needs no capabilities for normal Claude / git / node operation. Prevents raw sockets, ARP spoofing, firewall manipulation, chown, and everything else — does not block HTTP/HTTPS exfiltration (which is the accepted risk).
+- Without a `network` config key: default Docker bridge network and full outbound.
+- With a `network` config key: `--network none` on the agent container and a proxy sidecar. See §"Network policy".
+- Capabilities: `--cap-drop=ALL` (no Linux capabilities granted). Container runs as a non-root user, needs no capabilities for normal Claude / git / node operation. Prevents raw sockets, ARP spoofing, firewall manipulation, chown, and everything else. It does not block HTTP/HTTPS exfiltration.
 - `--security-opt=no-new-privileges`: blocks setuid/setgid binaries and file capabilities from granting additional privileges inside the container. Defense-in-depth against a local-priv-esc primitive chained with any cap regression.
+
+## Network policy
+
+The `network` config key limits the outbound traffic of one session. The key is opt-in. A session without the key keeps full outbound. User-facing guide: `skills/ccairgap-configure/references/network.md`.
+
+### Enforcement
+
+The agent container runs with `--network none`, so its only interface is `lo`. The kernel enforces this limit, and code in the agent container cannot change it, because the container has no capabilities. The agent reaches the network only through a proxy in a separate container, which holds the policy.
+
+```
+agent container (--network none)            sidecar container (bridge network)
+  client -> 127.0.0.1:3128 -> forwarder  ->  /run/ccairgap-network/sock/proxy.sock
+                                               -> relay -> mitmproxy 127.0.0.1:8080 -> internet
+```
+
+- The forwarder (`docker/network/forwarder.mjs`) is a Node script that the agent container runs from the entrypoint. It copies bytes from `127.0.0.1:3128` to the socket. It enforces nothing, and an agent that kills it loses all network access.
+- The relay (`docker/network/relay.py`) copies bytes from the socket to mitmproxy. The CLI treats the socket as the readiness signal, so the relay binds it under a temporary name, sets mode `0666` and renames it.
+- The sidecar runs `mitmproxy/mitmproxy` pinned by tag and digest in `src/network.ts`. No flag or env var changes this image.
+- Sidecar hardening: `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`, non-root user, `--tmpfs /tmp`, and a tmpfs for the CA. The sidecar has no bind mount from the agent container and no writable bind mount from the host.
+- Each session generates its own CA in the sidecar tmpfs. The CA private key stays in the sidecar. The CLI copies the CA certificate to `$SESSION/network/agent/ca.pem`.
+
+The Linux kernel enforces `--network none` on the Linux VM or host that runs Docker, so the mechanism is the same on Docker Desktop, OrbStack and native Linux. Tests ran on OrbStack and on dockerd 29.9.3 in Docker-in-Docker. Docker Desktop is untested.
+
+### Config
+
+```yaml
+network:
+  agent-preset: true        # default true. Adds the rules that the selected agent needs.
+  check-credentials: true   # default true. See "Credential check".
+  rules:                    # default []. First match wins. No match denies the request.
+    - action: allow         # allow | deny. Default allow.
+      host: github.com      # exact name or "*.example.com". Bare "*" and "*.com" are rejected.
+      ports: [443]          # default [443] on allow, every port on deny
+      methods: [GET, POST]  # default all methods
+      paths: ["/acme/*"]    # default all paths. Must start with "/". "*" matches any characters.
+```
+
+- Presence of the key activates the policy. `network: {}` allows the agent preset only. `agent-preset: false` with no rules denies every request.
+- The key is valid in project config and profiles. A `network` key in the user-wide `config.yaml` or an integration drop-in is a hard error, because the policy belongs to the repository or profile.
+- There is no CLI flag and no env var for the policy. `--config` and `--profile` select the file that holds it.
+- Config discovery uses the git repository that contains the current directory, and `--repo` does not change it. A launch from outside the repository does not load that repository's policy. `--bare` without `--config` or `--profile` loads no policy. The launch banner shows whether a policy is active.
+- Scalar merge: a later layer replaces the whole key.
+- The CLI validates every rule before any side effect and prints the active rules to stderr at launch.
+- `*.example.com` matches `a.example.com` and `a.b.example.com`. It does not match `example.com`.
+- A rule with `paths` matches the path without the query string. The query is not matched.
+- An allow rule with `paths` matches one exact spelling, case-sensitively. A deny rule also matches the spelling with `%2F` decoded, `;` parameters and trailing slashes removed, repeated slashes collapsed, and case folded, because a server can route those variants to the denied resource. A server with other routing rules can still receive a variant that no deny rule matches. Prefer allow rules.
+
+### Agent presets
+
+User rules run first and the preset runs after them, so a user deny rule can narrow a preset host. `exec` uses the preset of `--agent`.
+
+| Agent and auth | Host | Methods | Paths |
+|---|---|---|---|
+| Claude | `api.anthropic.com` | `GET`, `POST` | `/v1/messages`, `/v1/messages/count_tokens`, `/v1/mcp_servers`, `/api/web/domain_info` |
+| Codex with ChatGPT auth | `chatgpt.com` | `GET` | `/backend-api/codex/responses` (WebSocket), `/backend-api/codex/models`, `/backend-api/wham/accounts/check` |
+| Codex with an API key | `api.openai.com` | `GET`, `POST` | `/v1/responses` |
+
+Claude Code tolerates a denied `mcp-proxy.anthropic.com` and retries. Codex exits when `/backend-api/wham/accounts/check` is denied. ccairgap measured the Claude and Codex ChatGPT presets with real sessions. `POST /v1/messages/count_tokens` and the Codex API-key preset have no successful measurement.
+
+### Request decision
+
+The addon (`docker/network/policy.py`) evaluates requests in this order. A request denied at steps 1 to 5 gets `403`, and the proxy opens no upstream connection for it. A connection denied at step 6 gets `502`. A hook that raises an exception denies, because mitmproxy otherwise lets the flow continue.
+
+1. `http_connect`: the proxy denies a `CONNECT` when no allow rule can match the host and port.
+2. Consistency: the proxy denies a request when the `Host` header, the absolute-form authority or the TLS SNI differs from the target host, or when the version is anything other than `HTTP/1.0` or `HTTP/1.1`. In a tunnel, the target is the host of the `CONNECT`. mitmproxy reads the `Host` header only for HTTP/1 and the authority only for HTTP/2, and it sends both upstream, so each name needs its own check.
+   The proxy also denies a header with a bare CR, LF or NUL, an invalid header name, a routing header (`X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`, `X-Original-URL`, `X-Rewrite-URL`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Original-Host`, `X-Host`, `Forwarded`, with `_` read as `-`), a method that is not uppercase, and a body on `GET` or `HEAD`.
+3. Path normalization: the proxy percent-decodes the path until it is stable. It denies a path over 8 KiB, invalid UTF-8, `%uXXXX`, `#`, a segment of only dots and spaces after NFKC normalization, an empty segment other than a trailing slash, a backslash or a control character. Rules match the decoded path, except that an encoded slash stays `%2F`, because a server normally routes it as one segment. The dot-segment check treats `%2F` as a separator.
+4. Rules: the first rule whose host, port, method and path all match decides. No match denies the request.
+5. Credential check: see below.
+6. Address check: the addon wraps the event loop's `getaddrinfo`, so the lookup that opens the connection denies the connection if any address is not public. asyncio connects to the results of that one lookup, so DNS rebinding has no second lookup to use. A `server_connect` hook checks IP literals, which asyncio connects to with no lookup. The check reads the IPv4 address inside mapped, IPv4-compatible, SIIT, NAT64 and 6to4 forms, and it also denies addresses that `ipaddress` reports as global but are not public destinations, such as the Azure wire server. A hostname that the rules deny never reaches the resolver, because the proxy connects lazily. The address stays a hostname, because mitmproxy reuses an upstream connection only when the addresses match, and a request after the fifth in a tunnel otherwise stalls.
+
+Other protocols: the proxy kills raw TCP streams (`rawtcp=false` and a `tcp_start` hook) and refuses HTTP/3. SSH to a git remote therefore fails. HTTP/2 from the client is off, so the addon sees one request per stream in HTTP/1.1. mitmproxy closes the connection when a client half-closes its side, so such a client gets no response.
+
+The addon logs one JSON object per decision to the sidecar stdout: stage, verdict, reason, method, host, port and path. The log never contains header values, query strings or bodies, and it holds at most 512 characters of a path. Each denial carries a sequence number, so at exit the CLI summary can state how many denials log rotation removed. An agent can still push real denials out of the 20 lines that the summary shows.
+
+Body limits: mitmproxy reads a whole request body before it sends a response that a hook set, so the addon kills a denied request that declares more than 1 MiB or uses chunked encoding. The client sees the connection close with no `403`. The addon removes each WebSocket message from the flow after relay, because mitmproxy otherwise keeps every message. `--memory=1g` bounds the sidecar. The agent has no route if the kernel kills the sidecar at this limit.
+
+### Credential check
+
+The check stops an agent from sending data to another account through an allowed provider API. For `api.anthropic.com`, `chatgpt.com` and `api.openai.com`, the proxy compares the SHA-256 of the `Authorization` bearer token and `x-api-key`, with `_` in a header name read as `-`, against an allow set. Any other authorization scheme never matches. A mismatch denies the request. A request without a token passes, and the proxy removes its `Cookie` header, so the server treats it as unauthenticated. The check applies to these hosts with or without the preset. A session has hashes only for the host of its own agent, so a token for another provider needs `check-credentials: false`.
+
+- The CLI writes the allow set to `$SESSION/network/sidecar/credentials/<host>` on the host. The sidecar mounts it read-only and the agent does not mount it.
+- The set holds hashes of the tokens that the CLI wrote to session credentials, and of the host env var `CODEX_API_KEY` in Codex print mode. The agent has RW on `$SESSION/creds`, so the CLI never reads tokens back from that file after launch. The runtime auth-refresh watcher adds a hash before each host-driven write, and hashes accumulate for the session. If the hash write fails, the watcher skips the session write and tries both at the next tick, because the proxy would deny the new token.
+- Consequences: in-container `/login` does not work under a policy with `check-credentials: true`, because the new token has no hash. For Claude, a host login reaches the session through the watcher within 60 seconds, unless an in-container `/login` already wrote a refresh token, which stops the watcher. Codex has no runtime refresh, so an expired Codex token needs a new session. A `-e ANTHROPIC_API_KEY` passed through `--docker-run-arg` also has no hash and needs `check-credentials: false`.
+
+### Limits
+
+The policy does not inspect request bodies or WebSocket frames.
+
+- **Data in allowed requests.** An agent can place any data in a request to an allowed host. This includes the Messages API body and the Codex WebSocket frames.
+- **Server-side fetches.** Anthropic documents `mcp_servers`, URL image sources and URL document sources in the Messages API. Those features can cause a provider to contact a third party with data from the request body. `GET /api/web/domain_info` in the Claude preset takes a domain name in its query, and it may cause a provider lookup of that name. The policy does not block them. The proxy sees only the request to the provider.
+- **Any allowed host with write access.** `POST github.com` to an account that the agent controls is exfiltration. The credential check covers only the three provider hosts.
+- **DNS under a wildcard.** The proxy resolves any host that a rule allows, so a wildcard rule lets an agent place data in a subdomain. A canary resolver saw no query for a denied name and saw queries for an allowed name.
+- **Query strings.** Rules do not match the query, so `?_method=DELETE` and data in a query pass any rule that allows the path.
+- **Mounted host sockets.** A Unix socket reachable through a mount is a route out of the container that the proxy does not see. The CLI rejects a `--ro`, `--mount` or raw mount source that contains a known Docker socket. It cannot find other sockets. On macOS, a host socket file is visible in a mount and refuses connections.
+- **Clients and protocols that fail by design.** Non-HTTP protocols fail. A client that pins certificates fails, because it rejects the session CA. A client that ignores the proxy env vars or the CA bundle env vars fails. Private addresses fail, including `localhost` on the host and `host.docker.internal`. Upstream TLS interception fails, because the sidecar verifies upstream servers with public CAs only.
+- **Container escape** stays out of scope. An escape reaches whatever the Docker host can reach.
+
+### Agent container environment
+
+The CLI sets these variables when a policy is active:
+
+| Env var | Value |
+|---|---|
+| `CCAIRGAP_NETWORK_POLICY` | `1`. Tells the entrypoint to start the forwarder. |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, `http_proxy` | `http://127.0.0.1:3128` |
+| `NO_PROXY`, `no_proxy` | `localhost,127.0.0.1` |
+| `NODE_USE_ENV_PROXY` | `1` |
+| `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `NPM_CONFIG_CAFILE`, `CODEX_CA_CERTIFICATE` | `/home/claude/.ccairgap-network-ca-bundle.pem` |
+
+The entrypoint builds that bundle from `/etc/ssl/certs/ca-certificates.crt` and `/run/ccairgap-network/agent/ca.pem` and starts the forwarder before `CCAIRGAP_TEST_CMD` and mode selection, so agent, exec and test modes all get it. The entrypoint exits non-zero when the forwarder does not listen. `ccairgap attach` inherits the variables through `docker exec`. A host `NODE_EXTRA_CA_CERTS` is not forwarded under a policy, and the CLI prints a warning, because the sidecar verifies upstream servers with public CAs only.
+
+### Conflicting docker args
+
+The CLI rejects these `--docker-run-arg` tokens before any side effect when a policy is active, because each one can bypass the proxy or weaken the sidecar boundary: `--network`, `--net`, `--link`, `--network-alias`, `--net-alias`, `--ip`, `--ip6`, `-p`, `--publish`, `-P`, `--publish-all`, `--privileged`, `--cap-add`, `--pid`, `--ipc`, `--uts`, `--userns`, `--cgroupns`, `--runtime`, `--device`, `--security-opt`, `--volumes-from`, clusters of boolean short flags that include `-p` or `-P`, and any token that contains `docker.sock` or matches `ccairgap-network` or `ccairgap-<id>-network`. Values of `-e`, `--env`, `--label` and `-l` are exempt, unless the value starts with `-`, because a value-taking flag before them can make docker read that token as a flag. A `-v`, `--volume` or `--mount` source is also rejected when it contains a known Docker socket, or when it contains or lies inside the ccairgap state root. The `--ro` and `--mount` flags get the same checks, except that `--ro` over the state root stays allowed, because a read-only view cannot change the policy. A known socket is `/var/run/docker.sock`, `/run/docker.sock`, or an existing `~/.docker/run/docker.sock`, `~/.docker/desktop/docker.sock`, `$XDG_RUNTIME_DIR/docker.sock` or `DOCKER_HOST` unix path. This is a hard error. Without a policy, only the tokens in §"Raw docker run args" produce a warning, and the rest produce nothing. The scan covers known flags and is not a proof of completeness. `--add-host` and `--dns*` stay allowed: they change name resolution only.
+
+### Lifecycle
+
+1. Validation phase: parse rules, select the preset, scan docker args.
+2. Just before `docker run`: pull the image when it is missing, create the volume, set its owner, start the sidecar, wait for the socket and the CA, and copy the CA certificate out. A failure removes the sidecar, the volume and the session dir, then aborts.
+3. During the session: the CLI watches the sidecar. The relay is PID 1 and supervises mitmproxy, so the sidecar stops when either one stops. When the sidecar exits, the CLI prints a warning. The agent then loses network access, because no fallback route exists.
+4. In the exit `finally`: the CLI prints the denial summary, removes the sidecar and removes the volume.
+5. A first SIGINT, SIGTERM or SIGHUP to the CLI stops the agent and reaches the same `finally` (see §"Exit trap"). A second signal removes the sidecar without the denial summary and leaves the session on disk. After a SIGKILL, the sidecar stays too. `recover` and `discard` remove a leftover sidecar and volume. If a stopped agent container still holds the volume, they print the removal command.
+6. `--keep-container` keeps the stopped agent container, which holds the volume, so volume removal fails. The CLI prints a hint.
 
 ## Environment variables
 
@@ -1193,6 +1324,7 @@ No `CLAUDE_CODE_OAUTH_TOKEN` env var is used; auth comes from the host's `~/.cla
 | `COLORTERM` | hardcoded `truecolor` | Enables 24-bit color output in the container terminal. |
 | `TZ` | `Intl.DateTimeFormat().resolvedOptions().timeZone` (host IANA zone) | Container timezone matches the host. Resolved via the image's `tzdata` package. Omitted if the host runtime has no IANA zone. |
 | `CCAIRGAP_CLIPBOARD_MODE` | `host-bridge` | Set when clipboard passthrough is active. Triggers entrypoint shim install + xclip-regression warning. |
+| `CCAIRGAP_NETWORK_POLICY` and proxy variables | `network` config key | Set when a network policy is active. See §"Network policy". |
 
 **On the host** — read by the CLI:
 
@@ -1265,6 +1397,8 @@ Failure at any step does not cause the routine to skip subsequent steps. Goal is
 
 On container exit (any reason — normal, error, signal), the CLI runs the handoff routine against the current session's `$SESSION/<id>/`.
 
+A SIGINT, SIGTERM or SIGHUP to the CLI while `docker run` is active ends the session the same way. The CLI runs `docker stop ccairgap-<id>`, retrying until it succeeds or `docker run` has returned, because `docker run` forwards no signal in TTY mode. Handoff starts only after the container stops. The CLI then re-raises the signal, so a parent sees a death by that signal. A second signal runs `docker kill`, removes a network sidecar, and exits without handoff. The session stays on disk for `recover`. A signal earlier in the launch, before `docker run`, has no handler and also leaves the session on disk.
+
 Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairgap recover <id>` to finish it manually.
 
 ## Recovery
@@ -1301,7 +1435,7 @@ Attach is the only subcommand with a selected-agent passthrough tail. Claude att
 1. Probe `docker inspect ccairgap-<id>`. Abort with a clear error if the container is missing or not in `State.Running == true`. (Authoritative single-shot check; `runningContainerNames()` set-membership is too coarse for the attach error message.)
 2. Read `CCAIRGAP_CWD` from `Config.Env` off the inspect output (the launch flow sets this env var so the entrypoint can `cd` to the workspace at startup; `Config.WorkingDir` is unset because the CLI does not pass `docker run -w`). `<id>` itself comes from argv.
 3. Generate a 4-hex random suffix via `crypto.randomBytes(2).toString("hex")`. Final attached label is `<id>#<rand4>` for TUI disambiguation. Stateless; no slot tracking, no IPC.
-4. Exec `docker exec -it --user $(id -u):$(id -g) -w <workdir-from-CCAIRGAP_CWD> -e CCAIRGAP_NAME="<id>#<rand4>" ccairgap-<id> ...`. Claude runs as `claude --dangerously-skip-permissions`; Codex runs as `codex --dangerously-bypass-approvals-and-sandbox --cd <workdir-from-CCAIRGAP_CWD>`. Stdio inherited. CLI exit code mirrors the `docker exec` exit code so shell composition (`ccairgap attach foo && …`) works.
+4. Exec `docker exec -it --user $(id -u):$(id -g) -w <workdir-from-CCAIRGAP_CWD> -e CCAIRGAP_NAME="<id>#<rand4>" ccairgap-<id> ...`. Claude runs as `claude --dangerously-skip-permissions`; Codex runs as `codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd <workdir-from-CCAIRGAP_CWD>`. Stdio inherited. CLI exit code mirrors the `docker exec` exit code so shell composition (`ccairgap attach foo && …`) works.
 
 **Workdir is inherited from PID 1.** In a multi-repo session, that means the attached agent lands in the primary `--repo` workspace just like the original. No `--repo` selector flag — the user `cd`s manually if they need a different repo. Single-repo policy: attach exposes the same one repo PID 1 sees, no more.
 
@@ -1370,4 +1504,3 @@ Completion currently receives previous-token context only. It intentionally does
 
 - Automatic extraction of Claude's output beyond git branches (bundles, patch files) — user can ask Claude to drop artifacts in `/output` manually.
 - Per-MCP allowlisting — user customizes the Dockerfile.
-- Network allowlisting via proxy — not needed under current threat model.

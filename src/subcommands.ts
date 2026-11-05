@@ -21,6 +21,8 @@ import {
   stateRoot,
 } from "./paths.js";
 import { handoff, scanDirtyRepos } from "./handoff.js";
+import { docsUrl } from "./docsUrl.js";
+import { removeLeftoverNetworkResources } from "./network.js";
 import { readManifest, readManifestAgent } from "./manifest.js";
 import { scanOrphans } from "./orphans.js";
 import { cliVersion } from "./version.js";
@@ -98,6 +100,7 @@ export async function recover(
     console.error(`  Or let it exit normally — the exit trap will run handoff.`);
     process.exit(1);
   }
+  if (existsSync(join(sd, "network"))) removeLeftoverNetworkResources(id);
   if (!opts.force) {
     // Pre-scan for dirty repos. Without this, handoff() *would* still preserve
     // the session dir on dirty (per its own preservation triggers), but the
@@ -230,6 +233,7 @@ export async function attach(id: string, opts: {
         : [
             "codex",
             "--dangerously-bypass-approvals-and-sandbox",
+            "--no-daemon",
             "--cd",
             cwd,
             ...commandTail,
@@ -275,12 +279,18 @@ function validateAttachTail(options: {
   return validated.filtered;
 }
 
-export function discard(id: string): void {
+export async function discard(id: string): Promise<void> {
   const sd = sessionDirFn(id);
   if (!existsSync(sd)) {
     console.error(`ccairgap: no session dir at ${sd}`);
     process.exit(1);
   }
+  if (await isSessionContainerLive(id)) {
+    console.error(`ccairgap: session ${id} has a running container (ccairgap-${id}).`);
+    console.error(`  Stop it first: docker stop ccairgap-${id}`);
+    process.exit(1);
+  }
+  if (existsSync(join(sd, "network"))) removeLeftoverNetworkResources(id);
   rmSync(sd, { recursive: true, force: true });
   console.log(`discarded ${id}`);
 }
@@ -889,11 +899,19 @@ function checkUserWideConfig(): DoctorCheck[] {
 /** Default config.yaml content written by `ccairgap init`. */
 function defaultInitConfigYaml(): string {
   return [
-    "# ccairgap config — see README.md §\"Config file\" for all keys.",
+    `# ccairgap config. All keys: ${docsUrl("config")}`,
     "# Sidecar Dockerfile lives next to this file and extends ccairgap's",
     "# managed runtime base. Add project-specific image changes above the",
     "# agent install block.",
     "dockerfile: Dockerfile",
+    "",
+    "# Limit outbound traffic. Uncomment to allow the agent's own API and",
+    "# the rules below, and nothing else. See",
+    `# ${docsUrl("network")}`,
+    "# network:",
+    "#   rules:",
+    "#     - host: registry.npmjs.org",
+    "#       methods: [GET]",
     "",
   ].join("\n");
 }
@@ -1034,7 +1052,7 @@ function initUserWide(opts: InitOptions): void {
 
 function defaultUserWideConfigYaml(): string {
   return [
-    "# ccairgap user-wide config — see docs/config.md §\"User-wide config\".",
+    `# ccairgap user-wide config. See ${docsUrl("config")}#user-wide-config`,
     "# Persistent defaults applied to every launch (defaults < user-wide < project < CLI).",
     "# Relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` paths are NOT allowed here",
     "# (no workspace anchor); use absolute paths.",

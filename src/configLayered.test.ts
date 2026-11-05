@@ -22,6 +22,12 @@ describe("mergeLayers", () => {
     expect(r.provenance.name).toBe("project");
   });
 
+  it("carries the network policy of the project layer", () => {
+    const network = { agentPreset: true, checkCredentials: true, rules: [] };
+    const r = mergeLayers({ integrations: [], userWide: undefined, project: { network } });
+    expect(r.merged.network).toEqual(network);
+  });
+
   it("scalars: user-wide wins when project absent", () => {
     const r = mergeLayers({
       integrations: [],

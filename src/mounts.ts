@@ -32,7 +32,8 @@ export type MountSource =
         | "agents-skills"
         | "auth-warnings"
         | "userdb-passwd"
-        | "userdb-group";
+        | "userdb-group"
+        | "host-credentials-mask";
     }
   | { kind: "claude-symlink-overlay"; relPath: string }
   | { kind: "repo"; hostPath: string }
@@ -60,6 +61,12 @@ export interface ClaudeMountInputs {
   hostClaudeJson: string;
   /** Host directory containing `.credentials.json`, RW-mounted at /host-claude-creds-dir/. */
   hostCredsDir: string;
+  /**
+   * Empty file mounted over the host credentials file under /host-claude, and
+   * that file's path relative to the config dir. Absent when the mounted config
+   * dir holds no credentials file. See hostCredentialsRelPath in credentials.ts.
+   */
+  hostCredentialsMask?: { src: string; relPath: string };
   /** Host directory the runtime watcher writes warning text into; RO-mounted at /run/ccairgap-auth-warnings/. */
   authWarningsDir: string;
   /**
@@ -168,6 +175,14 @@ export function buildMounts(i: BuildMountsInput): Mount[] {
     mode: "ro",
     source: { kind: "host-claude" },
   });
+  if (i.hostCredentialsMask) {
+    mounts.push({
+      src: i.hostCredentialsMask.src,
+      dst: join("/host-claude", i.hostCredentialsMask.relPath),
+      mode: "ro",
+      source: { kind: "host-credentials-mask" },
+    });
+  }
   mounts.push({
     src: i.hostClaudeJson,
     dst: "/host-claude-json",

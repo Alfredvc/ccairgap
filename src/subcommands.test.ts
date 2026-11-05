@@ -415,6 +415,7 @@ describe("attach", () => {
     const argv = readFileSync(argvSink, "utf8").trimEnd().split("\n");
     expect(argv).toContain("codex");
     expect(argv).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(argv).toContain("--no-daemon");
     expect(argv).not.toContain("claude");
   });
 
@@ -497,6 +498,73 @@ describe("recover live-container precheck", () => {
     const stderr = errSpy.mock.calls.map((c) => c[0] as string).join("\n");
     expect(stderr).toContain("ccairgap-live-abcd");
     expect(stderr).toContain("docker stop");
+  });
+
+  it("discard refuses a live session and keeps its directory and sidecar", async () => {
+    mkdirSync(join(root, "sessions", "live-abcd", "network"));
+    const log = join(root, "docker.log");
+    stubDocker(`printf '%s\\n' "$*" >> "${log}"\necho "ccairgap-live-abcd"`);
+    const { discard } = await import("./subcommands.js");
+
+    await expect(discard("live-abcd")).rejects.toThrow(/process\.exit\(1\)/);
+
+    expect(existsSync(join(root, "sessions", "live-abcd"))).toBe(true);
+    expect(readFileSync(log, "utf8")).not.toMatch(/^(rm|volume) /m);
+    const stderr = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(stderr).toContain("docker stop ccairgap-live-abcd");
+  });
+
+  it("discard removes a session whose container is not running", async () => {
+    stubDocker(`echo "ccairgap-other-session"`);
+    const { discard } = await import("./subcommands.js");
+
+    await discard("live-abcd");
+
+    expect(existsSync(join(root, "sessions", "live-abcd"))).toBe(false);
+  });
+
+  it("discard works when docker is unavailable", async () => {
+    stubDocker(`exit 1`);
+    const { discard } = await import("./subcommands.js");
+
+    await discard("live-abcd");
+
+    expect(existsSync(join(root, "sessions", "live-abcd"))).toBe(false);
+  });
+
+  it("leaves the network sidecar of a live session in place", async () => {
+    mkdirSync(join(root, "sessions", "live-abcd", "network"));
+    const log = join(root, "docker.log");
+    stubDocker(`printf '%s\\n' "$*" >> "${log}"\necho "ccairgap-live-abcd"`);
+    const { recover } = await import("./subcommands.js");
+
+    await expect(recover("live-abcd")).rejects.toThrow(/process\.exit\(1\)/);
+
+    expect(readFileSync(log, "utf8")).not.toMatch(/^(rm|volume) /m);
+  });
+
+  it("removes the network sidecar only for a session that has one", async () => {
+    const log = join(root, "docker.log");
+    stubDocker(`printf '%s\\n' "$*" >> "${log}"`);
+    const { recover } = await import("./subcommands.js");
+
+    await recover("live-abcd").catch(() => undefined);
+    expect(readFileSync(log, "utf8")).not.toMatch(/^rm /m);
+
+    const sd = join(root, "sessions", "live-abcd");
+    if (!existsSync(sd)) mkdirSync(sd, { recursive: true });
+    writeManifest(sd, {
+      version: 1,
+      cli_version: "test",
+      image_tag: "test:1",
+      created_at: new Date().toISOString(),
+      repos: [],
+      branch: "ccairgap/live-abcd",
+      claude_code: {},
+    });
+    mkdirSync(join(sd, "network"));
+    await recover("live-abcd").catch(() => undefined);
+    expect(readFileSync(log, "utf8")).toMatch(/^rm -f -v ccairgap-live-abcd-network$/m);
   });
 
   it("proceeds when no container is running (empty docker ps output)", async () => {

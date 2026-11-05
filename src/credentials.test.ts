@@ -1,14 +1,68 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
 import {
+  hostCredentialsRelPath,
   materializeAdvisoryCredentials,
   stripRefreshToken,
   CredentialsDeadError,
   resolveCredentials,
 } from "./credentials.js";
 import * as authRefresh from "./authRefresh.js";
+
+describe("hostCredentialsRelPath", () => {
+  let root: string;
+  let dir: string;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "creds-rel-")));
+    dir = join(root, ".claude");
+    mkdirSync(dir);
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("returns the file name for a regular file", () => {
+    writeFileSync(join(dir, ".credentials.json"), "{}");
+    expect(hostCredentialsRelPath(dir)).toBe(".credentials.json");
+  });
+
+  it("returns undefined when the file is absent", () => {
+    expect(hostCredentialsRelPath(dir)).toBeUndefined();
+  });
+
+  it("returns the target of a symlink inside the config dir, which holds the token", () => {
+    mkdirSync(join(dir, "vault"));
+    writeFileSync(join(dir, "vault", "real.json"), "{}");
+    symlinkSync("vault/real.json", join(dir, ".credentials.json"));
+    expect(hostCredentialsRelPath(dir)).toBe(join("vault", "real.json"));
+  });
+
+  it("returns undefined for a target outside the config dir, which has no container path", () => {
+    writeFileSync(join(root, "outside.json"), "{}");
+    symlinkSync(join(root, "outside.json"), join(dir, ".credentials.json"));
+    expect(hostCredentialsRelPath(dir)).toBeUndefined();
+  });
+
+  it("keeps a target whose name only starts with two dots", () => {
+    // A prefix check on ".." alone would treat ..hidden as outside the dir.
+    writeFileSync(join(dir, "..hidden"), "{}");
+    symlinkSync("..hidden", join(dir, ".credentials.json"));
+    expect(hostCredentialsRelPath(dir)).toBe("..hidden");
+  });
+
+  it("returns undefined for a dangling symlink", () => {
+    symlinkSync("missing.json", join(dir, ".credentials.json"));
+    expect(hostCredentialsRelPath(dir)).toBeUndefined();
+  });
+
+  it("resolves a config dir that is itself a symlink", () => {
+    writeFileSync(join(dir, ".credentials.json"), "{}");
+    const link = join(root, "link");
+    symlinkSync(dir, link);
+    expect(hostCredentialsRelPath(link)).toBe(".credentials.json");
+  });
+});
 
 describe("stripRefreshToken", () => {
   it("removes claudeAiOauth.refreshToken and preserves other fields", () => {

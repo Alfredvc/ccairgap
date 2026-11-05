@@ -55,6 +55,14 @@ export interface StartRuntimeAuthRefreshInput {
    * stripped session copy here would silently disable refresh forever.
    */
   readHostCreds: () => Promise<string>;
+  /**
+   * Called with stripped credentials JSON just before each host-driven write.
+   * The network policy adds the token hash here, so the allow set holds the hash
+   * before the agent can read the new token.
+   */
+  onHostDrivenWrite?: (strippedJson: string) => void;
+  /** A network policy blocks in-container `/login`, so banners name the host instead. */
+  networkPolicy?: boolean;
   /** Injectable for tests. Defaults to the production `refreshIfLowTtl`
    *  bound against `readHostCreds` and `lockPath`. */
   refreshFn?: () => Promise<RefreshResult>;
@@ -199,7 +207,7 @@ export function startRuntimeAuthRefresh(
       : 0;
     const text =
       `⚠ ccairgap: auth refresh has failed ${consecutiveFailures} times in a row.\n` +
-      `  Token expires ${wallClock} (${mins}m). When it hits, run /login in Claude.`;
+      `  Token expires ${wallClock} (${mins}m). When it hits, ${input.networkPolicy ? "run /login in claude on the host" : "run /login in Claude"}.`;
     atomicWrite(join(input.sessionDir, "auth-warnings", "current.txt"), text);
   };
 
@@ -283,9 +291,20 @@ export function startRuntimeAuthRefresh(
         // is JSON.parse → JSON.stringify, deterministic for a given input).
         const stripped = stripRefreshToken(r.finalJson);
         if (stripped !== lastWrittenStrippedJson) {
-          writeSessionCreds(input.sessionDir, stripped);
-          lastWriteMtimeMs = statSync(credsPath).mtimeMs;
-          lastWrittenStrippedJson = stripped;
+          // The proxy denies a token whose hash is missing. On a failure the
+          // session keeps its current token, and the next tick tries both steps.
+          let hashReady = true;
+          try {
+            input.onHostDrivenWrite?.(stripped);
+          } catch (e) {
+            hashReady = false;
+            console.error(`ccairgap: network credential update failed: ${(e as Error).message}`);
+          }
+          if (hashReady) {
+            writeSessionCreds(input.sessionDir, stripped);
+            lastWriteMtimeMs = statSync(credsPath).mtimeMs;
+            lastWrittenStrippedJson = stripped;
+          }
         }
         expiresAtMs = parseExpiresAt(r.finalJson);
         consecutiveFailures = 0;

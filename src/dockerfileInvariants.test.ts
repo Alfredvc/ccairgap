@@ -34,6 +34,29 @@ describe("docker/entrypoint.sh ~/.claude copy invariants", () => {
     expect(ENTRYPOINT).toContain("--exclude='/daemon-*'");
   });
 
+  it("does not copy the user-level settings.local.json", () => {
+    // Claude Code reads it as project-local settings when cwd is $HOME, and the
+    // hook policy does not filter it. The anchor keeps nested files of that name.
+    expect(ENTRYPOINT).toContain("--exclude='/settings.local.json'");
+    expect(ENTRYPOINT).not.toContain("--exclude='settings.local.json'");
+  });
+
+  it("runs the interactive Codex branch without the shared background server", () => {
+    // The image has no `ps`, and the shared app-server fails without it.
+    expect(ENTRYPOINT).toContain(
+      'FINAL_CMD=(codex --dangerously-bypass-approvals-and-sandbox --no-daemon --cd "$CWD" "$@")',
+    );
+  });
+
+  it("starts the network forwarder before any command can run", () => {
+    // A client that runs before the forwarder listens fails, and exec and test
+    // modes must get the same network as agent mode.
+    const forwarder = ENTRYPOINT.indexOf("forwarder.mjs");
+    expect(forwarder).toBeGreaterThan(-1);
+    expect(forwarder).toBeLessThan(ENTRYPOINT.indexOf('exec sh -c "$CCAIRGAP_TEST_CMD"'));
+    expect(forwarder).toBeLessThan(ENTRYPOINT.indexOf('case "$ENTRYPOINT_MODE" in'));
+  });
+
   it("tolerates rsync exits 23 and 24 in every copy block", () => {
     // Exit 24 fires when host Claude Code deletes a file during the copy.
     const tolerant = ENTRYPOINT.match(/if \[ "\$rc" -eq 23 \] \|\| \[ "\$rc" -eq 24 \]; then/g);

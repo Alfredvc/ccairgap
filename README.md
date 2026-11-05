@@ -23,7 +23,7 @@ Run Claude Code by default, or opt into Codex CLI with `--agent codex`. The sele
 - **Per-repo config** — drop `.ccairgap/` at your repo root for ccairgap launch config and Claude-scoped overlays; Codex uses native Codex project guidance.
 - **Claude resume support** — start a Claude session on host or sandbox, continue on either.
 - **Clipboard passthrough** — copy an image on your host, paste it into Claude inside the sandbox. macOS, Linux (Wayland/X11), and WSL2.
-- **Works behind corp proxies** — `NODE_EXTRA_CA_CERTS` forwards through, so custom CA bundles just work.
+- **Works behind corp proxies** — `NODE_EXTRA_CA_CERTS` forwards through, so custom CA bundles just work. A [network policy](skills/ccairgap-configure/references/network.md) disables this forwarding.
 
 ## Why ccairgap?
 
@@ -49,7 +49,7 @@ npm i -g ccairgap
 
 **Tab completion (optional):** `ccairgap install-completion` (bash/zsh/fish). Full reference: [docs/completion.md](docs/completion.md).
 
-**Agent selection:** Claude is the default. `--agent codex` and `agent: codex` opt into Codex CLI inside the same ccairgap sandbox. Codex launches require a workspace repo and use sanitized session-local Codex state. Full details: [docs/codex.md](docs/codex.md).
+**Agent selection:** Claude is the default. `--agent codex` and `agent: codex` opt into Codex CLI inside the same ccairgap sandbox. Codex launches require a workspace repo and use sanitized session-local Codex state. Full details: [skills/ccairgap-configure/references/codex.md](skills/ccairgap-configure/references/codex.md).
 
 **Command mode:** `ccairgap exec -- <command...>` prepares the same sandbox and runs an exact command argv instead of starting the selected agent. Use `--agent` to select which environment is prepared, not which binary runs.
 
@@ -68,8 +68,8 @@ With Claude selected, the sandbox has:
 - Your skills from: project, global, inside plugins
 - Your memories (read-only)
 - Host clipboard images
-- Your hooks (may need a [custom Dockerfile](docs/dockerfile.md) if hooks shell out to host binaries)
-- Your MCP servers (usually needs a [custom Dockerfile](docs/dockerfile.md) to install the server binaries)
+- Your hooks (may need a [custom Dockerfile](skills/ccairgap-configure/references/dockerfile.md) if hooks shell out to host binaries)
+- Your MCP servers (usually needs a [custom Dockerfile](skills/ccairgap-configure/references/dockerfile.md) to install the server binaries)
 - Your managed-policy settings (enterprise / MDM; skipped when absent)
 
 With Codex selected, the sandbox has:
@@ -86,6 +86,9 @@ ccairgap --ro node_modules
 
 # Two repos: primary workspace + readable sibling
 ccairgap --repo ~/src/foo --extra-repo ~/src/bar
+
+# Limit outbound traffic with a stricter profile: .ccairgap/locked-down.config.yaml
+ccairgap --profile locked-down
 
 # Hand it a task and walk away
 ccairgap -p "add login flow"
@@ -134,35 +137,7 @@ Then in Claude: *"configure ccairgap for this repo"*. Source: [`skills/ccairgap-
 
 ## User-wide config
 
-Persistent defaults that apply across all projects. Scaffold with:
-
-```bash
-ccairgap init --user
-```
-
-Config dir: `~/.config/ccairgap/` (or `$XDG_CONFIG_HOME/ccairgap/`).
-
-**File vocabulary:**
-
-| Path | Role |
-|---|---|
-| `config.yaml` | Defaults for every launch — all `config.yaml` keys accepted; relative `repo`/`ro`/etc. are a hard error (no workspace anchor). |
-| `integrations/*.yaml` | Per-tool drop-ins; allowlisted keys only: `hooks.enable`, `mcp.enable`, `docker-run-arg` (safe-flag subset). |
-| `CLAUDE.md` | Claude overlay: appended to in-container `~/.claude/CLAUDE.md` before the project block. |
-| `settings.json` | Claude overlay: deep-merged into `~/.claude/settings.json`. |
-| `mcp.json` | Claude overlay: `mcpServers` merged into `~/.claude.json`. |
-| `skills/` | Claude overlay: rsynced into `~/.claude/skills/`. |
-| `Dockerfile` | Opt-in custom image sidecar (`dockerfile: Dockerfile` in `config.yaml`). |
-
-**Layer order:** defaults < user-wide integrations < user-wide config < project < CLI
-
-Integration drop-ins let third-party tools self-register hooks, MCP servers, or safe docker args without touching the user's `config.yaml`.
-
-**Hermetic overrides:**
-- `--no-user-config` — skip the entire user-wide layer (launch config + session environment).
-- `--bare` — skip user-wide and project launch config (session environment still injected).
-
-Full spec: [docs/config.md — User-wide config](docs/config.md#user-wide-config).
+`~/.config/ccairgap/` holds defaults for every project. Run `ccairgap init --user` to create it. Precedence is defaults, then user-wide integrations, then user-wide config, then project, then CLI. See [User-wide config](skills/ccairgap-configure/references/config.md#user-wide-config) for the files that it can hold and the flags that skip it.
 
 ## How it works
 
@@ -190,7 +165,7 @@ flowchart LR
     Branch --> Repo
 ```
 
-For Claude, your `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md, credentials — is mounted read-only and copied in at startup, so inside the container Claude looks and behaves exactly like yours. Project-scope Claude config comes along too, including uncommitted files like `settings.local.json` with your MCP approvals and permission allow-lists. Transcripts written during the session land back in `~/.claude/projects/` on exit, so `claude --resume` on the host keeps working.
+For Claude, your `~/.claude/` — settings, plugins, skills, commands, CLAUDE.md — is mounted read-only and copied in at startup, so inside the container Claude looks and behaves exactly like yours. Credentials take a separate path: an empty file covers `.credentials.json` in that mount, and the session receives a copy of your credentials with the refresh token removed. Project-scope Claude config comes along too, including uncommitted files like `settings.local.json` with your MCP approvals and permission allow-lists. Transcripts written during the session land back in `~/.claude/projects/` on exit, so `claude --resume` on the host keeps working.
 
 For Codex, ccairgap resolves `$CODEX_HOME`, filters config, sanitizes auth, copies skills and installed plugin cache, overlays safe project guidance, and writes a session-local `CODEX_HOME` for the container. Runtime Codex auth, logs, history, memories, plugin data, and marketplace writes stay inside the session; validated rollout records are copied back during handoff or `recover`.
 
@@ -202,6 +177,18 @@ For command-mode automation, `ccairgap exec -- <command...>` uses the same conta
 
 Clipboard passthrough — paste images from your host into Claude inside the sandbox — is on by default on macOS, Linux, and WSL2.
 
+**Outbound network.** Sessions have full outbound access by default, so an agent can send anything it can read over the network. A `network` block in project config limits outbound traffic to the hosts, ports, methods and paths that you allow. It runs the agent with `--network none` behind a proxy in a separate container. It does not inspect request bodies.
+
+```yaml
+# .ccairgap/config.yaml: the agent's own API, read access to npm, and nothing else.
+network:
+  rules:
+    - host: registry.npmjs.org
+      methods: [GET]
+```
+
+See [Network policy](skills/ccairgap-configure/references/network.md) for the rule syntax, more examples and what a policy does not stop.
+
 Full design: [docs/SPEC.md](docs/SPEC.md).
 
 ## Reference
@@ -211,25 +198,26 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 - [Subcommands](docs/subcommands.md)
 - [Shell completion](docs/completion.md)
 - [Host environment variables](docs/env-vars.md)
-- [Codex support](docs/codex.md)
-- [Forwarding flags to the selected agent](docs/claude-args.md)
+- [Codex support](skills/ccairgap-configure/references/codex.md)
+- [Forwarding flags to the selected agent](skills/ccairgap-configure/references/claude-args.md)
 
 **Config**
-- [Configuration file](docs/config.md)
-- [`.ccairgap/` — ccairgap-scope Claude config](docs/ccairgap-dir.md)
-- [User-wide config](docs/config.md#user-wide-config)
+- [Configuration file](skills/ccairgap-configure/references/config.md)
+- [Network policy](skills/ccairgap-configure/references/network.md)
+- [`.ccairgap/` — ccairgap-scope Claude config](skills/ccairgap-configure/references/ccairgap-dir.md)
+- [User-wide config](skills/ccairgap-configure/references/config.md#user-wide-config)
 
 **Integrations**
-- [Hooks](docs/hooks.md)
-- [MCP servers](docs/mcp.md)
+- [Hooks](skills/ccairgap-configure/references/hooks.md)
+- [MCP servers](skills/ccairgap-configure/references/mcp.md)
 - [Clipboard passthrough](docs/clipboard.md)
 - [Auto-memory](docs/auto-memory.md)
 - [Managed policy (MDM)](docs/managed-policy.md)
 
 **Advanced**
 - [Auth refresh](docs/auth-refresh.md)
-- [Custom Dockerfile](docs/dockerfile.md)
-- [Raw docker run args & secrets](docs/docker-run-args.md)
+- [Custom Dockerfile](skills/ccairgap-configure/references/dockerfile.md)
+- [Raw docker run args & secrets](skills/ccairgap-configure/references/docker-run-args.md)
 
 **Design**
 - [Full design spec](docs/SPEC.md)

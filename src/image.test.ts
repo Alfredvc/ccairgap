@@ -292,6 +292,17 @@ describe("ensureImage", () => {
     await vi.resetModules();
   });
 
+  it("sends registry pull progress to stderr, because stdout carries print-mode output", async () => {
+    await vi.resetModules();
+    const execa = vi.fn(async () => ({ stdout: "" }));
+    vi.doMock("execa", () => ({ execa }));
+    const mod = await import("./image.js");
+
+    expect(await mod.tryPullImage("local:1", "ghcr.io/x:1")).toBe(true);
+
+    expect(execa).toHaveBeenCalledWith("docker", ["pull", "ghcr.io/x:1"], { stdio: ["ignore", 2, 2] });
+  });
+
   it("builds a managed-runtime custom Dockerfile on the resolved runtime base image", async () => {
     await vi.resetModules();
     const execa = vi.fn(async (_cmd: string, args: string[]) => {

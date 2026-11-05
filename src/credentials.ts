@@ -1,12 +1,34 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { platform } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { execa } from "execa";
 import { hostClaudeDir } from "./paths.js";
 import { refreshIfLowTtl, type RefreshResult } from "./authRefresh.js";
 import { writeSessionCreds } from "./sessionCredsWriter.js";
 
 const KEYCHAIN_ITEM = "Claude Code-credentials";
+
+/**
+ * Path of the host credentials file relative to the host config dir, or undefined
+ * when /host-claude cannot expose it. The agent can read everything under the
+ * /host-claude mount, and this file holds the host refresh token, so launch mounts
+ * an empty file over this path. A symlink resolves to its target, because the
+ * target is the file that holds the token. A target outside the config dir has no
+ * path in the container, so it needs no mask.
+ */
+export function hostCredentialsRelPath(hostClaudeDir: string): string | undefined {
+  let real: string;
+  let root: string;
+  try {
+    real = realpathSync(join(hostClaudeDir, ".credentials.json"));
+    root = realpathSync(hostClaudeDir);
+  } catch {
+    return undefined;
+  }
+  const rel = relative(root, real);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;
+  return rel;
+}
 
 /** 5-minute cold-start floor: Claude Code's own `isOAuthTokenExpired` buffer. */
 const COLD_START_FLOOR_MS = 5 * 60 * 1000;
