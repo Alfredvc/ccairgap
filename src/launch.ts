@@ -36,6 +36,7 @@ import { handoff } from "./handoff.js";
 import { cliVersion } from "./version.js";
 import { scanOrphans } from "./orphans.js";
 import {
+  hostCredentialsRelPath,
   resolveCredentials,
   materializeAdvisoryCredentials,
   CredentialsDeadError,
@@ -1041,6 +1042,16 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // Anchor on primary repo host path so --bare --repo <other> resolves correctly.
   const ccairgapDir = resolveCcairgapDir(repoEntries[0]?.hostPath ?? process.cwd());
   try {
+  // Bind-mount sources must exist, so the mask is a file in session scratch.
+  const credentialsRelPath = hostClaudePresent ? hostCredentialsRelPath(hostClaude) : undefined;
+  let hostCredentialsMask: { src: string; relPath: string } | undefined;
+  if (credentialsRelPath !== undefined) {
+    const src = join(placeholderDir, "credentials-mask");
+    mkdirSync(placeholderDir, { recursive: true });
+    writeFileSync(src, "", { mode: 0o444 });
+    hostCredentialsMask = { src, relPath: credentialsRelPath };
+  }
+
     mounts = buildMounts({
       hostClaudeDir: claudeDirMountSrc,
       hostClaudeJson: claudeJsonMountSrc,
@@ -1049,6 +1060,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
       hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
       pluginsCacheDir: pluginsCache,
+      hostCredentialsMask,
       sessionTranscriptsDir: transcriptsDir,
       outputDir: outputDirPath(env),
       repos: repoEntries,

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execaSync } from "execa";
@@ -75,6 +75,17 @@ case "$1 $2" in
     case "$*" in
       *"codex --version"*) echo "codex-cli 0.134.0" ;;
       *"claude --version"*) echo "2.1.143 (Claude Code)" ;;
+      *CCAIRGAP_NAME=*)
+        for a in "$@"; do
+          case "$a" in
+            *:/host-claude/.credentials.json:ro)
+              src="\${a%%:/host-claude/.credentials.json:ro}"
+              ls -l "$src" | cut -c1-10 > "${root}/mask-mode"
+              wc -c < "$src" | tr -d ' ' > "${root}/mask-size"
+              ;;
+          esac
+        done
+        ;;
     esac
     ;;
 esac
@@ -148,6 +159,25 @@ exit 0
     rules: Array<{ host: string }>;
     credentialHosts: string[];
   };
+
+  describe("host credentials mask", () => {
+    it("mounts an empty read-only file over the host credentials file", async () => {
+      await run({ network: undefined });
+      expect(agentRun()).toContain(":/host-claude/.credentials.json:ro");
+      expect(readFileSync(join(root, "mask-mode"), "utf8").trim()).toBe("-r--r--r--");
+      expect(readFileSync(join(root, "mask-size"), "utf8").trim()).toBe("0");
+    });
+
+    it("adds no mask when the target is outside the config dir", async () => {
+      const outside = join(root, "outside.json");
+      writeFileSync(outside, readFileSync(join(home, ".claude", ".credentials.json")));
+      rmSync(join(home, ".claude", ".credentials.json"));
+      symlinkSync(outside, join(home, ".claude", ".credentials.json"));
+      await run({ network: undefined });
+      expect(agentRun()).toBeDefined();
+      expect(agentRun()).not.toContain("/host-claude/.credentials.json");
+    });
+  });
 
   it("runs the agent with no network, the proxy env, and the policy-only mounts", async () => {
     const result = await run();

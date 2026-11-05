@@ -143,6 +143,23 @@ describe("buildMounts + collision resolver", () => {
     expect(hostAbsMount?.mode).toBe("ro");
   });
 
+  it("mounts the credentials mask over the path inside /host-claude", () => {
+    const mounts = buildMounts({
+      ...baseInput(root),
+      hostCredentialsMask: { src: "/session/mask", relPath: "vault/real.json" },
+    });
+    expect(mounts.find((m) => m.source.kind === "host-credentials-mask")).toMatchObject({
+      src: "/session/mask",
+      dst: "/host-claude/vault/real.json",
+      mode: "ro",
+    });
+  });
+
+  it("adds no credentials mask without an input", () => {
+    const mounts = buildMounts(baseInput(root));
+    expect(mounts.some((m) => m.source.kind === "host-credentials-mask")).toBe(false);
+  });
+
   it("skips host-abs-path plugins mount when host ~/.claude matches container $HOME/.claude", () => {
     mkdirSync(join(root, "home", "claude", ".claude", "plugins"), { recursive: true });
     const input = baseInput(root);
