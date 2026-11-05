@@ -905,6 +905,14 @@ function defaultInitConfigYaml(): string {
     "# agent install block.",
     "dockerfile: Dockerfile",
     "",
+    "# Limit outbound traffic. Uncomment to allow the agent's own API and",
+    "# the rules below, and nothing else. See",
+    `# ${docsUrl("network")}`,
+    "# network:",
+    "#   rules:",
+    "#     - host: registry.npmjs.org",
+    "#       methods: [GET]",
+    "",
   ].join("\n");
 }
 

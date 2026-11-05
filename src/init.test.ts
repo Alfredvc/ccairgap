@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { parseNetworkConfig } from "./network.js";
 import { initCmd, resolveInitTarget } from "./subcommands.js";
 
 let root: string;
@@ -22,6 +24,29 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+});
+
+describe("init network block", () => {
+  function writtenConfig(): string {
+    initCmd({ configPath: join(root, ".ccairgap", "config.yaml"), force: false });
+    return readFileSync(join(root, ".ccairgap", "config.yaml"), "utf8");
+  }
+
+  it("leaves the network policy off until the user uncomments it", () => {
+    const parsed = parseYaml(writtenConfig()) as Record<string, unknown>;
+    expect(parsed).toEqual({ dockerfile: "Dockerfile" });
+  });
+
+  it("holds a commented block that parses once uncommented", () => {
+    const uncommented = writtenConfig()
+      .split("\n")
+      .map((line) => line.replace(/^# ((network:|  +rules:|  +- host:|  +methods:).*)$/, "$1"))
+      .join("\n");
+    const parsed = parseYaml(uncommented) as { network: unknown };
+    expect(parseNetworkConfig(parsed.network).rules).toEqual([
+      { action: "allow", host: "registry.npmjs.org", ports: [443], methods: ["GET"] },
+    ]);
+  });
 });
 
 function initGitRepo(dir: string): void {
