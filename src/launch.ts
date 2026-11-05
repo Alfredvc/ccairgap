@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { execa } from "execa";
@@ -9,6 +9,7 @@ import {
   realpath,
   sessionDir as sessionDirFn,
   sessionsDir as sessionsDirFn,
+  stateRoot,
 } from "./paths.js";
 import { writeManifest, type Manifest } from "./manifest.js";
 import {
@@ -62,6 +63,23 @@ import { validateClaudeArgs } from "./claudeArgs.js";
 import { validateCodexArgs } from "./codexArgs.js";
 import { resolveCodexHome, type CodexHomePlan } from "./codexHome.js";
 import { planCodexAuth } from "./codexAuth.js";
+import {
+  addCredentialHash,
+  claudeAccessToken,
+  codexToken,
+  findNetworkConflicts,
+  findNetworkPathConflicts,
+  formatNetworkPlan,
+  networkProtectedPaths,
+  networkAgentDockerArgs,
+  networkAgentEnv,
+  planNetworkPolicy,
+  startNetworkSidecar,
+  type CodexAuthKind,
+  type NetworkConfig,
+  type NetworkPlan,
+  type NetworkSidecarHandle,
+} from "./network.js";
 import { materializeCodexState, type CodexStatePlan } from "./codexState.js";
 import { overlayProjectCodexConfig } from "./codexProjectOverlay.js";
 import { agentCommandPlan, validatedAgentArgv, type AgentCommandPlan } from "./agentCommand.js";
@@ -174,6 +192,8 @@ export interface LaunchOptions {
    * settings.json / mcp.json / skills/ continue to inject at session level.
    */
   userWideDir?: string;
+  /** Network policy from project config. Undefined keeps full outbound. See docs/SPEC.md §"Network policy". */
+  network?: NetworkConfig;
 }
 
 export interface LaunchResult {
@@ -329,6 +349,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
 
   const selectedAgent: AgentKind = opts.agent ?? "claude";
   let codexHomePlan: CodexHomePlan | undefined;
+  let codexAuthKind: CodexAuthKind | undefined;
   const selectedCodexUsesPrintApiKey =
     selectedAgent === "codex" && opts.print !== undefined && typeof env.CODEX_API_KEY === "string" && env.CODEX_API_KEY.length > 0;
   let selectedArgv: string[];
@@ -369,11 +390,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         env,
         protectedHostPaths: [...opts.repos, ...opts.ros],
       });
-      if (!selectedCodexUsesPrintApiKey) {
-        planCodexAuth({
+      if (selectedCodexUsesPrintApiKey) {
+        codexAuthKind = "api-key";
+      } else {
+        codexAuthKind = planCodexAuth({
           hostHome: codexHomePlan.hostHome,
           selected: true,
-        });
+        }).authKind;
       }
     } catch (e) {
       die((e as Error).message);
@@ -395,6 +418,26 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       for (const s of claudeArgsValidation.softDropped) console.error(s.reason);
       selectedArgv = claudeArgsValidation.filtered;
     }
+  }
+
+  // Network policy validation runs here, before any side effect.
+  let networkPlan: NetworkPlan | undefined;
+  if (opts.network) {
+    let tokens: string[] = [];
+    try {
+      tokens = parseDockerRunArgs(opts.dockerRunArgs);
+    } catch (e) {
+      die((e as Error).message);
+    }
+    const conflicts = findNetworkConflicts(tokens, networkProtectedPaths(stateRoot()));
+    if (conflicts.length > 0) {
+      die(
+        `--docker-run-arg conflicts with the network policy: ${conflicts.join(" ")}. ` +
+          `See docs/network.md.`,
+      );
+    }
+    networkPlan = planNetworkPolicy(opts.network, selectedAgent, codexAuthKind);
+    for (const line of formatNetworkPlan(networkPlan)) console.error(line);
   }
 
   const commandPlan: AgentCommandPlan | undefined = isExecMode
@@ -568,6 +611,29 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
   for (const w of artifacts.warnings) console.error(`ccairgap: ${w}`);
 
+  if (networkPlan) {
+    const conflicts = findNetworkPathConflicts(
+      {
+        // Docker follows symlinks in a mount source, so check the real path as well.
+        ro: [...new Set([...opts.ros.map((p) => resolve(p)), ...roResolved.map((p) => realpath(p))])],
+        mount: [
+          ...new Set(
+            artifacts.entries
+              .filter((e) => e.kind === "mount")
+              .flatMap((e) => [e.srcHost, realpath(e.srcHost)]),
+          ),
+        ],
+      },
+      networkProtectedPaths(stateRoot()),
+    );
+    if (conflicts.length > 0) {
+      die(
+        `--ro or --mount path conflicts with the network policy: ${conflicts.join(" ")}. ` +
+          `It exposes a Docker socket or ccairgap session state. See docs/network.md.`,
+      );
+    }
+  }
+
   // ---- Orphan scan (advisory only) ----
   const orphans = await scanOrphans(cliVersion());
   if (orphans.length > 0) {
@@ -616,7 +682,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
         `ccairgap: ⚠ Auth refresh failed: ${creds.refreshResult.reason}. ` +
           `Token expires ${clock} (${mins}m).`,
       );
-      console.error(`  When it hits: Claude will error. Run /login in Claude to recover.`);
+      console.error(
+        networkPlan
+          ? `  When it hits: Claude will error. Run /login in claude on the host to recover.`
+          : `  When it hits: Claude will error. Run /login in Claude to recover.`,
+      );
     }
   }
 
@@ -867,7 +937,11 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // overmount /etc/ssl/certs/* in the base image and break TLS to Anthropic.
   // Missing file → warn + skip.
   let nodeExtraCa: { hostPath: string; containerPath: string } | undefined;
-  if (env.NODE_EXTRA_CA_CERTS) {
+  if (env.NODE_EXTRA_CA_CERTS && networkPlan) {
+    console.error(
+      "ccairgap: NODE_EXTRA_CA_CERTS is not forwarded under a network policy. The sidecar verifies upstream servers with public CAs only.",
+    );
+  } else if (env.NODE_EXTRA_CA_CERTS) {
     let real: string | undefined;
     try {
       real = realpath(env.NODE_EXTRA_CA_CERTS);
@@ -1095,6 +1169,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   }
   for (const m of mounts) dockerArgs.push(...mountArg(m));
 
+  if (networkPlan) {
+    dockerArgs.push(...networkAgentDockerArgs(id, sessionPath));
+    for (const [key, value] of Object.entries(networkAgentEnv())) {
+      dockerArgs.push("-e", `${key}=${value}`);
+    }
+  }
+
   // User-supplied docker run args. Appended last so Docker's last-wins
   // semantics let them override built-ins (e.g. --cap-drop, --network).
   let extraDockerTokens: string[] = [];
@@ -1116,6 +1197,43 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
   // selected-agent passthrough, while exec mode receives exact arbitrary argv.
   dockerArgs.push(...(isExecMode ? execCommand : commandPlan!.argv));
 
+  // Network policy: the sidecar starts last, so a failure in an earlier step
+  // leaves no container behind. Token hashes come from files that no container
+  // has seen yet, because the agent has RW on them once it runs.
+  let networkSidecar: NetworkSidecarHandle | undefined;
+  if (networkPlan) {
+    try {
+      if (selectedAgent === "claude") {
+        const token = claudeAccessToken(
+          readFileSync(join(sessionPath, "creds", ".credentials.json"), "utf8"),
+        );
+        if (token) addCredentialHash(sessionPath, "api.anthropic.com", token);
+      } else if (selectedCodexUsesPrintApiKey) {
+        addCredentialHash(sessionPath, "api.openai.com", env.CODEX_API_KEY!);
+      } else {
+        const token = codexToken(
+          readFileSync(join(sessionPath, "codex-auth", "auth.json"), "utf8"),
+        );
+        const host = codexAuthKind === "api-key" ? "api.openai.com" : "chatgpt.com";
+        if (token) addCredentialHash(sessionPath, host, token);
+      }
+      networkSidecar = await startNetworkSidecar({
+        id,
+        sessionDir: sessionPath,
+        plan: networkPlan,
+      });
+    } catch (e) {
+      // No container has run, so the session dir holds no user work.
+      await clipboard.cleanup();
+      try {
+        rmSync(sessionPath, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+      die(`failed to start the network sidecar: ${(e as Error).message}`);
+    }
+  }
+
   // Step 11: exec docker run with exit-trap handoff
   let exitCode = 0;
   const refreshHandle =
@@ -1124,6 +1242,13 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
           sessionDir: sessionPath,
           lockPath: hostClaude,
           readHostCreds: readHostCredsJson,
+          networkPolicy: networkPlan !== undefined,
+          onHostDrivenWrite: networkPlan
+            ? (stripped) => {
+                const token = claudeAccessToken(stripped);
+                if (token) addCredentialHash(sessionPath, "api.anthropic.com", token);
+              }
+            : undefined,
         })
       : undefined;
   try {
@@ -1144,6 +1269,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     }
 
     await clipboard.cleanup();
+
+    try {
+      await networkSidecar?.stop({ keepContainer: opts.keepContainer });
+    } catch (e) {
+      console.error(`ccairgap: network sidecar cleanup failed: ${(e as Error).message}`);
+    }
 
     try {
       await handoff(sessionPath, cliVersion(), undefined, {

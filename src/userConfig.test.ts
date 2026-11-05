@@ -144,6 +144,11 @@ describe("loadUserWideConfig", () => {
     expect(loadUserWideConfig(dir)).toBeUndefined();
   });
 
+  it("rejects a network policy, which belongs to a repository config or profile", () => {
+    writeFileSync(join(dir, "config.yaml"), "network: {}\n");
+    expect(() => loadUserWideConfig(dir)).toThrow(/'network' is not allowed in user-wide config/);
+  });
+
   it("loads + path-resolves config.yaml", () => {
     writeFileSync(
       join(dir, "config.yaml"),

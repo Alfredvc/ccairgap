@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execaSync } from "execa";
 import { parse as parseYaml } from "yaml";
 import { parseAgentKind, type AgentKind } from "./agent.js";
+import { parseNetworkConfig, type NetworkConfig } from "./network.js";
 
 /** Default config file paths relative to git repo root (checked in order). */
 export const DEFAULT_CONFIG_REL = ".ccairgap/config.yaml";
@@ -46,6 +47,8 @@ export interface ConfigFile {
   rebuild?: boolean;
   print?: string;
   name?: string;
+  /** Network policy. Presence activates it. See docs/SPEC.md §"Network policy". */
+  network?: NetworkConfig;
   hooks?: { enable?: string[] };
   mcp?: { enable?: string[] };
   dockerRunArg?: string[];
@@ -64,6 +67,7 @@ export interface ConfigFile {
 
 /** yaml key → internal key. Accept kebab (matches CLI flags) or camel. */
 const KEY_ALIASES: Record<string, keyof ConfigFile> = {
+  "network": "network",
   "agent": "agent",
   "repo": "repo",
   "extra-repo": "extraRepo",
@@ -345,6 +349,9 @@ export function parseConfig(text: string, source: string): ConfigFile {
         break;
       case "name":
         cfg.name = assertString(val, "name");
+        break;
+      case "network":
+        cfg.network = parseNetworkConfig(val);
         break;
       case "hooks":
         cfg.hooks = assertHooksBlock(val);

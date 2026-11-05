@@ -13,3 +13,7 @@
 | `inspect` | Dump every hook, MCP server, env var, and marketplace mount the container would see at launch. JSON to stdout; `--pretty` for tables. Read-only. `--agent codex` adds sanitized Codex config, auth, session counts, and warnings without printing secrets. |
 | `install-completion [<shell>]` | Install shell tab-completion (bash/zsh/fish). Writes one source line into your shell rc via `@pnpm/tabtab`. Completion covers subcommand names including `exec`, launch flags, `codex-args`, and dynamic candidates: session ids for `recover` / `discard` / `attach`, `--agent` after `attach`, custom titles for `-r` / `--resume`, shell names for `install-completion`. Omit `<shell>` to be prompted. |
 | `uninstall-completion` | Remove ccairgap completion from every supported shell rc. Idempotent. |
+
+## Network policy leftovers
+
+`recover` and `discard` also remove the network sidecar and socket volume of a session that had a [network policy](network.md), when a signal to the CLI left them behind. Stop the agent container first with `docker rm -f ccairgap-<id>`. The agent container otherwise holds the volume, and the command prints what to run.

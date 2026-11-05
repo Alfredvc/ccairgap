@@ -49,6 +49,7 @@ export function reservedContainerPaths(
       "/host-git-alternates",
       "/run/ccairgap-clipboard",
       "/run/ccairgap-auth-warnings",
+      "/run/ccairgap-network",
       "/etc/claude-code",
       "/host-ca-certs",
       "/host-codex",

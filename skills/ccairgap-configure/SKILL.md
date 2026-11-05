@@ -197,7 +197,7 @@ Caveats:
 Concrete triggers the user must actually say:
 
 - "I need to hit the dev server from my browser" / "expose port X" → then `-p X:X`.
-- "It needs to talk to my local Postgres" / "attach to my docker network `foo`" → then `--network foo` or `--add-host`.
+- "It needs to talk to my local Postgres" / "attach to my docker network `foo`" → then `--network foo` or `--add-host`. Not available under a `network` policy.
 - "The MCP needs `$OPENAI_API_KEY`" / names the env var → then `-e OPENAI_API_KEY` pass-through (and see secrets rules).
 - "I need more memory for this build" → then `--memory=8g`.
 
@@ -239,6 +239,7 @@ Read only what you need.
 | `references/hook-patterns.md` | Enabling hooks, understanding which get disabled. |
 | `references/mcp-patterns.md` | Enabling MCP servers, understanding the host-approval gate for project-scope. |
 | `references/secrets-and-sensitive-data.md` | User has explicitly asked to wire in a credential or env var. |
+| `references/config-schema.md` (`network` key) | User wants to limit outbound traffic, allow specific hosts or URLs, or reduce exfiltration risk. Use a `network` block in project config or a profile. It conflicts with `--network`, `-p`, `--privileged` and `--cap-add` raw args. |
 | `references/docker-run-args.md` | User has explicitly asked for something that requires raw docker args (port, network, env, resource limits). |
 
 ## Common traps

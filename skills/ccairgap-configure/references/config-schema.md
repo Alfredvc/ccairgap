@@ -37,6 +37,7 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `warn-docker-args` | bool | `--no-warn-docker-args` (inverted) | Default true. Set false to silence the danger-token warning. |
 | `claude-args` | `[string]` | `-- <token> …` (tail) | Tokens forwarded verbatim to `claude` inside the container, subject to the denylist. Config first, CLI `--` tail appended. Ignored with a warning for `ccairgap exec`. |
 | `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens forwarded to Codex inside the container after fail-closed allowlist validation. Config first, CLI `--` tail appended. Ignored with a warning for `ccairgap exec`. |
+| `network` | map | none | [Network policy](network.md). Presence activates it. Project config and profiles only: user-wide config and integrations reject it. Replaces the whole value across layers. |
 | `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
 | `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
 | `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |
@@ -183,7 +184,7 @@ Don't invent keys. The validator rejects unknown keys. If you need behavior not 
 Notably absent (by design):
 - No `env` or `environment` key — pass env vars via `docker-run-arg: ["-e FOO=bar"]`.
 - No `ports` key — use `docker-run-arg: ["-p 8080:8080"]`.
-- No `network` key — use `docker-run-arg: ["--network my-net"]`.
+- No key to attach a docker network — use `docker-run-arg: ["--network my-net"]`. The `network` key is the [network policy](network.md).
 - No `volumes` key distinct from `ro`/`cp`/`sync`/`mount` — those cover the structured cases; exotic mounts go through `docker-run-arg`.
 - No hook disable list (only enable) — default is "all disabled", enable is the only opt-in.
 - No MCP disable list (only enable) — default is "all disabled", enable is the only opt-in. Same model as hooks.
@@ -207,7 +208,7 @@ Scalars: higher-precedence layer wins. Arrays: lower-precedence first, then appe
 
 | Path | Role |
 |---|---|
-| `config.yaml` | Persistent defaults — every `ConfigFile` key is accepted, with the exception of relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` (hard error; no workspace anchor at user-wide scope). `dockerfile:` anchors on the user-wide config dir. |
+| `config.yaml` | Persistent defaults — every `ConfigFile` key except `network` is accepted, with the exception of relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` (hard error; no workspace anchor at user-wide scope). `dockerfile:` anchors on the user-wide config dir. |
 | `<name>.config.yaml` | **Reserved.** User-wide profiles are not loaded. Writing one emits a stderr warning and an informational `doctor` row. Profiles (`--profile <name>`) only swap the project layer. |
 | `integrations/*.yaml` | Per-tool drop-ins; see "Integration drop-ins" below. |
 | `CLAUDE.md` | Appended to in-container `~/.claude/CLAUDE.md` before the project `.ccairgap/CLAUDE.md` block. |

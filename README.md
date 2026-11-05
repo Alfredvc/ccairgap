@@ -23,7 +23,7 @@ Run Claude Code by default, or opt into Codex CLI with `--agent codex`. The sele
 - **Per-repo config** — drop `.ccairgap/` at your repo root for ccairgap launch config and Claude-scoped overlays; Codex uses native Codex project guidance.
 - **Claude resume support** — start a Claude session on host or sandbox, continue on either.
 - **Clipboard passthrough** — copy an image on your host, paste it into Claude inside the sandbox. macOS, Linux (Wayland/X11), and WSL2.
-- **Works behind corp proxies** — `NODE_EXTRA_CA_CERTS` forwards through, so custom CA bundles just work.
+- **Works behind corp proxies** — `NODE_EXTRA_CA_CERTS` forwards through, so custom CA bundles just work. A [network policy](docs/network.md) disables this forwarding.
 
 ## Why ccairgap?
 
@@ -86,6 +86,8 @@ ccairgap --ro node_modules
 
 # Two repos: primary workspace + readable sibling
 ccairgap --repo ~/src/foo --extra-repo ~/src/bar
+
+# Limit outbound traffic: set a `network` block in .ccairgap/config.yaml. See docs/network.md
 
 # Hand it a task and walk away
 ccairgap -p "add login flow"
@@ -202,6 +204,8 @@ For command-mode automation, `ccairgap exec -- <command...>` uses the same conta
 
 Clipboard passthrough — paste images from your host into Claude inside the sandbox — is on by default on macOS, Linux, and WSL2.
 
+**Outbound network.** Sessions have full outbound access by default, so an agent can send anything it can read over the network. A `network` block in project config limits outbound traffic to the hosts, ports, methods and paths that you allow. It runs the agent with `--network none` behind a proxy in a separate container. It does not inspect request bodies. See [docs/network.md](docs/network.md).
+
 Full design: [docs/SPEC.md](docs/SPEC.md).
 
 ## Reference
@@ -216,6 +220,7 @@ Full design: [docs/SPEC.md](docs/SPEC.md).
 
 **Config**
 - [Configuration file](docs/config.md)
+- [Network policy](docs/network.md)
 - [`.ccairgap/` — ccairgap-scope Claude config](docs/ccairgap-dir.md)
 - [User-wide config](docs/config.md#user-wide-config)
 

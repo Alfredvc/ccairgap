@@ -21,6 +21,7 @@ import {
   stateRoot,
 } from "./paths.js";
 import { handoff, scanDirtyRepos } from "./handoff.js";
+import { removeLeftoverNetworkResources } from "./network.js";
 import { readManifest, readManifestAgent } from "./manifest.js";
 import { scanOrphans } from "./orphans.js";
 import { cliVersion } from "./version.js";
@@ -98,6 +99,7 @@ export async function recover(
     console.error(`  Or let it exit normally — the exit trap will run handoff.`);
     process.exit(1);
   }
+  if (existsSync(join(sd, "network"))) removeLeftoverNetworkResources(id);
   if (!opts.force) {
     // Pre-scan for dirty repos. Without this, handoff() *would* still preserve
     // the session dir on dirty (per its own preservation triggers), but the
@@ -282,6 +284,7 @@ export function discard(id: string): void {
     console.error(`ccairgap: no session dir at ${sd}`);
     process.exit(1);
   }
+  if (existsSync(join(sd, "network"))) removeLeftoverNetworkResources(id);
   rmSync(sd, { recursive: true, force: true });
   console.log(`discarded ${id}`);
 }

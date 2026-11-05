@@ -1,6 +1,6 @@
 # ccairgap
 
-CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Per-topic user docs under `docs/` (config, hooks, mcp, dockerfile, docker-run-args, clipboard, auto-memory, managed-policy). Keep those authoritative — update them when behavior changes; don't duplicate their content here.
+CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Per-topic user docs under `docs/` (config, hooks, mcp, network, dockerfile, docker-run-args, clipboard, auto-memory, managed-policy). Keep those authoritative — update them when behavior changes; don't duplicate their content here.
 
 ## Stack
 
@@ -23,7 +23,8 @@ npm run test:watch
 
 - Unit tests: `src/*.test.ts`, colocated, mock `execa`/`fs`/`docker`. Run via `npm test`.
 - E2e tests: `e2e/**/*.e2e.ts`, manual-run via `npm run test:e2e`. Tier 1 (no docker) covers subcommands + config + resume resolution. Tier 2 (docker, fake entrypoint via `CCAIRGAP_TEST_CMD`) covers launch, handoff, mounts, alternates, signals, image hashing, artifacts. **E2e is never wired into CI.**
-- Real-claude smoke: `bash e2e/smoke.sh`. Human-eyeballed. Run before tagging a release.
+- Network policy tests need more than mocks, because the enforcement code is Python and shell. `src/networkPolicy.test.ts` runs `policy.py` with a stubbed mitmproxy. `src/networkAssets.test.ts` runs the real `relay.py`, `forwarder.mjs` and entrypoint block. `src/networkLifecycle.test.ts` mocks `execa` for the sidecar lifecycle. `src/launchNetwork.test.ts` runs `launch()` with a fake `docker` on PATH. `e2e/tier2/network-policy.e2e.ts` runs the real sidecar image with a fake entrypoint.
+- Real-claude smoke: `bash e2e/smoke.sh`. Human-eyeballed. Run before tagging a release. It is the only script here that runs the forwarder and CA bundle in the real entrypoint under a network policy.
 
 ## Layout
 
@@ -67,18 +68,21 @@ src/
   codexState.ts   Materialize session-local Codex home/auth/sessions directories without Docker or handoff side effects.
   authRefresh.ts  `refreshIfLowTtl`: proper-lockfile on host ~/.claude/, invoke `claude auth login` with OAuth env vars, classify outcome (revoked / network / binary-missing / timeout / unknown), return authoritative post-attempt JSON + ttl.
   image.ts        docker build; exact agent-version resolution; tag = ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh+exact agent versions)[:8]> or :custom-<sha256(dockerfile+exact agent versions+managed base identity when used)[:12]>
+  network.ts      network policy: `network` key parsing, agent presets, conflict scan, token hashes, sidecar start/stop, denial summary
   paths.ts        XDG state dir resolution; CCAIRGAP_HOME override
   version.ts      cliVersion() from package.json
 docker/
   Dockerfile      node:24-slim; native installer (claude.ai/install.sh) pinned to exact ${CLAUDE_CODE_VERSION}; Codex pinned to exact ${CODEX_VERSION}; no moving defaults
   entrypoint.sh   rsync /host-claude → ~/.claude, copy creds, patch .claude.json, then dispatch `CCAIRGAP_ENTRYPOINT_MODE=agent|exec`
+  network/        sidecar and agent assets, copied into $SESSION/network/ at launch: policy.py (mitmproxy addon), relay.py, forwarder.mjs
   agent-versions.env release-time exact Claude Code / Codex pins; also the launch fallback for an agent missing on the host
 docs/SPEC.md      authoritative design
 ```
 
 ## Non-obvious invariants
 
-- **Host writable paths are closed set** (SPEC §"Host writable paths"): session scratch, `output/`, `~/.claude/projects/<encoded>`, `ccairgap/<id>` and `ccairgap/<id>-worktrees/<branch>` refs via `git fetch` on exit, and `$SESSION/clipboard-bridge/` (populated by the host-side clipboard watcher when passthrough is active). Adding any other write path requires SPEC update.
+- **Network policy enforcement stays outside the agent container.** With a `network` key, the agent runs with `--network none` and reaches the network only through a Unix socket to a sidecar. The forwarder in the agent enforces nothing. Never mount `$SESSION/network/sidecar/` or the CA key in the agent, because it could then edit the policy or forge certificates. Never add `--network` to the agent or give it a second route. Token hashes come only from files read before the container starts, from the host env var `CODEX_API_KEY` in Codex print mode, and from the host-driven write in `runtimeAuthRefresh.ts`, because the agent has RW on `$SESSION/creds`. `policy.py` keeps the `CONNECT` target per client connection and matches rules against it, and it checks each name that mitmproxy sends upstream (`Host`, authority, SNI), because mitmproxy reads only one of them per HTTP version. Do not pin `server.address` to an IP: mitmproxy reuses an upstream connection only when the addresses match, and the sixth request in a tunnel then stalls. The address check wraps `loop.getaddrinfo`. Each hook that enforces policy denies on an exception, because mitmproxy otherwise lets the flow continue. `flow.request.method` is always uppercase: read `flow.request.data.method` for the bytes that go upstream. `src/networkPolicy.test.ts` runs `policy.py` with a stubbed mitmproxy in `npm test`, so check real mitmproxy behaviour against the pinned image too. Keep `connection_strategy=lazy`: with eager connections, a denied hostname reaches the resolver. Agent-controlled strings in the sidecar log pass through `printable` before they reach the host terminal. See `docs/SPEC.md` §"Network policy".
+- **Host writable paths are closed set** (SPEC §"Host writable paths"): session scratch, `output/`, `~/.claude/projects/<encoded>`, `ccairgap/<id>` and `ccairgap/<id>-worktrees/<branch>` refs via `git fetch` on exit, `$SESSION/clipboard-bridge/` (populated by the host-side clipboard watcher when passthrough is active), and `$SESSION/network/` (policy files written by the CLI). Adding any other write path requires SPEC update.
 - **Container never writes host repo directly.** Exit handoff runs `git fetch` on the host against `$SESSION/repos/<name>`. Don't add a flow where the container has RW on real repos.
 - **Alternates rewrite is required.** `git clone --shared` writes the host absolute path; that path is meaningless in-container. Mounting host `objects/` over `<hostPath>/.git/objects/` would shadow the session clone's RW objects. Mount at neutral `/host-git-alternates/<name>/objects/` and rewrite `alternates` file host-side.
 - **Absolute paths are preserved host↔container** so `settings.json`, marketplace refs, and transcript encoded dirs resolve identically.

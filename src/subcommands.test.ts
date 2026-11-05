@@ -500,6 +500,41 @@ describe("recover live-container precheck", () => {
     expect(stderr).toContain("docker stop");
   });
 
+  it("leaves the network sidecar of a live session in place", async () => {
+    mkdirSync(join(root, "sessions", "live-abcd", "network"));
+    const log = join(root, "docker.log");
+    stubDocker(`printf '%s\\n' "$*" >> "${log}"\necho "ccairgap-live-abcd"`);
+    const { recover } = await import("./subcommands.js");
+
+    await expect(recover("live-abcd")).rejects.toThrow(/process\.exit\(1\)/);
+
+    expect(readFileSync(log, "utf8")).not.toMatch(/^(rm|volume) /m);
+  });
+
+  it("removes the network sidecar only for a session that has one", async () => {
+    const log = join(root, "docker.log");
+    stubDocker(`printf '%s\\n' "$*" >> "${log}"`);
+    const { recover } = await import("./subcommands.js");
+
+    await recover("live-abcd").catch(() => undefined);
+    expect(readFileSync(log, "utf8")).not.toMatch(/^rm /m);
+
+    const sd = join(root, "sessions", "live-abcd");
+    if (!existsSync(sd)) mkdirSync(sd, { recursive: true });
+    writeManifest(sd, {
+      version: 1,
+      cli_version: "test",
+      image_tag: "test:1",
+      created_at: new Date().toISOString(),
+      repos: [],
+      branch: "ccairgap/live-abcd",
+      claude_code: {},
+    });
+    mkdirSync(join(sd, "network"));
+    await recover("live-abcd").catch(() => undefined);
+    expect(readFileSync(log, "utf8")).toMatch(/^rm -f -v ccairgap-live-abcd-network$/m);
+  });
+
   it("proceeds when no container is running (empty docker ps output)", async () => {
     stubDocker("exit 0"); // empty stdout → no running container
     const { recover } = await import("./subcommands.js");

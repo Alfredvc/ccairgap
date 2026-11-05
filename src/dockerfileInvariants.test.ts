@@ -48,6 +48,15 @@ describe("docker/entrypoint.sh ~/.claude copy invariants", () => {
     );
   });
 
+  it("starts the network forwarder before any command can run", () => {
+    // A client that runs before the forwarder listens fails, and exec and test
+    // modes must get the same network as agent mode.
+    const forwarder = ENTRYPOINT.indexOf("forwarder.mjs");
+    expect(forwarder).toBeGreaterThan(-1);
+    expect(forwarder).toBeLessThan(ENTRYPOINT.indexOf('exec sh -c "$CCAIRGAP_TEST_CMD"'));
+    expect(forwarder).toBeLessThan(ENTRYPOINT.indexOf('case "$ENTRYPOINT_MODE" in'));
+  });
+
   it("tolerates rsync exits 23 and 24 in every copy block", () => {
     // Exit 24 fires when host Claude Code deletes a file during the copy.
     const tolerant = ENTRYPOINT.match(/if \[ "\$rc" -eq 23 \] \|\| \[ "\$rc" -eq 24 \]; then/g);

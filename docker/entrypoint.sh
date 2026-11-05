@@ -367,6 +367,26 @@ if [ -n "${CCAIRGAP_RESUME:-}" ]; then
     RESUME_ARGS=(-r "$CCAIRGAP_RESUME")
 fi
 
+# Network policy: the container has only a loopback interface, so every client
+# reaches the sidecar through this forwarder. See docs/SPEC.md §"Network policy".
+if [ "${CCAIRGAP_NETWORK_POLICY:-}" = "1" ]; then
+    cat /etc/ssl/certs/ca-certificates.crt /run/ccairgap-network/agent/ca.pem \
+        > /home/claude/.ccairgap-network-ca-bundle.pem
+    node /run/ccairgap-network/agent/forwarder.mjs </dev/null >/dev/null 2>&1 &
+    forwarder_ready=0
+    for _ in $(seq 1 100); do
+        if (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null; then
+            forwarder_ready=1
+            break
+        fi
+        sleep 0.1
+    done
+    if [ "$forwarder_ready" -ne 1 ]; then
+        echo "ccairgap: the network forwarder did not start. This image needs node on PATH." >&2
+        exit 1
+    fi
+fi
+
 # test-only backdoor: see CCAIRGAP_TEST_CMD in CLAUDE.md
 if [ -n "${CCAIRGAP_TEST_CMD:-}" ]; then
   exec sh -c "$CCAIRGAP_TEST_CMD"

@@ -24,9 +24,12 @@ Any write to the host filesystem outside the paths enumerated in [`docs/SPEC.md`
 
 A bug that lets the container escape those constraints is a vulnerability. Report it.
 
+When a `network` policy is active, a request from the agent container that reaches a destination the policy denies is also a vulnerability. So is a request that reaches a provider host with a token the credential check should reject. Report these too.
+
 ### Out of scope — accepted risk
 
-- **Exfiltration.** Anything the container can read (host `~/.claude/` contents, RO-mounted repos, reference paths, secrets in env) may be sent over the network. The container has unrestricted outbound HTTPS. If your threat model requires network egress control, do not run this tool.
+- **Exfiltration without a network policy.** Anything the container can read (host `~/.claude/` contents, RO-mounted repos, reference paths, secrets in env) may be sent over the network. By default the container has unrestricted outbound HTTPS. The `network` config key limits this; see below.
+- **Exfiltration through what a network policy allows.** The policy does not inspect request bodies or WebSocket frames. Data can leave in a request to an allowed host, including the agent's own provider, and provider features can fetch from third parties. [`docs/network.md`](docs/network.md) lists the limits.
 - **Container escape.** Not addressed by this project. We follow Docker defaults (no `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount, `--cap-drop=ALL`, non-root user) but do not harden further. A kernel or Docker runtime exploit is out of scope — take it up with Docker / the kernel.
 - **`--mount <path>` writes.** User-declared live RW bind mounts bypass the host-write invariant for exactly the path given. Using `--mount` is opt-in; any host mutation via that path is expected behavior.
 - **`--dangerously-skip-permissions` semantics inside the container.** Claude Code runs with all permissions by design. Inside-container destruction of the session clone, session scratch, `/output`, and declared `--mount` targets is expected.
@@ -51,6 +54,7 @@ Explicitly NOT risks in v2 (they were in v1):
 - `docker run --cap-drop=ALL --security-opt=no-new-privileges --user $(id -u):$(id -g) --rm`
 - Container runs as the host UID/GID directly. There is no in-container privilege step, no `usermod`/`chown`, no `gosu`. `--cap-drop=ALL` plus `no-new-privileges` is preserved end-to-end.
 - No `--privileged`, no `SYS_ADMIN`, no `docker.sock` mount
+- With a network policy: the agent runs with `--network none`, and the proxy sidecar runs with `--cap-drop=ALL`, `no-new-privileges`, `--read-only` and a non-root user, with its image pinned by digest
 - Host repos RO-mounted; container-written copies live in a session clone
 - Host `git` never runs in a container-written `.git`. Handoff rebuilds it through `git fetch` first, following `git(1)` §SECURITY. This relies on `upload-pack` being safe for untrusted repositories, which Git documents as carrying some risk
 - Credentials surface via a single RO bind (`/host-claude-creds`); `~/.claude/.credentials.json` is excluded from the general `/host-claude` mount

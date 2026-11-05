@@ -88,12 +88,13 @@ This keeps the ccairgap entrypoint, runtime user model, and mount target layout 
 
 ## Required invariants for replacement Dockerfiles
 
-If you inherit from the published image and only add packages, these are already satisfied. If you replace the base image or override entrypoint/user/home behavior, your custom image must keep four things working or the container won't launch / won't match host file ownership:
+If you inherit from the published image and only add packages, these are already satisfied. If you replace the base image or override entrypoint/user/home behavior, your custom image must keep five things working or the container won't launch / won't match host file ownership:
 
 1. **`/home/claude` is writable for any runtime UID.** The CLI launches the container with `docker run --user $(id -u):$(id -g)`, and the runtime UID needs to read+execute everything under `$HOME` and create new files there. The bundled Dockerfile achieves this with `chmod -R go+rwX /home/claude` near the end. Don't add a final `USER claude` directive — it's overridden by `--user`, but a stale directive is misleading.
 2. **Agent mount targets exist with permissive perms.** The image must pre-create `/home/claude/.claude/projects`, `/home/claude/.claude/plugins/cache`, `/home/claude/.codex`, and `/home/claude/.codex/sessions`. They must be traversable by the runtime UID.
 3. **`/usr/local/bin/ccairgap-entrypoint` exists** — copied from `entrypoint.sh` in the ccairgap package. The `ENTRYPOINT` line must point at it.
-4. **Both agent CLIs are installed and on the runtime PATH.** Claude Code is installed via `claude.ai/install.sh` in the bundled Dockerfile. Codex is installed from the npm package with `CODEX_VERSION`. Claude remains the default selected agent, and Codex is launched when selected with `--agent codex` or `agent: codex`.
+4. **`node` is on the runtime PATH and the entrypoint is current, if you use a [network policy](network.md).** The entrypoint starts the forwarder with `node` and exits when it cannot. An old copy of the entrypoint starts no forwarder, so the agent's requests fail with connection refused. The agent stays on `--network none` in both cases.
+5. **Both agent CLIs are installed and on the runtime PATH.** Claude Code is installed via `claude.ai/install.sh` in the bundled Dockerfile. Codex is installed from the npm package with `CODEX_VERSION`. Claude remains the default selected agent, and Codex is launched when selected with `--agent codex` or `agent: codex`.
 
 The CLI also bind-mounts a per-session `/etc/passwd` and `/etc/group` RO so libc lookups for the runtime UID resolve to "claude" (Node's `os.userInfo()`, git's GECOS read, etc.). You don't have to do anything for this — it happens regardless of which Dockerfile you use — but be aware that any baked `/etc/passwd` modifications are overlaid at runtime.
 

@@ -65,7 +65,7 @@ export function defaultEntrypoint(): string {
   return resolveBundledDockerAsset("entrypoint.sh");
 }
 
-function resolveBundledDockerAsset(name: string): string {
+export function resolveBundledDockerAsset(name: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
   for (const pkgRoot of [resolve(here, ".."), resolve(here)]) {
     const candidate = join(pkgRoot, "docker", name);

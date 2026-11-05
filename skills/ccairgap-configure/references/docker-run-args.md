@@ -57,6 +57,8 @@ For `localhost`-only binding: `"-p 127.0.0.1:5173:5173"`.
 
 ### Attach to a user-created docker network
 
+> With a [network policy](network.md) active, the CLI rejects flags that can bypass the proxy, including `--network`, `-p`, `--privileged` and `--cap-add`.
+
 ```yaml
 docker-run-arg:
   - "--network dev-net"
@@ -74,6 +76,8 @@ docker-run-arg:
 ```
 
 Container code then connects to `host.docker.internal:<port>`.
+
+This does not work with a network policy active. `--add-host` is accepted, but the agent has no route, and the proxy refuses private addresses.
 
 ### Extra environment variables
 

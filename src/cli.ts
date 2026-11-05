@@ -280,6 +280,7 @@ function mergeRun(cli: {
     ],
     noAutoMemory: cli.noAutoMemory ?? cfg.noAutoMemory ?? false,
     refreshBelowTtl: cli.refreshBelowTtl ?? cfg.refreshBelowTtl ?? 120,
+    network: cfg.network,
   };
 }
 
@@ -468,6 +469,7 @@ async function runLaunchCommand(
     execCommand,
     noAutoMemory: merged.noAutoMemory,
     refreshBelowTtlMinutes: merged.refreshBelowTtl,
+    network: merged.network,
     // --bare suppresses launch-config (config.yaml + integrations) but keeps
     // the user-wide overlay mount active so user-wide CLAUDE.md / settings.json /
     // mcp.json / skills/ continue to inject (session-environment, not launch-config).
