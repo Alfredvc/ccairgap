@@ -71,6 +71,13 @@ case "$1 $2" in
     case "$*" in *" cat "*) printf '%s\\n' '-----BEGIN CERTIFICATE-----' ;; esac
     ;;
   inspect*) echo true ;;
+  stop*)
+    # Ends the agent run first, as a SIGHUP can. The stop itself finishes later.
+    touch "${root}/agent-may-exit"
+    [ -n "$FAKE_DOCKER_STOP_FAILS" ] && exit 1
+    /bin/sleep 0.3
+    printf 'stop-end\\n' >> "${log}"
+    ;;
   run*)
     case "$*" in
       *"codex --version"*) echo "codex-cli 0.134.0" ;;
@@ -85,6 +92,9 @@ case "$1 $2" in
               ;;
           esac
         done
+        if [ -n "$FAKE_DOCKER_AGENT_WAITS" ]; then
+          while [ ! -e "${root}/agent-may-exit" ]; do /bin/sleep 0.05; done
+        fi
         ;;
     esac
     ;;
@@ -101,7 +111,7 @@ exit 0
     writeFileSync(join(home, ".claude", ".credentials.json"), '{"claudeAiOauth":{"accessToken":"session-token"}}');
     writeFileSync(join(home, ".claude.json"), "{}");
     savedEnv = {};
-    for (const k of ["CCAIRGAP_HOME", "HOME", "PATH", "NODE_EXTRA_CA_CERTS", "CODEX_API_KEY", "CODEX_HOME", "FAKE_DOCKER_FAIL_RUN"]) {
+    for (const k of ["CCAIRGAP_HOME", "HOME", "PATH", "NODE_EXTRA_CA_CERTS", "CODEX_API_KEY", "CODEX_HOME", "FAKE_DOCKER_AGENT_WAITS", "FAKE_DOCKER_STOP_FAILS", "FAKE_DOCKER_FAIL_RUN"]) {
       savedEnv[k] = process.env[k];
       delete process.env[k];
     }
@@ -177,6 +187,65 @@ exit 0
       expect(agentRun()).toBeDefined();
       expect(agentRun()).not.toContain("/host-claude/.credentials.json");
     });
+  });
+
+  describe("signals during docker run", () => {
+    /** Starts a session, and returns the listener once the agent runs. */
+    async function startWaiting(extra: Record<string, unknown> = {}) {
+      process.env.FAKE_DOCKER_AGENT_WAITS = "1";
+      const session = run(extra);
+      await vi.waitFor(() => expect(agentRun()).toBeDefined(), { timeout: 20_000 });
+      const listener = process.listeners("SIGTERM").find((l) => l.name === "onSignal");
+      expect(listener).toBeDefined();
+      return { session, fire: () => (listener as (s: NodeJS.Signals) => void)("SIGTERM"), listener };
+    }
+
+    it("waits for docker stop before handoff, then reports the signal", async () => {
+      const { session, fire, listener } = await startWaiting();
+      fire();
+      const result = await session;
+
+      const all = lines();
+      expect(all.indexOf(`stop ccairgap-${result.id}`)).toBeGreaterThan(-1);
+      expect(all.indexOf("stop-end")).toBeGreaterThan(-1);
+      // The sidecar stops in the same `finally` as handoff, so it marks that point.
+      expect(all.indexOf("stop-end")).toBeLessThan(all.indexOf(`logs ccairgap-${result.id}-network`));
+      expect(result.signal).toBe("SIGTERM");
+      expect(result.exitCode).toBe(143);
+      expect(process.listeners("SIGTERM")).not.toContain(listener);
+      // Handoff removed the clean session.
+      expect(sessions()).toEqual([]);
+    }, 30_000);
+
+    it("reports no signal for a session that ends by itself", async () => {
+      const result = await run();
+      expect(result.signal).toBeUndefined();
+      expect(result.exitCode).toBe(0);
+      expect(lines().some((l) => l.startsWith("stop "))).toBe(false);
+      expect(process.listeners("SIGTERM").some((l) => l.name === "onSignal")).toBe(false);
+    });
+
+    it("finishes when docker stop keeps failing and docker run has returned", async () => {
+      process.env.FAKE_DOCKER_STOP_FAILS = "1";
+      const { session, fire } = await startWaiting();
+      fire();
+      const result = await session;
+      expect(result.signal).toBe("SIGTERM");
+      expect(sessions()).toEqual([]);
+    }, 30_000);
+
+    it("a second signal kills the agent and removes the sidecar of a policy session", async () => {
+      const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+      const { session, fire } = await startWaiting();
+      fire();
+      fire();
+      const id = /CCAIRGAP_NAME=(\S+)/.exec(agentRun()!)![1];
+      expect(lines()).toContain(`kill ccairgap-${id}`);
+      expect(lines()).toContain(`rm -f -v ccairgap-${id}-network`);
+      expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
+      kill.mockRestore();
+      await session;
+    }, 30_000);
   });
 
   it("runs the agent with no network, the proxy env, and the policy-only mounts", async () => {

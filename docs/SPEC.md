@@ -1290,7 +1290,7 @@ The CLI rejects these `--docker-run-arg` tokens before any side effect when a po
 2. Just before `docker run`: pull the image when it is missing, create the volume, set its owner, start the sidecar, wait for the socket and the CA, and copy the CA certificate out. A failure removes the sidecar, the volume and the session dir, then aborts.
 3. During the session: the CLI watches the sidecar. The relay is PID 1 and supervises mitmproxy, so the sidecar stops when either one stops. When the sidecar exits, the CLI prints a warning. The agent then loses network access, because no fallback route exists.
 4. In the exit `finally`: the CLI prints the denial summary, removes the sidecar and removes the volume.
-5. A SIGINT, SIGTERM or SIGHUP to the CLI skips the `finally`. A signal handler prints the denial summary and removes the sidecar, then re-raises the signal. The session stays on disk for `recover`, and a running agent keeps the volume. After a SIGKILL, the sidecar stays too. `recover` and `discard` remove a leftover sidecar and volume. If the agent container still holds the volume, they print the command that removes both. `discard` has no live-container check. Both resources are named `ccairgap-<id>-network`, and the sidecar carries the label `ccairgap.session=<id>`.
+5. A first SIGINT, SIGTERM or SIGHUP to the CLI stops the agent and reaches the same `finally` (see §"Exit trap"). A second signal removes the sidecar without the denial summary and leaves the session on disk. After a SIGKILL, the sidecar stays too. `recover` and `discard` remove a leftover sidecar and volume. If a stopped agent container still holds the volume, they print the removal command.
 6. `--keep-container` keeps the stopped agent container, which holds the volume, so volume removal fails. The CLI prints a hint.
 
 ## Environment variables
@@ -1396,6 +1396,8 @@ Failure at any step does not cause the routine to skip subsequent steps. Goal is
 ## Exit trap
 
 On container exit (any reason — normal, error, signal), the CLI runs the handoff routine against the current session's `$SESSION/<id>/`.
+
+A SIGINT, SIGTERM or SIGHUP to the CLI while `docker run` is active ends the session the same way. The CLI runs `docker stop ccairgap-<id>`, retrying until it succeeds or `docker run` has returned, because `docker run` forwards no signal in TTY mode. Handoff starts only after the container stops. The CLI then re-raises the signal, so a parent sees a death by that signal. A second signal runs `docker kill`, removes a network sidecar, and exits without handoff. The session stays on disk for `recover`. A signal earlier in the launch, before `docker run`, has no handler and also leaves the session on disk.
 
 Exit trap is **not** guaranteed to fire. If `ccairgap` itself is SIGKILLed (OOM, `kill -9`, tmux pane force-close, laptop crash, host reboot), the session dir is left intact on disk and no handoff happens. Use `ccairgap recover <id>` to finish it manually.
 

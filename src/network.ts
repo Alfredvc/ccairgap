@@ -724,23 +724,6 @@ export async function startNetworkSidecar(input: {
   }
 
   let stopping = false;
-  // A signal skips the caller's `finally`, so the sidecar would keep running.
-  // The session stays on disk for `recover`, as for any session that a signal ends.
-  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-  const onSignal = (signal: NodeJS.Signals): void => {
-    for (const s of signals) process.removeListener(s, onSignal);
-    stopping = true;
-    const logs = execaSync("docker", ["logs", name], {
-      reject: false,
-      stderr: "ignore",
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    printDenials(typeof logs.stdout === "string" ? logs.stdout : "");
-    removeLeftoverNetworkResources(input.id);
-    process.kill(process.pid, signal);
-  };
-  for (const s of signals) process.on(s, onSignal);
-
   const watcher = execa("docker", ["wait", name], { reject: false });
   void watcher.then(() => {
     if (stopping) return;
@@ -752,7 +735,6 @@ export async function startNetworkSidecar(input: {
   return {
     async stop({ keepContainer }) {
       stopping = true;
-      for (const s of signals) process.removeListener(s, onSignal);
       const logs = await execa("docker", ["logs", name], {
         reject: false,
         stderr: "ignore",
@@ -772,7 +754,7 @@ export async function startNetworkSidecar(input: {
 }
 
 /**
- * Removes a sidecar and volume that a signal to the CLI left behind. An agent
+ * Removes a sidecar and volume that a SIGKILL or second signal to the CLI left behind. An agent
  * container still holds the volume, and later commands cannot find the volume
  * once the session dir is gone, so a failure names the command to run.
  */

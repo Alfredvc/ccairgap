@@ -308,7 +308,14 @@ describe.skipIf(!(await dockerAvailable()))("network policy tier2", () => {
     const cli = execa(
       "node",
       [DIST_CLI, ...baseArgs(), "--ro", shared, ...testCommand(`wait ${stop}`)],
-      { env: { ...process.env, ...env }, cwd: repo, reject: false, stdio: "ignore" },
+      {
+        env: { ...process.env, ...env },
+        cwd: repo,
+        reject: false,
+        stdio: "ignore",
+        // execa otherwise sends SIGKILL 5 s after a SIGTERM, and `docker stop` takes 10 s here.
+        forceKillAfterDelay: false,
+      },
     );
     await waitFor(async () => sessionIds().length === 1);
     const id = sessionIds()[0]!;
@@ -318,10 +325,10 @@ describe.skipIf(!(await dockerAvailable()))("network policy tier2", () => {
     cli.kill("SIGTERM");
     const ended = await cli;
     expect(ended.signal).toBe("SIGTERM");
-    expect((await networkResources(id)).container).toBe("");
+    expect(await networkResources(id)).toEqual({ container: "", volume: "" });
     for (const name of anonymous) expect(await volumeExists(name)).toBe(false);
-    // The session stays for `recover`, as for any session that a signal ends.
-    expect(sessionIds()).toContain(id);
+    // The signal path reaches handoff, which removes a clean session.
+    expect(sessionIds()).not.toContain(id);
   }, 170_000);
 
   it("rejects mounts that expose a docker socket or session state", async () => {

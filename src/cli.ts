@@ -479,6 +479,15 @@ async function runLaunchCommand(
     userWideDir: userConfigEnabled ? userWideDir : undefined,
   };
   const result = await launch(launchOpts);
+  if (result.signal !== undefined) {
+    // A parent shell reads this death by signal. A library listener (signal-exit)
+    // can still receive the signal asynchronously, so the timer keeps the event loop
+    // alive for its delivery. The exit code covers a signal that does not end the process.
+    process.exitCode = result.exitCode;
+    process.kill(process.pid, result.signal);
+    await new Promise((r) => setTimeout(r, 1_000));
+    return;
+  }
   process.exit(result.exitCode);
 }
 

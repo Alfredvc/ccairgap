@@ -43,7 +43,6 @@ const { removeLeftoverNetworkResources, startNetworkSidecar } = await import("./
 const CA = "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----";
 const PLAN = { rules: [{ action: "allow" as const, host: "a.test", ports: [443] }], userRuleCount: 1, credentialHosts: [] };
 const NAME = "ccairgap-s1-network";
-const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 let dir: string;
 let stderr: string[];
@@ -172,31 +171,11 @@ describe("stop", () => {
     );
   }, 10_000);
 
-  it("removes its signal handlers", async () => {
-    const before = SIGNALS.map((s) => process.listenerCount(s));
+  it("adds no signal handlers, because the launch handler stops the agent first", async () => {
+    const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+    const before = signals.map((s) => process.listenerCount(s));
     const handle = await start();
-    expect(SIGNALS.map((s) => process.listenerCount(s))).toEqual(before.map((n) => n + 1));
-    await handle.stop({ keepContainer: false });
-    expect(SIGNALS.map((s) => process.listenerCount(s))).toEqual(before);
-  });
-});
-
-describe("signals", () => {
-  it.each(SIGNALS)("prints the summary, removes the sidecar, and re-raises %s", async (signal) => {
-    const existing = new Set(process.listeners(signal));
-    const handle = await start();
-    const handler = process.listeners(signal).find((l) => !existing.has(l))!;
-    expect(handler).toBeDefined();
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-    docker.outputs.set("logs", JSON.stringify({ verdict: "deny", why: "w", host: "h.test" }));
-    (handler as (s: NodeJS.Signals) => void)(signal);
-    expect(stderr.join("\n")).toContain("1x h.test (w)");
-    expect(ran("rm", "-f", "-v", NAME)).toBe(true);
-    expect(kill).toHaveBeenCalledWith(process.pid, signal);
-    expect(process.listeners(signal)).not.toContain(handler);
-    docker.waitResolve!();
-    await flush();
-    expect(stderr.join("\n")).not.toContain("the network sidecar stopped");
+    expect(signals.map((s) => process.listenerCount(s))).toEqual(before);
     await handle.stop({ keepContainer: false });
   });
 });

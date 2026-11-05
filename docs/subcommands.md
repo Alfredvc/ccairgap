@@ -16,4 +16,4 @@
 
 ## Network policy leftovers
 
-`recover` and `discard` also remove the network sidecar and socket volume of a session that had a [network policy](network.md), when a signal to the CLI left them behind. Stop the agent container first with `docker rm -f ccairgap-<id>`. The agent container otherwise holds the volume, and the command prints what to run.
+`recover` and `discard` also remove the network sidecar and socket volume of a session that had a [network policy](network.md), when a SIGKILL or second signal to the CLI left them behind. Stop the agent container first with `docker rm -f ccairgap-<id>`. The agent container otherwise holds the volume, and the command prints what to run.

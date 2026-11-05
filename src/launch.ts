@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, platform } from "node:os";
+import { constants as osConstants, homedir, platform } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { execa } from "execa";
 import {
@@ -58,6 +58,7 @@ import {
   scanDangerousArgs,
 } from "./dockerRunArgs.js";
 import { resolveResumeSource, copyResumeTranscript, type ResolvedResumeSource } from "./resume.js";
+import { installSessionSignals } from "./sessionSignals.js";
 import { resolveResumeArg } from "./resumeResolver.js";
 import { detectAndSetupClipboardBridge } from "./clipboardBridge.js";
 import { validateClaudeArgs } from "./claudeArgs.js";
@@ -75,6 +76,7 @@ import {
   networkAgentDockerArgs,
   networkAgentEnv,
   planNetworkPolicy,
+  removeLeftoverNetworkResources,
   startNetworkSidecar,
   type CodexAuthKind,
   type NetworkConfig,
@@ -199,6 +201,8 @@ export interface LaunchOptions {
 
 export interface LaunchResult {
   exitCode: number;
+  /** The signal that ended the session, for the CLI to re-raise after handoff. */
+  signal?: NodeJS.Signals;
   id: string;
   sessionDir: string;
   imageTag: string;
@@ -1038,10 +1042,6 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     writeFileSync(claudeJsonMountSrc, "{}\n", { mode: 0o644 });
   }
 
-  let mounts: Mount[];
-  // Anchor on primary repo host path so --bare --repo <other> resolves correctly.
-  const ccairgapDir = resolveCcairgapDir(repoEntries[0]?.hostPath ?? process.cwd());
-  try {
   // Bind-mount sources must exist, so the mask is a file in session scratch.
   const credentialsRelPath = hostClaudePresent ? hostCredentialsRelPath(hostClaude) : undefined;
   let hostCredentialsMask: { src: string; relPath: string } | undefined;
@@ -1052,15 +1052,19 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     hostCredentialsMask = { src, relPath: credentialsRelPath };
   }
 
+  let mounts: Mount[];
+  // Anchor on primary repo host path so --bare --repo <other> resolves correctly.
+  const ccairgapDir = resolveCcairgapDir(repoEntries[0]?.hostPath ?? process.cwd());
+  try {
     mounts = buildMounts({
       hostClaudeDir: claudeDirMountSrc,
       hostClaudeJson: claudeJsonMountSrc,
       hostCredsDir: join(sessionPath, "creds"),
+      hostCredentialsMask,
       authWarningsDir: join(sessionPath, "auth-warnings"),
       hostPatchedUserSettings: hookPolicyResult.patchedUserSettingsPath,
       hostPatchedClaudeJson: mcpPolicyResult.patchedClaudeJsonPath,
       pluginsCacheDir: pluginsCache,
-      hostCredentialsMask,
       sessionTranscriptsDir: transcriptsDir,
       outputDir: outputDirPath(env),
       repos: repoEntries,
@@ -1263,6 +1267,10 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
             : undefined,
         })
       : undefined;
+  const signals = installSessionSignals({
+    id,
+    onForceExit: networkPlan ? () => removeLeftoverNetworkResources(id) : undefined,
+  });
   try {
     const result = await execa("docker", dockerArgs, {
       stdio: "inherit",
@@ -1270,6 +1278,9 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     });
     exitCode = typeof result.exitCode === "number" ? result.exitCode : 1;
   } finally {
+    signals.runExited();
+    await signals.containerStopped();
+
     // Drain the runtime auth-refresh watcher BEFORE clipboard cleanup so an
     // in-flight `claude auth login` (max 120 s, see authRefresh.ts) finishes
     // and writes its result; then run clipboard cleanup; then handoff.
@@ -1296,9 +1307,12 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
       console.error(`ccairgap: handoff failed: ${(e as Error).message}`);
       console.error(`  Recover manually: ccairgap recover ${id}`);
     }
+    signals.release();
   }
 
-  return { exitCode, id, sessionDir: sessionPath, imageTag: image.tag };
+  const signal = signals.received();
+  if (signal !== undefined) exitCode = 128 + osConstants.signals[signal];
+  return { exitCode, signal, id, sessionDir: sessionPath, imageTag: image.tag };
 }
 
 // Re-export sessionsDir for CLI convenience

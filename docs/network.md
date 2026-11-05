@@ -107,7 +107,7 @@ The CLI exits with an error when a `--docker-run-arg` token can bypass the proxy
 - **A request to an allowed host fails with `502`.** The host resolves to a non-public address, or the name does not resolve. The sidecar log shows the reason.
 - **Read decisions during a session.** Run `docker logs -f ccairgap-<id>-network`. Each decision logs the stage, verdict, reason, method, host, port and path. The addon does not log header values, query strings or bodies.
 - **The sidecar stops.** The CLI prints a warning, and the agent loses all network access. It gets no direct route. The sidecar has a 1 GiB memory limit.
-- **The CLI receives a signal.** The CLI removes the sidecar. The session stays on disk, and a running agent loses its network access. Run `ccairgap recover <id>` or `ccairgap discard <id>` afterwards.
+- **The CLI receives a signal.** The CLI stops the agent, prints the denial summary, removes the sidecar and runs handoff. A second signal removes the sidecar and exits at once, without the summary. The session then stays on disk: run `ccairgap recover <id>` or `ccairgap discard <id>`.
 - **The CLI gets a SIGKILL.** Run `docker rm -f ccairgap-<id>`, then `ccairgap recover <id>` or `ccairgap discard <id>`. These commands remove the sidecar and its volume. If the agent container still holds the volume, they print the command that removes both.
 - **`--keep-container`.** The kept agent container holds the socket volume. The CLI prints the command that removes both.
 
