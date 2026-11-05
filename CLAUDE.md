@@ -1,6 +1,6 @@
 # ccairgap
 
-CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Per-topic user docs under `docs/` (config, hooks, mcp, network, dockerfile, docker-run-args, clipboard, auto-memory, managed-policy). Keep those authoritative — update them when behavior changes; don't duplicate their content here.
+CLI that runs `claude --dangerously-skip-permissions` inside a Docker container so host FS cannot be mutated outside a small writable set. Full design: `docs/SPEC.md`. User-facing overview: `README.md`. Configuration pages live in `skills/ccairgap-configure/references/` (config, hooks, mcp, network, dockerfile, docker-run-args, codex, ccairgap-dir, claude-args), because `npx skills add` installs only the skill directory and skips a symlink that leaves it. Other user pages live in `docs/` (flags, subcommands, env-vars, completion, clipboard, auto-memory, managed-policy, auth-refresh). Each topic has one page: update it when behavior changes, and link to it instead of repeating it in `README.md`, `SKILL.md` or here. A page under `references/` links to a page outside the skill with an absolute URL. `src/skillDocs.test.ts` checks links, examples and skill pointers. A file in `docs/` with the name of a moved page holds only a link to the new page, so that public links keep working.
 
 ## Stack
 
@@ -70,6 +70,7 @@ src/
   authRefresh.ts  `refreshIfLowTtl`: proper-lockfile on host ~/.claude/, invoke `claude auth login` with OAuth env vars, classify outcome (revoked / network / binary-missing / timeout / unknown), return authoritative post-attempt JSON + ttl.
   image.ts        docker build; exact agent-version resolution; tag = ccairgap:<cli-version>-<sha256(Dockerfile+entrypoint.sh+exact agent versions)[:8]> or :custom-<sha256(dockerfile+exact agent versions+managed base identity when used)[:12]>
   network.ts      network policy: `network` key parsing, agent presets, conflict scan, token hashes, sidecar start/stop, denial summary
+  docsUrl.ts      URL of a user page for CLI messages and generated files, because the npm package does not ship the pages
   paths.ts        XDG state dir resolution; CCAIRGAP_HOME override
   version.ts      cliVersion() from package.json
 docker/
@@ -78,6 +79,8 @@ docker/
   network/        sidecar and agent assets, copied into $SESSION/network/ at launch: policy.py (mitmproxy addon), relay.py, forwarder.mjs
   agent-versions.env release-time exact Claude Code / Codex pins; also the launch fallback for an agent missing on the host
 docs/SPEC.md      authoritative design
+docs/             user pages not read by the skill, plans and research
+skills/ccairgap-configure/  SKILL.md (workflow), references/ (configuration pages, one per topic, plus skill judgment pages)
 ```
 
 ## Non-obvious invariants
@@ -133,7 +136,7 @@ docs/SPEC.md      authoritative design
 
 ## Config file & env vars
 
-User-facing config and env-var reference lives in [docs/config.md](docs/config.md) and `README.md` §"Environment variables". Dev-only implementation anchors: `resolveConfigPaths` in `src/config.ts` + `src/artifacts.ts` implement the three path anchors; profile anchor logic depends on basename of config dir (`.ccairgap` / `.config/ccairgap`). User-wide layer: `resolveUserWideConfigPaths` in `src/config.ts`; `loadUserWideConfig` + `loadIntegrationsDir` in `src/userConfig.ts`; full layer merge via `loadAllLayers` in `src/configLayered.ts`.
+User-facing config and env-var reference lives in [config.md](skills/ccairgap-configure/references/config.md) and `README.md` §"Environment variables". Dev-only implementation anchors: `resolveConfigPaths` in `src/config.ts` + `src/artifacts.ts` implement the three path anchors; profile anchor logic depends on basename of config dir (`.ccairgap` / `.config/ccairgap`). User-wide layer: `resolveUserWideConfigPaths` in `src/config.ts`; `loadUserWideConfig` + `loadIntegrationsDir` in `src/userConfig.ts`; full layer merge via `loadAllLayers` in `src/configLayered.ts`.
 
 ## When adding features
 

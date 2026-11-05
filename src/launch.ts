@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { constants as osConstants, homedir, platform } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { execa } from "execa";
+import { docsUrl } from "./docsUrl.js";
 import {
   hostClaudeDir,
   hostClaudeJson,
@@ -438,7 +439,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     if (conflicts.length > 0) {
       die(
         `--docker-run-arg conflicts with the network policy: ${conflicts.join(" ")}. ` +
-          `See docs/network.md.`,
+          `See ${docsUrl("network")}.`,
       );
     }
     networkPlan = planNetworkPolicy(opts.network, selectedAgent, codexAuthKind);
@@ -634,7 +635,7 @@ export async function launch(opts: LaunchOptions): Promise<LaunchResult> {
     if (conflicts.length > 0) {
       die(
         `--ro or --mount path conflicts with the network policy: ${conflicts.join(" ")}. ` +
-          `It exposes a Docker socket or ccairgap session state. See docs/network.md.`,
+          `It exposes a Docker socket or ccairgap session state. See ${docsUrl("network")}.`,
       );
     }
   }

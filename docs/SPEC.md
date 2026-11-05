@@ -1171,7 +1171,7 @@ Entrypoint dispatches through `CCAIRGAP_ENTRYPOINT_MODE`: missing or `agent` lau
 
 ## Network policy
 
-The `network` config key limits the outbound traffic of one session. The key is opt-in. A session without the key keeps full outbound. User-facing guide: `docs/network.md`.
+The `network` config key limits the outbound traffic of one session. The key is opt-in. A session without the key keeps full outbound. User-facing guide: `skills/ccairgap-configure/references/network.md`.
 
 ### Enforcement
 

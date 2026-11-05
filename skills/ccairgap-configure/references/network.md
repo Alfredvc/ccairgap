@@ -19,7 +19,7 @@ This config allows the agent's own API, read access to one GitHub organization a
 
 The agent container runs with `--network none`, so its only interface is loopback. Its only route out is a Unix socket to a separate container, the sidecar, which runs [mitmproxy](https://mitmproxy.org) and holds the policy. The agent has no capabilities, so it cannot change its own network. It cannot edit the policy, because the policy files are not mounted in its container.
 
-The proxy decrypts HTTPS with a certificate authority (CA) that it generates for each session. The CA private key stays in the sidecar. The CLI sets the standard env vars, and the entrypoint adds the CA certificate to the bundle that they name, so clients trust it. See [`SPEC.md`](SPEC.md) §"Network policy" for the full design.
+The proxy decrypts HTTPS with a certificate authority (CA) that it generates for each session. The CA private key stays in the sidecar. The CLI sets the standard env vars, and the entrypoint adds the CA certificate to the bundle that they name, so clients trust it. See [`SPEC.md`](https://github.com/alfredvc/ccairgap/blob/main/docs/SPEC.md) §"Network policy" for the full design.
 
 ## Where the policy lives
 
@@ -48,6 +48,96 @@ The first rule that matches decides. A request that matches no rule gets `403`. 
 | `check-credentials` | `true` | See "Credential check". |
 
 `network: {}` allows the agent preset only. `agent-preset: false` with no rules denies every request, so the agent cannot start a conversation.
+
+## Examples
+
+Each example is a complete `network` block. Add it to `.ccairgap/config.yaml`, or to a profile.
+
+**Allow the agent's own API and nothing else.**
+
+```yaml
+network: {}
+```
+
+**Install npm packages, with no other route.** `npm install` reads with `GET`, so a registry rule needs no other method.
+
+```yaml
+network:
+  rules:
+    - host: registry.npmjs.org
+      methods: [GET]
+```
+
+**Fetch from one GitHub organization and block every push.** `git fetch` and `git clone` send `POST` to `git-upload-pack`, so `GET` alone is not enough. The deny rule comes first because the first matching rule decides.
+
+```yaml
+network:
+  rules:
+    - action: deny
+      host: github.com
+      paths: ["/*/git-receive-pack"]
+    - host: github.com
+      methods: [GET, POST]
+      paths: ["/acme/*"]
+```
+
+**Narrow a preset host.** Your rules run before the preset, so a deny rule removes part of what the preset allows. This rule removes `/v1/mcp_servers` from the Claude preset. A Claude Code print session completed with this rule, and its exit summary listed the denied requests.
+
+```yaml
+network:
+  rules:
+    - action: deny
+      host: api.anthropic.com
+      paths: ["/v1/mcp_servers"]
+```
+
+**Allow plain HTTP.** An `allow` rule covers only port 443 unless you set `ports`, so list both ports to allow both schemes.
+
+```yaml
+network:
+  rules:
+    - host: deb.example.com
+      methods: [GET]
+      ports: [80, 443]
+```
+
+**Allow subdomains, with one exception.** `*.example.com` matches `a.example.com` and `a.b.example.com`. It does not match `example.com`, so the apex needs its own rule. Quote a wildcard host, because YAML reads an unquoted leading `*` as an alias and the CLI then exits with a parse error.
+
+```yaml
+network:
+  rules:
+    - action: deny
+      host: uploads.example.com
+    - host: "*.example.com"
+      methods: [GET]
+    - host: example.com
+      methods: [GET]
+```
+
+**Keep a stricter profile next to the default config.** Each profile file replaces the project config for that session, so a session with no `--profile` uses `config.yaml`.
+
+```yaml
+# .ccairgap/locked-down.config.yaml
+network: {}
+```
+
+```bash
+ccairgap --profile locked-down
+```
+
+## Common hosts
+
+These hosts cover the usual package and git traffic. `methods: [GET]` is enough for each row except git.
+
+| Tool | Hosts |
+|---|---|
+| npm, pnpm, yarn | `registry.npmjs.org` |
+| pip, uv | `pypi.org`, `files.pythonhosted.org` |
+| cargo | `index.crates.io`, `static.crates.io` |
+| Go modules | `proxy.golang.org`, `sum.golang.org` |
+| git over HTTPS | `github.com`, with `POST` for `git-upload-pack` |
+
+A registry can redirect to a host that is not in this table. The exit summary lists each denied host, so add a rule for the hosts that you trust and start a new session.
 
 ## Agent presets
 
@@ -83,7 +173,7 @@ The policy does not inspect request bodies or WebSocket frames.
 - **Path variants under deny rules.** A deny rule also matches case differences, `%2F`, `;` parameters and trailing slashes. A server with other routing rules can still receive a variant that your deny rule does not match. Prefer allow rules.
 - **Query strings.** Rules do not match the query, so data in a query passes any rule that allows the path.
 - **Mounted sockets.** A Unix socket reachable through a mount is a route that the proxy does not see. The CLI rejects a mount that contains a known Docker socket. It cannot find other sockets.
-- **Container and kernel escapes.** These stay out of scope. See [`SECURITY.md`](../SECURITY.md).
+- **Container and kernel escapes.** These stay out of scope. See [`SECURITY.md`](https://github.com/alfredvc/ccairgap/blob/main/SECURITY.md).
 
 ## What fails under a policy
 
@@ -99,7 +189,7 @@ Image builds are not affected. They run on the host before the session starts.
 
 ## Conflicting docker args
 
-The CLI exits with an error when a `--docker-run-arg` token can bypass the proxy: `--network`, `--net`, `--link`, `-p`, `--publish`, `--privileged`, `--cap-add`, host namespace flags, `--device`, `--security-opt`, `--volumes-from`, and any mount that exposes a Docker socket. A raw mount or `--mount` of a path that contains the ccairgap state directory is also an error, because the agent could then edit the policy. `--ro ~` passes unless your home holds a known Docker socket. [`SPEC.md`](SPEC.md) §"Conflicting docker args" has the full list. The scan covers known flags only. `--add-host` and `--dns` stay allowed because they open no route.
+The CLI exits with an error when a `--docker-run-arg` token can bypass the proxy: `--network`, `--net`, `--link`, `-p`, `--publish`, `--privileged`, `--cap-add`, host namespace flags, `--device`, `--security-opt`, `--volumes-from`, and any mount that exposes a Docker socket. A raw mount or `--mount` of a path that contains the ccairgap state directory is also an error, because the agent could then edit the policy. `--ro ~` passes unless your home holds a known Docker socket. [`SPEC.md`](https://github.com/alfredvc/ccairgap/blob/main/docs/SPEC.md) §"Conflicting docker args" has the full list. The scan covers known flags only. `--add-host` and `--dns` stay allowed because they open no route.
 
 ## Troubleshooting
 

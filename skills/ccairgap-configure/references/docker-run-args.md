@@ -1,9 +1,3 @@
-<!--
-  GENERATED FILE — do not edit.
-  Source: docs/docker-run-args.md
-  Regenerate with: scripts/sync-skill-assets.sh
--->
-
 # Raw docker run args
 
 `--docker-run-arg` is the escape hatch for `docker run` flags ccairgap does not expose as dedicated CLI flags. Most users never need one — the structured flags (`--ro`, `--mount`, `--cp`, `--sync`, `--dockerfile`) cover the common cases.
@@ -81,7 +75,7 @@ This does not work with a network policy active. `--add-host` is accepted, but t
 
 ### Extra environment variables
 
-**Read the Secrets section below if any of these look like credentials.**
+If any of these is a credential, read [secrets-and-sensitive-data.md](secrets-and-sensitive-data.md) first.
 
 Inherit a host env var (value stays on the host at launch time, passed through):
 
@@ -156,42 +150,7 @@ Danger tokens aren't recommended. They remove the isolation ccairgap provides �
 
 ## Secrets and sensitive data
 
-Default posture: don't wire credentials through unless a specific enabled hook/MCP genuinely can't function without one.
-
-### When it is appropriate
-
-All of the following must hold:
-
-1. A specific enabled hook/MCP needs the credential.
-2. You know which credential.
-3. You have a plan to pass it that does not involve committing the value to `config.yaml` or any other tracked file.
-
-### Safe passing patterns
-
-Env var pass-through — value lives only on the host at launch time; the container inherits it; nothing is written to disk in the repo:
-
-```yaml
-# safe to commit — only the variable name is in the repo
-docker-run-arg:
-  - "-e OPENAI_API_KEY"
-```
-
-Multi-secret — list individually. **Don't** use `--env-file` pointing at a host `.env`:
-
-```yaml
-docker-run-arg:
-  - "-e OPENAI_API_KEY"
-  - "-e ANTHROPIC_API_KEY"
-  - "-e GITHUB_TOKEN"
-```
-
-### Patterns to avoid
-
-- **Committed literal values** (`-e OPENAI_API_KEY=sk-...`): the secret lands in git.
-- **Mounted credential directories** (`~/.ssh`, `~/.aws`, `~/.gcloud`): the container gains read access to every key on the host for this identity — most workflows never touch them.
-- **Mounted `.env` files**: typically contain more than the container needs. Pass individual vars instead.
-
-If a specific workflow does need one (e.g. an MCP that clones over SSH), wire it narrowly: use a named file inside `~/.ssh`, not the whole directory, when possible.
+Read [secrets-and-sensitive-data.md](secrets-and-sensitive-data.md) before you pass a credential.
 
 ## When to reach for this vs. other surfaces
 

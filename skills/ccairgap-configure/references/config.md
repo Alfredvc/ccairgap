@@ -1,9 +1,3 @@
-<!--
-  GENERATED FILE — do not edit.
-  Source: docs/config.md
-  Regenerate with: scripts/sync-skill-assets.sh
--->
-
 # Config file
 
 Any launch flag can live in a YAML file. Default load path: `<git-root>/.ccairgap/config.yaml`, with `<git-root>/.config/ccairgap/config.yaml` as a fallback (loaded only when the primary is absent; if both exist, ccairgap prints a warning to stderr and uses the primary). Override with `--config <path>` or `--profile <name>`.
@@ -39,9 +33,9 @@ Both kebab-case (matches CLI flag names) and camelCase keys are accepted — keb
 | `codex-args` | `[string]` | `-- <token> …` (tail when `agent: codex`) | Tokens forwarded to Codex inside the container after fail-closed allowlist validation. Config first, CLI `--` tail appended. Ignored with a warning for `ccairgap exec`. |
 | `network` | map | none | [Network policy](network.md). Presence activates it. Project config and profiles only: user-wide config and integrations reject it. Replaces the whole value across layers. |
 | `no-auto-memory` | bool | `--no-auto-memory` | Skip the auto-memory RO mount. Default false. |
-| `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](clipboard.md). |
+| `clipboard` | bool | `--no-clipboard` (inverted) | Default true. Set `clipboard: false` to disable image-clipboard passthrough. See [clipboard.md](https://github.com/alfredvc/ccairgap/blob/main/docs/clipboard.md). |
 | `no-preserve-dirty` | bool | `--no-preserve-dirty` | Skip dirty-working-tree preservation on exit. Default false. For scripted / CI use. |
-| `refresh-below-ttl` | number (minutes) | `--refresh-below-ttl` | Host token ttl threshold for pre-launch auth refresh. Default 120. `0` disables the refresh; cold-start-dead refusal still fires. See [auth-refresh.md](auth-refresh.md). |
+| `refresh-below-ttl` | number (minutes) | `--refresh-below-ttl` | Host token ttl threshold for pre-launch auth refresh. Default 120. `0` disables the refresh; cold-start-dead refusal still fires. See [auth-refresh.md](https://github.com/alfredvc/ccairgap/blob/main/docs/auth-refresh.md). |
 
 ## `exec` command interaction
 
@@ -143,9 +137,16 @@ hooks:
   enable:
     - "python3 *"
 
-# Expose the Vite dev server port so the host can reach it.
+# Pass a host env var by name. The value stays out of this file.
 docker-run-arg:
-  - "-p 5173:5173"
+  - "-e VITE_API_URL"
+
+# Limit outbound traffic to the agent's API and read access to npm.
+# A policy rejects `-p` and `--network`. See network.md.
+network:
+  rules:
+    - host: registry.npmjs.org
+      methods: [GET]
 
 # Extend ccairgap's managed runtime base with project-specific binaries.
 # Anchored on the config file's directory, so this resolves to
@@ -175,6 +176,14 @@ ro:
 dockerfile: Dockerfile     # custom, installs Playwright
 docker-run-arg:
   - "-p 9323:9323"         # Playwright report server
+```
+
+**"Claude may reach npm and nothing else":**
+```yaml
+network:
+  rules:
+    - host: registry.npmjs.org
+      methods: [GET]     # the agent's own API stays allowed by its preset
 ```
 
 ## Keys that do NOT exist
@@ -279,7 +288,7 @@ mcp:
   enable:
     - "my-tool-mcp"
 
-# Expose my-tool's API key to all containers.
+# Pass my-tool's API key from the host env by name to all containers.
 docker-run-arg:
-  - "-e MY_TOOL_API_KEY=abc123"
+  - "-e MY_TOOL_API_KEY"
 ```

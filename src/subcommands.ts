@@ -21,6 +21,7 @@ import {
   stateRoot,
 } from "./paths.js";
 import { handoff, scanDirtyRepos } from "./handoff.js";
+import { docsUrl } from "./docsUrl.js";
 import { removeLeftoverNetworkResources } from "./network.js";
 import { readManifest, readManifestAgent } from "./manifest.js";
 import { scanOrphans } from "./orphans.js";
@@ -898,7 +899,7 @@ function checkUserWideConfig(): DoctorCheck[] {
 /** Default config.yaml content written by `ccairgap init`. */
 function defaultInitConfigYaml(): string {
   return [
-    "# ccairgap config — see README.md §\"Config file\" for all keys.",
+    `# ccairgap config. All keys: ${docsUrl("config")}`,
     "# Sidecar Dockerfile lives next to this file and extends ccairgap's",
     "# managed runtime base. Add project-specific image changes above the",
     "# agent install block.",
@@ -1043,7 +1044,7 @@ function initUserWide(opts: InitOptions): void {
 
 function defaultUserWideConfigYaml(): string {
   return [
-    "# ccairgap user-wide config — see docs/config.md §\"User-wide config\".",
+    `# ccairgap user-wide config. See ${docsUrl("config")}#user-wide-config`,
     "# Persistent defaults applied to every launch (defaults < user-wide < project < CLI).",
     "# Relative `repo`/`extra-repo`/`ro`/`cp`/`sync`/`mount` paths are NOT allowed here",
     "# (no workspace anchor); use absolute paths.",

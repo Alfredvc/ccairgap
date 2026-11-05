@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { docsUrl } from "./docsUrl.js";
 import { parseConfig, resolveUserWideConfigPaths, type ConfigFile } from "./config.js";
 import {
   parseDockerRunArgs,
@@ -90,14 +91,14 @@ function enforceIntegrationKeyAllowlist(cfg: ConfigFile, source: string): void {
     if (k === "network") {
       throw new Error(
         `${source}: key 'network' not allowed in integration files. ` +
-          `A network policy belongs to a repository config or profile; see docs/network.md`,
+          `A network policy belongs to a repository config or profile; see ${docsUrl("network")}`,
       );
     }
     if (!INTEGRATION_ALLOWED_KEYS.has(k)) {
       throw new Error(
         `${source}: key '${k}' not allowed in integration files ` +
           `(only the user-wide config.yaml may set it); ` +
-          `see docs/config.md#user-wide-config`,
+          `see ${docsUrl("config")}#user-wide-config`,
       );
     }
   }
@@ -138,7 +139,7 @@ export function loadUserWideConfig(
   if (parsed.network !== undefined) {
     throw new Error(
       `${cfgPath}: key 'network' is not allowed in user-wide config. ` +
-        `A network policy belongs to a repository config or profile; see docs/network.md`,
+        `A network policy belongs to a repository config or profile; see ${docsUrl("network")}`,
     );
   }
   const resolved = resolveUserWideConfigPaths(parsed, cfgPath);

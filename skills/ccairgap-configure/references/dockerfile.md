@@ -1,9 +1,3 @@
-<!--
-  GENERATED FILE — do not edit.
-  Source: docs/dockerfile.md
-  Regenerate with: scripts/sync-skill-assets.sh
--->
-
 # Custom Dockerfile
 
 Use a custom Dockerfile when a workflow needs a binary not in the base image. Pass it via `--dockerfile <path>` or `dockerfile: <path>` in `config.yaml` (resolves against the config file's directory — sidecar convention).
