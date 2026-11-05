@@ -278,10 +278,15 @@ function validateAttachTail(options: {
   return validated.filtered;
 }
 
-export function discard(id: string): void {
+export async function discard(id: string): Promise<void> {
   const sd = sessionDirFn(id);
   if (!existsSync(sd)) {
     console.error(`ccairgap: no session dir at ${sd}`);
+    process.exit(1);
+  }
+  if (await isSessionContainerLive(id)) {
+    console.error(`ccairgap: session ${id} has a running container (ccairgap-${id}).`);
+    console.error(`  Stop it first: docker stop ccairgap-${id}`);
     process.exit(1);
   }
   if (existsSync(join(sd, "network"))) removeLeftoverNetworkResources(id);

@@ -284,11 +284,11 @@ describe.skipIf(!(await dockerAvailable()))("network policy tier2", () => {
     for (const name of anonymous) expect(await volumeExists(name)).toBe(false);
   }, 170_000);
 
-  it("names the remedy when discard cannot remove a volume that the agent holds", async () => {
+  it("refuses discard for a live agent, and names the remedy for a stopped one that holds the volume", async () => {
     const stop = path.join(shared, "stop");
     const cli = execa(
       "node",
-      [DIST_CLI, ...baseArgs(), "--ro", shared, ...testCommand(`wait ${stop}`)],
+      [DIST_CLI, ...baseArgs(), "--keep-container", "--ro", shared, ...testCommand(`wait ${stop}`)],
       { env: { ...process.env, ...env }, cwd: repo, reject: false, stdio: "ignore" },
     );
     await waitFor(async () => sessionIds().length === 1);
@@ -297,10 +297,20 @@ describe.skipIf(!(await dockerAvailable()))("network policy tier2", () => {
     await waitFor(() => running(`ccairgap-${id}`));
     cli.kill("SIGKILL");
     await cli;
+
+    const refused = await runCli(["discard", id], { env, cwd: repo });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain(`docker stop ccairgap-${id}`);
+    expect(sessionIds()).toContain(id);
+    expect((await networkResources(id)).container).not.toBe("");
+
+    await execa("docker", ["stop", "-t", "0", `ccairgap-${id}`]);
     const discard = await runCli(["discard", id], { env, cwd: repo });
     expect(discard.exitCode).toBe(0);
     expect(discard.stderr).toContain(`docker rm -f ccairgap-${id} && docker volume rm ccairgap-${id}-network`);
     expect((await networkResources(id)).container).toBe("");
+    await execa("docker", ["rm", "-f", "-v", `ccairgap-${id}`], { reject: false });
+    await execa("docker", ["volume", "rm", `ccairgap-${id}-network`], { reject: false });
   }, 170_000);
 
   it("removes the sidecar when a signal ends the CLI", async () => {

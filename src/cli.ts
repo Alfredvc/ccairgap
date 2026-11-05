@@ -552,8 +552,8 @@ async function main() {
   program
     .command("discard <id>")
     .description("delete a session dir without running handoff")
-    .action((id: string) => {
-      discard(id);
+    .action(async (id: string) => {
+      await discard(id);
     });
 
   program
