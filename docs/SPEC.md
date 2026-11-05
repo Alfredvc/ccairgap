@@ -1184,7 +1184,7 @@ agent container (--network none)            sidecar container (bridge network)
 ```
 
 - The forwarder (`docker/network/forwarder.mjs`) is a Node script that the agent container runs from the entrypoint. It copies bytes from `127.0.0.1:3128` to the socket. It enforces nothing, and an agent that kills it loses all network access.
-- The relay (`docker/network/relay.py`) copies bytes from the socket to mitmproxy.
+- The relay (`docker/network/relay.py`) copies bytes from the socket to mitmproxy. The CLI treats the socket as the readiness signal, so the relay binds it under a temporary name, sets mode `0666` and renames it.
 - The sidecar runs `mitmproxy/mitmproxy` pinned by tag and digest in `src/network.ts`. No flag or env var changes this image.
 - Sidecar hardening: `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--read-only`, non-root user, `--tmpfs /tmp`, and a tmpfs for the CA. The sidecar has no bind mount from the agent container and no writable bind mount from the host.
 - Each session generates its own CA in the sidecar tmpfs. The CA private key stays in the sidecar. The CLI copies the CA certificate to `$SESSION/network/agent/ca.pem`.

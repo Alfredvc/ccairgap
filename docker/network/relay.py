@@ -45,12 +45,17 @@ async def wait_for_proxy():
 
 async def serve():
     await wait_for_proxy()
-    try:
-        os.unlink(SOCKET)
-    except FileNotFoundError:
-        pass
-    server = await asyncio.start_unix_server(handle, SOCKET)
-    os.chmod(SOCKET, 0o666)
+    # The CLI treats the socket as the readiness signal, and connecting needs write
+    # permission. Bind under another name, so the final name appears with its final mode.
+    temporary = SOCKET + ".tmp"
+    for path in (SOCKET, temporary):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    server = await asyncio.start_unix_server(handle, temporary)
+    os.chmod(temporary, 0o666)
+    os.rename(temporary, SOCKET)
     async with server:
         await server.serve_forever()
 

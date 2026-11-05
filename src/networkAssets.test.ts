@@ -69,7 +69,9 @@ describe("relay and forwarder", () => {
     let relay = readFileSync(join(ROOT, "docker", "network", "relay.py"), "utf8");
     relay = replaceRequired(relay, SOCKET, socket);
     relay = replaceRequired(relay, '("127.0.0.1", 8080)', `("127.0.0.1", ${proxyPort})`);
-    writeFileSync(join(dir, "relay.py"), relay);
+    // A slow chmod, so a relay that exposes the socket before setting its mode fails every run.
+    const slowChmod = "import os, time\n_chmod = os.chmod\nos.chmod = lambda *a: (time.sleep(0.2), _chmod(*a))\n";
+    writeFileSync(join(dir, "relay.py"), slowChmod + relay);
 
     let forwarder = readFileSync(join(ROOT, "docker", "network", "forwarder.mjs"), "utf8");
     forwarder = replaceRequired(forwarder, SOCKET, socket);
@@ -104,9 +106,10 @@ asyncio.run(main())
     children.push(relayChild);
     const exited = new Promise<number | null>((resolve) => relayChild.on("exit", (code) => resolve(code)));
 
+    // The CLI treats the socket as the readiness signal, so the mode must be final when it appears.
     await until(() => existsSync(socket));
-    expect(existsSync(listening)).toBe(true);
     expect(statSync(socket).mode & 0o777).toBe(0o666);
+    expect(existsSync(listening)).toBe(true);
 
     const forwarderChild = spawn("node", [join(dir, "forwarder.mjs")], { stdio: "ignore" });
     children.push(forwarderChild);
