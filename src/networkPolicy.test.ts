@@ -77,7 +77,9 @@ def run(case):
     if op == "decide":
         return policy.decide(make_flow(case), case.get("host", "allowed.test"), case.get("port", 443))
     if op == "connect":
-        return policy.connect_allowed(case["host"], case["port"])
+        return policy.connect_denial(case["host"], case["port"]) is None
+    if op == "connect-reason":
+        return policy.connect_denial(case["host"], case["port"])
     if op == "path":
         return list(policy.canonical_path(case["path"]))
     if op == "public":
@@ -85,7 +87,7 @@ def run(case):
     if op == "connect-hook":
         flow = make_flow(case)
         if case.get("raise"):
-            policy.connect_allowed = None
+            policy.connect_denial = None
         policy.http_connect(flow)
         return {"response": flow.response, "target": policy.TUNNEL_TARGETS.get(flow.client_conn.id)}
     if op == "request-hook":
@@ -357,6 +359,16 @@ describe("deny rules", () => {
         { op: "connect", host: "other.example.com", port: 80 },
       ]),
     ).toEqual([false, false, true]);
+  });
+
+  it("names the reason, so the exit summary tells a deny rule from a missing rule", () => {
+    expect(
+      run([
+        { op: "connect-reason", host: "blocked.example.com", port: 443 },
+        { op: "connect-reason", host: "unknown.test", port: 443 },
+        { op: "connect-reason", host: "other.example.com", port: 443 },
+      ]),
+    ).toEqual(["rule-deny", "no-matching-rule", null]);
   });
 });
 

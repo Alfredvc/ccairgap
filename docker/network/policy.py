@@ -119,15 +119,16 @@ def port_matches(rule, port):
     return rule["ports"] is None or port in rule["ports"]
 
 
-def connect_allowed(host, port):
+def connect_denial(host, port):
+    """Returns the denial reason, or None to open the tunnel."""
     for rule in RULES:
         if not host_matches(rule["host"], host) or not port_matches(rule, port):
             continue
         if rule["allow"]:
-            return True
+            return None
         if rule["methods"] is None and rule["paths"] is None:
-            return False
-    return False
+            return "rule-deny"
+    return "no-matching-rule"
 
 
 def decode_until_stable(value, keep_encoded_slash):
@@ -326,10 +327,10 @@ def http_connect(flow: http.HTTPFlow):
     try:
         host = flow.request.host.lower()
         port = flow.request.port
-        if connect_allowed(host, port):
+        why = connect_denial(host, port)
+        if why is None:
             TUNNEL_TARGETS[flow.client_conn.id] = (host, port)
             return
-        why = "no-matching-rule"
     except Exception:
         why = "internal-error"
     deny(flow, "connect", why, host, port, method="CONNECT")
